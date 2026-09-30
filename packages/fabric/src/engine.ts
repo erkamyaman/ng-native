@@ -58,12 +58,43 @@ import { FontFaces } from './font-faces.ts';
  * and this runs for every node that commits.
  */
 function animationOf(props: Record<string, unknown>): AnimationSpec | undefined {
-  const spec = props['$animation'] as AnimationSpec | undefined;
+  let spec = props['$animation'] as AnimationSpec | undefined;
   if (spec !== undefined) delete props['$animation'];
-  const playState = props['$playState'] as 'running' | 'paused' | undefined;
-  if (playState === undefined) return spec;
-  delete props['$playState'];
-  return spec && { ...spec, paused: playState === 'paused' };
+  for (const [key, field] of Object.entries(ANIMATION_PARTS)) {
+    if (!(key in props)) continue;
+    const value = props[key];
+    delete props[key];
+    if (spec && value !== null) spec = { ...spec, ...animationPart(field, value) };
+  }
+  return spec;
+}
+
+const ANIMATION_PARTS = {
+  $animationDuration: 'duration',
+  $animationDelay: 'delay',
+  $animationEasing: 'easing',
+  $animationIterations: 'iterations',
+  $animationDirection: 'direction',
+  $animationFill: 'fill',
+  $playState: 'paused',
+} as const;
+
+function animationPart(
+  field: (typeof ANIMATION_PARTS)[keyof typeof ANIMATION_PARTS],
+  value: unknown,
+): Partial<AnimationSpec> {
+  switch (field) {
+    case 'iterations':
+      return { iterations: value === 'infinite' ? null : (value as number) };
+    case 'direction':
+      return {
+        direction: value === 'normal' ? undefined : (value as AnimationSpec['direction']),
+      };
+    case 'paused':
+      return { paused: value === 'paused' ? true : undefined };
+    default:
+      return { [field]: value };
+  }
 }
 
 /**

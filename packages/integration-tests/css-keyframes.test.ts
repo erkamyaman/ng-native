@@ -211,8 +211,10 @@ describe('the animation longhands', () => {
     assert.equal(specOf('animation: spin 1s; animation-name: none;'), null);
   });
 
-  it('animate nothing without a name, as a browser does', () => {
-    assert.equal(sheet('view { animation-duration: 1s; }').rules.length, 0);
+  it('animate nothing without a name, as a browser does, and keep the timing for one that has', () => {
+    const { declarations } = sheet('view { animation-duration: 1s; }').rules[0]!;
+    assert.equal(declarations['$animation'], undefined);
+    assert.equal(declarations['$animationDuration'], 1000);
   });
 });
 
@@ -299,6 +301,46 @@ describe('playing an animation', () => {
     assert.equal(s.painted('opacity'), 0.5);
     s.classes('enter still');
     assert.equal(s.painted('opacity'), 1, 'back to the resting style');
+  });
+
+  describe('cascades each part on its own, as a browser does', () => {
+    const parts = `
+      @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes grow { from { width: 10px; } to { width: 50px; } }
+      view { opacity: 1; width: 100px; }
+      view.a { animation: fade 100ms linear infinite; }
+    `;
+
+    it('keeps a weaker rule timing when a stronger rule names another animation', () => {
+      const s = scene(`${parts} view.a.b { animation-name: grow; }`);
+      s.classes('a b');
+      s.tick(50);
+      assert.equal(s.painted('width'), 30, 'grow, over the 100ms the weaker rule gave it');
+      assert.equal(s.painted('opacity'), 1, 'and not fade');
+      s.tick(100);
+      assert.equal(s.painted('width'), 30, 'still repeating, as infinite says');
+    });
+
+    it('keeps a weaker rule name when a stronger rule sets only the timing', () => {
+      const s = scene(`${parts} view.a.slow { animation-duration: 200ms; }`);
+      s.classes('a slow');
+      s.tick(50);
+      assert.equal(s.painted('opacity'), 0.25);
+    });
+
+    it('lets a stronger shorthand reset a weaker rule longhand', () => {
+      const s = scene(`
+        @keyframes grow { from { width: 10px; } to { width: 50px; } }
+        view { width: 100px; }
+        view.slow { animation-duration: 1s; animation-iteration-count: infinite; }
+        view.slow.a { animation: grow 100ms linear; }
+      `);
+      s.classes('slow a');
+      s.tick(50);
+      assert.equal(s.painted('width'), 30, 'the shorthand duration');
+      s.tick(100);
+      assert.equal(s.painted('width'), 100, 'played once: the shorthand reset the count');
+    });
   });
 
   it('plays the frames backwards in reverse', () => {

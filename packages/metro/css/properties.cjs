@@ -1160,9 +1160,7 @@ function finishAnimation(out, context) {
   delete out[ANIMATION_PARTS];
   const first = (part) => parts[part]?.[0];
   const name = first('name');
-  // A play state on its own, as `.paused { animation-play-state: paused }` writes it, cascades
-  // on its own too, over whatever animation a rule beside it names.
-  if (!name && first('play-state')) out['$playState'] = first('play-state');
+  cascadingAnimation(parts, first, out, context);
   if (!name) return;
   // Not `animation`, for the same reason as `$transition`.
   if (name.type === 'none' || parts.timeline === 'none') {
@@ -1180,6 +1178,39 @@ function finishAnimation(out, context) {
   }
   out['$animation'] = spec;
 }
+
+function cascadingAnimation(parts, first, out, context) {
+  for (const [part, key] of Object.entries(ANIMATION_KEYS)) {
+    const value = first(part);
+    if (value === undefined) continue;
+    switch (part) {
+      case 'duration':
+      case 'delay': {
+        const time = timeOf(value);
+        out[key] = typeof time === 'number' ? time : null;
+        break;
+      }
+      case 'timing-function':
+        out[key] = easing(value, context);
+        break;
+      case 'iteration-count':
+        out[key] = value.type === 'infinite' ? 'infinite' : value.value;
+        break;
+      default:
+        out[key] = value;
+    }
+  }
+}
+
+const ANIMATION_KEYS = {
+  duration: '$animationDuration',
+  delay: '$animationDelay',
+  'timing-function': '$animationEasing',
+  'iteration-count': '$animationIterations',
+  direction: '$animationDirection',
+  'fill-mode': '$animationFill',
+  'play-state': '$playState',
+};
 
 /** One animation's spec, from the first entry of each part. */
 function animationSpec(name, first, context) {

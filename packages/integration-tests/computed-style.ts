@@ -121,7 +121,10 @@ export function ours(style: Style, property: string): unknown {
     case 'animation-timing-function':
     case 'animation-iteration-count':
     case 'animation-delay':
-      return style['$animation'];
+    case 'animation-direction':
+    case 'animation-fill-mode':
+    case 'animation-play-state':
+      return animationSeen(style);
     case 'font-variant-numeric':
       return style['fontVariant'];
     case 'vertical-align':
@@ -327,12 +330,55 @@ function sameGradients(browser: string, value: unknown): boolean {
   );
 }
 
+const ANIMATION_PARTS = {
+  $animationDuration: 'duration',
+  $animationDelay: 'delay',
+  $animationEasing: 'easing',
+  $animationIterations: 'iterations',
+  $animationDirection: 'direction',
+  $animationFill: 'fill',
+  $playState: 'paused',
+} as const;
+
+function animationSeen(style: Record<string, unknown>): Record<string, unknown> | undefined {
+  let spec = style['$animation'] as Record<string, unknown> | null | undefined;
+  for (const [key, field] of Object.entries(ANIMATION_PARTS)) {
+    const value = style[key];
+    if (value === undefined || value === null) continue;
+    spec = {
+      ...spec,
+      [field]:
+        field === 'iterations' && value === 'infinite'
+          ? null
+          : field === 'paused'
+            ? value === 'paused'
+            : value,
+    };
+  }
+  return spec ?? undefined;
+}
+
 /** An `animation-*` longhand, against the one spec native's `$animation` holds. */
 function sameAnimation(property: string, browser: string, value: unknown): boolean {
   const spec = value as
-    | { name: string; duration: number; delay: number; easing: number[]; iterations: number | null }
+    | {
+        name: string;
+        duration: number;
+        delay: number;
+        easing: number[];
+        iterations: number | null;
+        direction?: string;
+        fill?: string;
+        paused?: boolean;
+      }
     | undefined;
   if (!spec) return false;
+  const keyword = {
+    'animation-direction': spec.direction ?? 'normal',
+    'animation-fill-mode': spec.fill ?? 'none',
+    'animation-play-state': spec.paused ? 'paused' : 'running',
+  }[property];
+  if (keyword !== undefined) return keyword === browser;
   const seconds = (text: string) =>
     text.endsWith('ms') ? parseFloat(text) : parseFloat(text) * 1000;
   switch (property) {
