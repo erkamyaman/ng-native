@@ -19,7 +19,7 @@
       },
       "predictiveBackGestureEnabled": false
     },
-    "scheme": "myapp",
+    "scheme": "helloworld",
     "extra": {
       "router": {
         "root": "src/app"

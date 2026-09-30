@@ -38,8 +38,5 @@
     "type": "git",
     "url": "git+https://github.com/ng-native/ng-native.git",
     "directory": "template"
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }
