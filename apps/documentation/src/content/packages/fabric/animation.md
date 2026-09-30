@@ -53,6 +53,19 @@ the shorthand changes only its own part and a shorthand after a longhand resets 
 }
 ```
 
+Each longhand also cascades on its own, as in a browser: a rule that sets only `animation-name`
+keeps the duration, easing and iteration count a weaker rule's shorthand gave, and a rule that sets
+only `animation-duration` changes the animation another rule names.
+
+```css
+.icon {
+  animation: swap 3.6s ease-in-out infinite;
+}
+.icon.open {
+  animation-name: swap-open; /* swap-open, over 3.6s, forever */
+}
+```
+
 A duration or delay can be a token, or `calc()` with tokens in it, which is how a list staggers
 its rows: `animation-delay: calc(var(--i) * 60ms)` with `[style.--i]="$index"` on each. A token of
 time is read in milliseconds whatever unit it was written in.
@@ -74,7 +87,7 @@ while a finger is down: `.held { animation-play-state: paused }`. An animation t
 paused shows its first frame.
 
 `animation-name: none` (or `animation: none`) stops an animation a weaker rule started, and a rule
-with durations but no name plays nothing, as in a browser. A few real constraints come with it,
+with durations but no name plays nothing on its own, as in a browser. A few real constraints come with it,
 whichever spelling you use:
 
 - Only one animation per rule, so `animation-name` takes one name and the shorthand one entry. Two
