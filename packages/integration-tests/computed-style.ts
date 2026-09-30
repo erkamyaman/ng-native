@@ -340,13 +340,21 @@ const ANIMATION_PARTS = {
   $playState: 'paused',
 } as const;
 
+const INITIAL_ANIMATION = {
+  name: 'none',
+  duration: 0,
+  delay: 0,
+  easing: [0.25, 0.1, 0.25, 1],
+  iterations: 1,
+};
+
 function animationSeen(style: Record<string, unknown>): Record<string, unknown> | undefined {
   let spec = style['$animation'] as Record<string, unknown> | null | undefined;
   for (const [key, field] of Object.entries(ANIMATION_PARTS)) {
     const value = style[key];
     if (value === undefined || value === null) continue;
     spec = {
-      ...spec,
+      ...(spec ?? INITIAL_ANIMATION),
       [field]:
         field === 'iterations' && value === 'infinite'
           ? null
