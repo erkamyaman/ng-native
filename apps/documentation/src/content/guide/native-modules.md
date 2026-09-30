@@ -139,8 +139,10 @@ class ThermalModule : Module() {
   private val powerManager
     get() = appContext.reactContext!!.getSystemService(Context.POWER_SERVICE) as PowerManager
 
-  private val listener = PowerManager.OnThermalStatusChangedListener { status ->
-    sendEvent("onChange", mapOf("state" to name(status)))
+  private val listener by lazy {
+    PowerManager.OnThermalStatusChangedListener { status ->
+      sendEvent("onChange", mapOf("state" to name(status)))
+    }
   }
 
   override fun definition() = ModuleDefinition {
@@ -262,12 +264,13 @@ Each part has a reason:
 
 ## Use it in a component
 
-Inject the service and read it like any other signal. This is the template's `App` with three
-lines of thermal state added:
+Inject the service and read it like any other signal. This is the template's `App` with thermal
+state added:
 
 ```ts
 import { Component, inject, resource, signal } from '@angular/core';
 import { Pressable, SafeAreaProvider, SafeAreaView, Text, View } from '@ng-native/components';
+import { StatusBar } from '@ng-native/device';
 import { Thermal } from '../thermal/thermal.ts';
 
 @Component({
@@ -299,6 +302,10 @@ export class App {
   protected readonly count = signal(0);
   protected readonly thermal = inject(Thermal);
   protected readonly headroom = resource({ loader: () => this.thermal.headroom() });
+
+  constructor() {
+    inject(StatusBar).set({ style: 'auto' });
+  }
 }
 ```
 

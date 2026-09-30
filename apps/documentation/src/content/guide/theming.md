@@ -120,8 +120,14 @@ export class Theme {
     const chosen = this.preference() === 'system' ? this.system.current() : this.preference();
     return chosen === 'dark' ? 'dark' : '';
   });
+
+  choose(preference: Preference): void {
+    this.preference.set(preference);
+  }
 }
 ```
+
+The switcher calls `choose('light')`, `choose('dark')` or `choose('system')`.
 
 To preserve the preference across launches, save and restore it through the app's settings storage.
 The example does not persist it.
