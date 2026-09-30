@@ -22,11 +22,11 @@ npm install --save-dev @babel/core@^7.29.0
 npx expo install expo-localization expo-secure-store
 ```
 
-Replace `<version>` with your app's exact `@angular/core` version, shown by
-`npm ls @angular/core`. It provides `localize-extract`, and its peers include `@angular/compiler` and
-`@angular/compiler-cli`. [`Locale`](/packages/expo/locale) uses `expo-localization` to read
-device languages. Omit `expo-secure-store` if the app follows the device rather than remembering
-an in-app language choice.
+Replace `<version>` with your app's exact `@angular/core` version, shown by `npm ls @angular/core`.
+It provides `localize-extract`, and its peers include `@angular/compiler` and
+`@angular/compiler-cli`. [`Locale`](/packages/expo/locale) uses `expo-localization` to read device
+languages. Omit `expo-secure-store` if the app follows the device rather than remembering an in-app
+language choice.
 
 ### The Babel pin, and why it is not optional
 
@@ -154,13 +154,14 @@ export class BasketCount {
 }
 ```
 
-An exact `=N` key takes precedence. Otherwise, `LOCALE_ID` selects a category using Angular's
-locale data, not `Intl`; `#` becomes the number. That is also the way to choose a category in
-code: Hermes has `Intl.NumberFormat` and `Intl.DateTimeFormat` but no `Intl.PluralRules`, so
-`new Intl.PluralRules(...)` throws on device. `inject(NgLocalization).getPluralCategory(count)`
-from `@angular/common` answers the same question from the locale data you registered. Include every category your languages need:
-English uses `one` and `other`; Polish also uses `few` and `many`. Missing categories fall back
-to `other`. Repeat the English text for categories without a distinct English form.
+An exact `=N` key takes precedence. Otherwise, `LOCALE_ID` selects a category using Angular's locale
+data, not `Intl`; `#` becomes the number. That is also the way to choose a category in code: Hermes
+has `Intl.NumberFormat` and `Intl.DateTimeFormat` but no `Intl.PluralRules`, so
+`new Intl.PluralRules(...)` throws on device. `inject(NgLocalization).getPluralCategory(count)` from
+`@angular/common` answers the same question from the locale data you registered. Include every
+category your languages need: English uses `one` and `other`; Polish also uses `few` and `many`.
+Missing categories fall back to `other`. Repeat the English text for categories without a distinct
+English form.
 
 For selects, use `@switch` with an `i18n` message per case:
 
