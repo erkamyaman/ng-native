@@ -609,4 +609,28 @@ describe('the typed SwiftUI controls and expo-image', () => {
     assert.equal(image.props['transition'], 300);
     assert.equal(image.props['contentFit'], 'cover', 'the default an unbound input leaves alone');
   });
+
+  it('puts a section and a labelled row content in the content slot, which SwiftUI draws', async () => {
+    const mod = await compileFixture(
+      fileURLToPath(new URL('./fixtures/expo-ui.ts', import.meta.url)),
+    );
+    registerExpoUiViews('ios');
+    registerExpoViews('expo-image');
+    const fabric = createFakeFabric();
+    mount(1, mod['ExpoUiControlsFixture'] as Type<unknown>, fabric);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const named = (pattern: RegExp) => all(fabric.committed).find((n) => pattern.test(n.viewName))!;
+    const content = (parent: FakeFabricNode) =>
+      parent.children.find((n) => /SlotView$/.test(n.viewName) && n.props['name'] === 'content');
+
+    const section = content(named(/ExpoUI_SectionView$/));
+    assert.ok(section, "the section's rows sit in a slot named content");
+    assert.ok(
+      all(section.children).some((n) => /ExpoUI_ToggleView$/.test(n.viewName)),
+      'the toggle is one of them',
+    );
+    const labelled = content(named(/ExpoUI_LabeledContentView$/));
+    assert.ok(labelled, "a labelled row's content sits in a slot named content");
+    assert.ok(all(labelled.children).some((n) => /ExpoUI_TextView$/.test(n.viewName)));
+  });
 });

@@ -580,7 +580,8 @@ export class UiSpacer {
 /** A SwiftUI `LabeledContent`: a label, and its content beside it. */
 @Component({
   selector: 'ui-labeled-content',
-  template: '<ng-content />',
+  imports: [UiSlot],
+  template: '<ui-slot name="content"><ng-content /></ui-slot>',
   host: { '[label]': 'label()', '[modifiers]': 'modifiers()' },
 })
 export class UiLabeledContent {
@@ -601,7 +602,8 @@ export class UiForm {
 /** A SwiftUI `Section` of a form or a list, under `title`. */
 @Component({
   selector: 'ui-section',
-  template: '<ng-content />',
+  imports: [UiSlot],
+  template: '<ui-slot name="content"><ng-content /></ui-slot>',
   host: { '[title]': 'title()', '[modifiers]': 'modifiers()' },
 })
 export class UiSection {
