@@ -89,4 +89,27 @@ describe('responder negotiation, over a real nested tree', () => {
 
     componentRef.destroy();
   });
+
+  it('presses a second pressable the first time it is pressed, after another one was', async () => {
+    const { document, componentRef, applicationRef: appRef, app } = await bootstrapNested();
+    const text = (label: string) =>
+      [...document.querySelectorAll('text')].find((t) => t.textContent === label)!;
+
+    const pressable = (label: string) => text(label).closest('pressable')!;
+    const focus = (type: 'focusin' | 'focusout', label: string) =>
+      pressable(label).dispatchEvent(new (globalThis as any).Event(type, { bubbles: true }));
+
+    text('outer').dispatchEvent(down(4));
+    focus('focusin', 'outer');
+    text('outer').dispatchEvent(up(4));
+    text('inner').dispatchEvent(down(5));
+    focus('focusout', 'outer');
+    focus('focusin', 'inner');
+    text('inner').dispatchEvent(up(5));
+    appRef.tick();
+
+    assert.deepEqual(app.log(), ['outer', 'inner']);
+
+    componentRef.destroy();
+  });
 });
