@@ -164,6 +164,17 @@ The page is a separate JavaScript runtime from the app, so inputs and output val
 - Functions, signals, observables and injected services cannot cross at all. The component cannot
   inject the app's services; it has an injector of its own, in its own runtime.
 
+## What the app listens to
+
+The app acts only on messages from the page it loaded: the dev server's in development, the
+component's own file in a release build. If a link in the content takes the web view to another
+page, that page's messages are ignored, so it cannot fire an output or ask to be sent changed
+inputs. A message that is not JSON is dropped, and an output name is only looked up among the
+handlers you passed.
+
+The inputs the page reads as it loads are the web view's to give, though, and it gives them to any
+page it shows, so keep secrets out of them.
+
 ## Errors and debugging
 
 An error in the DOM component reaches the app's `ErrorHandler`, prefixed with the file it came

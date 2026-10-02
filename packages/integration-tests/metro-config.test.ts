@@ -20,7 +20,11 @@ const { withAngularNative } = require('@ng-native/metro/config.cjs');
 const { chunkOutsideServerRoot } = require('@ng-native/metro/config.cjs') as {
   chunkOutsideServerRoot(
     url: string,
-    roots: { serverRoot: string; sourceExts: readonly string[] },
+    roots: {
+      serverRoot: string;
+      sourceExts: readonly string[];
+      watchFolders: readonly string[];
+    },
   ): string | undefined;
 };
 
@@ -767,7 +771,11 @@ describe('the Metro preset', () => {
     it("puts the library's path in a source map request too, and keeps the URL's hash", () => {
       const root = workspace();
       try {
-        const roots = { serverRoot: path.join(root, 'apps/mobile'), sourceExts: ['ts'] };
+        const roots = {
+          serverRoot: path.join(root, 'apps/mobile'),
+          sourceExts: ['ts'],
+          watchFolders: [root],
+        };
         const map = chunkOutsideServerRoot(
           `/packages/settings/src/index.map?${query}#line`,
           roots,
@@ -791,6 +799,7 @@ describe('the Metro preset', () => {
         const url = chunkOutsideServerRoot(`/packages/settings/src/two%20words.bundle?${query}`, {
           serverRoot: path.join(root, 'apps/mobile'),
           sourceExts: ['ts'],
+          watchFolders: [root],
         })!;
         assert.equal(
           new URL(url, 'http://localhost:8081').searchParams.get('bundleEntry'),
@@ -801,10 +810,92 @@ describe('the Metro preset', () => {
       }
     });
 
+    /**
+     * The URL keeps a `..` it has percent-encoded, slashes and all, and decoding it would send the
+     * lookup out of the directory it climbed to. The dev server answers anyone on the network.
+     */
+    it('leaves alone a request whose decoded name climbs out, or starts at a root', () => {
+      const root = mkdtempSync(path.join(tmpdir(), 'ng-native-chunks-'));
+      try {
+        const workspace = path.join(root, 'workspace');
+        mkdirSync(path.join(workspace, 'apps/mobile'), { recursive: true });
+        mkdirSync(path.join(root, 'elsewhere'), { recursive: true });
+        writeFileSync(path.join(root, 'elsewhere/secret.ts'), 'export {};\n');
+        const roots = {
+          serverRoot: path.join(workspace, 'apps/mobile'),
+          sourceExts: ['ts'],
+          watchFolders: [root],
+        };
+        for (const name of [
+          '..%2Felsewhere%2Fsecret',
+          '%2E%2E%2Felsewhere%2Fsecret',
+          'apps%2F..%2F..%2Felsewhere%2Fsecret',
+          '%2F..%2Felsewhere%2Fsecret',
+          '..%5Celsewhere%5Csecret',
+          'C%3A%2Felsewhere%2Fsecret',
+          '%E0%A4%A',
+        ]) {
+          const request = `/${name}.bundle?${query}`;
+          assert.equal(chunkOutsideServerRoot(request, roots), undefined, request);
+        }
+        const inherited = `/..%2Felsewhere%2Fsecret.bundle?${query}&bundleEntry=../x.bundle`;
+        assert.equal(
+          chunkOutsideServerRoot(inherited, roots),
+          `/..%2Felsewhere%2Fsecret.bundle?${query}`,
+          'an inherited path is dropped, as for a chunk that is not there',
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    /**
+     * Each directory above the server root is searched, up to the root of the disk, but Metro
+     * bundles only files it watches. A file found anywhere else would only tell the network it is
+     * there, so the search ends at the watch folders.
+     */
+    it('looks for a chunk only in the server root and the watch folders', () => {
+      const root = mkdtempSync(path.join(tmpdir(), 'ng-native-chunks-'));
+      try {
+        const workspace = path.join(root, 'workspace');
+        for (const file of ['apps/mobile/src/main.ts', 'packages/settings/src/index.ts']) {
+          mkdirSync(path.dirname(path.join(workspace, file)), { recursive: true });
+          writeFileSync(path.join(workspace, file), 'export {};\n');
+        }
+        mkdirSync(path.join(root, 'private'), { recursive: true });
+        writeFileSync(path.join(root, 'private/config.ts'), 'export {};\n');
+        const roots = {
+          serverRoot: path.join(workspace, 'apps/mobile'),
+          sourceExts: ['ts'],
+          watchFolders: [workspace],
+        };
+        const outside = `/private/config.bundle?${query}`;
+        assert.equal(chunkOutsideServerRoot(outside, roots), undefined, 'above the workspace');
+        const library = chunkOutsideServerRoot(
+          `/packages/settings/src/index.bundle?${query}`,
+          roots,
+        )!;
+        assert.equal(
+          new URL(library, 'http://localhost:8081').searchParams.get('bundleEntry'),
+          '../../packages/settings/src/index.bundle',
+          'in the workspace, which Metro watches',
+        );
+
+        const { rewriteRequestUrl } = nxConfig(workspace).server;
+        assert.equal(rewriteRequestUrl(outside), outside, "with the preset, Nx's watch folders");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     it('answers nothing for a request that is not a lazy chunk', () => {
       const root = workspace();
       try {
-        const roots = { serverRoot: path.join(root, 'apps/mobile'), sourceExts: ['ts'] };
+        const roots = {
+          serverRoot: path.join(root, 'apps/mobile'),
+          sourceExts: ['ts'],
+          watchFolders: [root],
+        };
         const eager = '/packages/settings/src/index.bundle?platform=ios&dev=true';
         assert.equal(chunkOutsideServerRoot(eager, roots), undefined, 'not modulesOnly');
         assert.equal(chunkOutsideServerRoot(`/status?${query}`, roots), undefined, 'not a bundle');
@@ -825,6 +916,7 @@ describe('the Metro preset', () => {
         const url = chunkOutsideServerRoot(inherited, {
           serverRoot: path.join(root, 'apps/mobile'),
           sourceExts: ['ts'],
+          watchFolders: [root],
         });
         assert.equal(url, `/packages/settings/src/gone.bundle?${query}`);
       } finally {
@@ -836,7 +928,10 @@ describe('the Metro preset', () => {
       const root = workspace();
       try {
         const app = path.join(root, 'apps/mobile');
-        const config = withAngularNative({ ...base(), projectRoot: app }) as MetroConfig & {
+        const config = withAngularNative(
+          { ...base(), projectRoot: app },
+          { workspaceRoot: root },
+        ) as MetroConfig & {
           server: { rewriteRequestUrl(url: string): string };
         };
         const rewritten = config.server.rewriteRequestUrl(

@@ -319,10 +319,14 @@ function withTypeScriptJsImports(next, projectRoot) {
  * A chunk's own lazy imports copy its query, so a `bundleEntry` that climbs out of the server
  * root came from the chunk that imported this one, and is worked out again.
  *
+ * The search climbs to the root of the disk, but a file counts only inside the server root or a
+ * watch folder: Metro bundles nothing else, and the dev server answers anyone on the network, who
+ * would otherwise learn which files exist anywhere on the machine.
+ *
  * @param {string} url
- * @param {{ serverRoot: string, sourceExts: readonly string[] }} roots
+ * @param {{ serverRoot: string, sourceExts: readonly string[], watchFolders: readonly string[] }} roots
  */
-function chunkOutsideServerRoot(url, { serverRoot, sourceExts }) {
+function chunkOutsideServerRoot(url, { serverRoot, sourceExts, watchFolders }) {
   const request = new URL(url, 'http://localhost');
   const [, file, kind] = /^\/(.+)\.(bundle|map)$/.exec(request.pathname) ?? [];
   if (!file || request.searchParams.get('modulesOnly') !== 'true') return undefined;
@@ -331,8 +335,12 @@ function chunkOutsideServerRoot(url, { serverRoot, sourceExts }) {
   const written = () =>
     url.startsWith('/') ? request.pathname + request.search + request.hash : request.href;
 
-  const name = decodeURIComponent(file);
-  const has = (dir) => sourceExts.some((ext) => existsSync(path.join(dir, `${name}.${ext}`)));
+  const name = decodedName(file);
+  if (name === undefined) return inherited ? written() : undefined;
+  const watched = [serverRoot, ...watchFolders].map((folder) => path.resolve(folder));
+  const has = (dir) =>
+    watched.some((folder) => isInside(path.join(dir, name), folder)) &&
+    sourceExts.some((ext) => existsSync(path.join(dir, `${name}.${ext}`)));
   if (!has(serverRoot)) {
     for (let dir = path.dirname(serverRoot); dir !== path.dirname(dir); dir = path.dirname(dir)) {
       if (!has(dir)) continue;
@@ -342,6 +350,37 @@ function chunkOutsideServerRoot(url, { serverRoot, sourceExts }) {
     }
   }
   return inherited ? written() : undefined;
+}
+
+/** Whether `file` is `folder` or below it. */
+function isInside(file, folder) {
+  const relative = path.relative(folder, file);
+  return !path.isAbsolute(relative) && relative.split(path.sep)[0] !== '..';
+}
+
+/**
+ * A chunk's name from its URL, decoded, or nothing for one that is not a path below a directory.
+ *
+ * The URL normalizes away a `..` it can see, not one it percent-encoded, so decoding can bring one
+ * back, and the dev server answers anyone on the network. A name with a `..` segment, a root of
+ * its own (`/`, `C:`) or a backslash would look for files outside the directory being searched,
+ * and is left to Metro, as is one that does not decode.
+ *
+ * @param {string} file
+ */
+function decodedName(file) {
+  let name;
+  try {
+    name = decodeURIComponent(file);
+  } catch {
+    return undefined;
+  }
+  const outside =
+    name.startsWith('/') ||
+    name.includes('\\') ||
+    /^[a-z]:/i.test(name) ||
+    name.split('/').includes('..');
+  return outside ? undefined : name;
 }
 
 /**
@@ -358,6 +397,7 @@ function withChunksOutsideServerRoot(config) {
         config.server?.unstable_serverRoot ?? config.projectRoot ?? process.cwd(),
       ),
       sourceExts: config.resolver.sourceExts,
+      watchFolders: [config.projectRoot ?? process.cwd(), ...(config.watchFolders ?? [])],
     };
     return chunkOutsideServerRoot(rewritten, roots) ?? rewritten;
   };

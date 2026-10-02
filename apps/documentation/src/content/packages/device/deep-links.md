@@ -45,6 +45,13 @@ that resolves `initialUrl()` races the first navigation and neither order is gua
 
 `open(url)` hands a url to whatever else on the device handles it: a browser, Maps, another app.
 
+A url that came from a person or a server can name any scheme, another app's included. Check it
+against the schemes you mean to open, usually `https:` and the app's own, before passing it to
+`open()`, to [`Browser`](/packages/expo/browser)'s `open()` or to a `ui-link`'s `destination`.
+
+Opening goes the other way too: any app or web page can open any of your routes by deep link, so a
+route that acts as it arrives needs a guard (see [Router](/packages/router)).
+
 `@ng-native/router`'s `provideNativeRouter(routes)` wires this into `PlatformLocation` for you, so
 most apps never call `DeepLinks` directly.
 

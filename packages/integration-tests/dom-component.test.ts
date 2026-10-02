@@ -34,10 +34,14 @@ describe('a DOM component in the app', () => {
     app.applicationRef.tick();
     await new Promise((resolve) => setTimeout(resolve, 0));
   };
-  const post = async (message: unknown) => {
-    fabric.emit(view(), 'topMessage', { data: JSON.stringify(message) });
+  /** The URL the web view reports for its own page: the one it was told to load. */
+  const page = 'http://192.168.1.5:8081/_expo/@dom/note.ts?file=file:///app/web/note.ts';
+  /** `null` for no URL at all, as no version of the web view sends but a message could lack. */
+  const postRaw = async (data: string, url: string | null = page) => {
+    fabric.emit(view(), 'topMessage', url === null ? { data } : { data, url });
     await settle();
   };
+  const post = (message: unknown, url?: string | null) => postRaw(JSON.stringify(message), url);
 
   before(async () => {
     const mod = await compileFixture(
@@ -131,5 +135,88 @@ describe('a DOM component in the app', () => {
   it("hands the page's errors to the app's ErrorHandler", async () => {
     await post({ type: 'error', message: 'the note failed' });
     assert.match(String(errors[0]), /note\.ts.*the note failed/);
+  });
+
+  /**
+   * The web view reports every message with the URL of the page it is showing. A link in rendered
+   * content can take it to another page, which the native side must not treat as the component.
+   */
+  describe('a message from a page other than its own', () => {
+    it('fires no output and gets no inputs', async () => {
+      await post({ type: 'ready', outputs: ['sent'] }, 'https://evil.example/note.ts');
+      assert.equal(injected.length, 0, 'the inputs stay in the app');
+      await post({ type: 'output', name: 'sent', value: 'forged' }, 'https://evil.example/');
+      assert.deepEqual(fixture.sent, []);
+      assert.deepEqual(errors, []);
+    });
+
+    it('is ignored when the web view names no page at all', async () => {
+      await post({ type: 'ready', outputs: ['sent'] }, '');
+      await post({ type: 'output', name: 'sent', value: 'forged' }, null);
+      assert.equal(injected.length, 0);
+      assert.deepEqual(fixture.sent, []);
+    });
+
+    it('is heard from anywhere on the dev server that serves its page', async () => {
+      await post({ type: 'ready', outputs: ['sent'] }, `${page}#section`);
+      await post({ type: 'output', name: 'sent', value: 'Hi' }, 'http://192.168.1.5:8081/x');
+      assert.deepEqual(fixture.sent, ['Hi'], 'the dev server is the app');
+      assert.equal(injected.length, 1);
+    });
+  });
+
+  it('drops a message that is not JSON, without throwing', async () => {
+    await postRaw('not json {');
+    assert.deepEqual(errors, []);
+    assert.equal(injected.length, 0);
+  });
+
+  it("does nothing for an output named after an object's own members", async () => {
+    await post({ type: 'ready', outputs: ['sent'] });
+    for (const name of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+      await post({ type: 'output', name, value: 'x' });
+    }
+    assert.deepEqual(errors, []);
+    assert.deepEqual(fixture.sent, []);
+  });
+});
+
+/** A release build loads the page from a file the app ships, which iOS names relative to it. */
+describe('a DOM component in a release build', () => {
+  let Fixture: Type<unknown>;
+
+  before(async () => {
+    const mod = await compileFixture(
+      fileURLToPath(new URL('./fixtures/dom-component.ts', import.meta.url)),
+    );
+    Fixture = mod['DomComponentFixture'] as Type<unknown>;
+  });
+
+  const run = async (baseUrl: string, url: string) => {
+    const fabric = createFakeFabric();
+    const app = mount(1, Fixture, fabric, {
+      providers: [{ provide: DomComponent.SOURCE, useValue: { baseUrl, functions: null } }],
+    });
+    app.applicationRef.tick();
+    const fixture = app.componentRef.instance as Fixture;
+    const data = JSON.stringify({ type: 'output', name: 'sent', value: 'Hi' });
+    fabric.emit(fabric.committed[0]!.children[0]!, 'topMessage', { data, url });
+    app.applicationRef.tick();
+    return fixture.sent;
+  };
+
+  it('hears its page from the file the web view resolved', async () => {
+    const ios = 'file:///private/var/containers/Bundle/Application/A1/App.app/www.bundle/note.ts';
+    assert.deepEqual(await run('www.bundle', ios), ['Hi'], 'iOS, relative to the app');
+    assert.deepEqual(
+      await run('file:///android_asset/www.bundle', 'file:///android_asset/www.bundle/note.ts'),
+      ['Hi'],
+      'Android',
+    );
+  });
+
+  it('ignores any other page', async () => {
+    assert.deepEqual(await run('www.bundle', 'https://evil.example/www.bundle/note.ts'), []);
+    assert.deepEqual(await run('www.bundle', 'file:///App.app/www.bundle/other.html'), []);
   });
 });

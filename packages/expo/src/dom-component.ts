@@ -30,6 +30,10 @@
  * - **`outputs`** map the component's outputs, by public name, to handlers. A name the component
  *   has no output for is an error naming the ones it does have, as `<ng-native-island>`'s is.
  * - **Errors** the page throws reach the app's `ErrorHandler`.
+ * - **Only its own page is heard.** A message from any other page the web view shows, after a link
+ *   in the content, say, is ignored, as is one that is not JSON. The inputs given before the page
+ *   loads are the web view's to hand out, though, and it hands them to whatever page it is showing,
+ *   so they are no place for a secret.
  */
 import {
   Component,
@@ -144,14 +148,34 @@ export class DomComponent {
     });
   }
 
-  protected receive(event: NativeSyntheticEvent<{ data: string }>): void {
-    const message = JSON.parse(event.nativeEvent.data) as PageMessage;
+  protected receive(event: NativeSyntheticEvent<{ data: string; url?: string }>): void {
+    const { data, url } = event.nativeEvent;
+    const source = this.source();
+    if (!source || !isOwnPage(url, source.uri)) {
+      if (this.debuggable) {
+        console.warn(
+          `[angular-native] <dom-component> ${this.name()}: ignored a message from ` +
+            `${url || 'an unnamed page'}, which is not its own page.`,
+        );
+      }
+      return;
+    }
+    const message = parse(data);
+    if (!message) {
+      if (this.debuggable) {
+        console.warn(
+          `[angular-native] <dom-component> ${this.name()}: dropped a message that is not JSON.`,
+        );
+      }
+      return;
+    }
     if (message.type === 'ready') {
       this.checkOutputs(message.outputs);
       this.ready = true;
       this.send(this.inputs());
     } else if (message.type === 'output') {
-      this.outputs()[message.name]?.(message.value as never);
+      const outputs = this.outputs();
+      if (Object.hasOwn(outputs, message.name)) outputs[message.name]!(message.value as never);
     } else if (message.type === 'error') {
       throw new Error(`[angular-native] <dom-component> ${this.name()}: ${message.message}`);
     }
@@ -176,6 +200,40 @@ export class DomComponent {
       { nativeTag },
       `window.__ngNative && window.__ngNative.receive(${message}); true;`,
     );
+  }
+}
+
+/**
+ * Whether the page a message came from is the one the component loaded, so a page the web view
+ * was taken to (by a link in the content, say) cannot fire the app's outputs or ask for its inputs.
+ *
+ * The web view names the page it is showing, not the frame that posted, so this tells pages apart
+ * and not an iframe from the page that holds it. Every message is named on both platforms, from
+ * the web view's own URL; one with no URL cannot be placed, so it is not trusted either.
+ *
+ * - **Served by the dev server**, the page is trusted by origin: that server serves the app itself.
+ * - **Loaded from a file** in a release build or an update, the page is trusted by file name. The
+ *   web view reports the file as the native side resolved it, which differs from the source URI
+ *   before the name (on iOS the source is `www.bundle/...`, relative to the app), so the page must
+ *   be a `file:` URL whose file name is the source's, a hash of the component's path.
+ */
+function isOwnPage(url: string | undefined, source: string): boolean {
+  if (!url) return false;
+  const served = /^https?:\/\/[^/?#]+/i.exec(source)?.[0];
+  if (served) return url.toLowerCase().startsWith(`${served.toLowerCase()}/`);
+  return /^file:/i.test(url) && fileName(url) === fileName(source);
+}
+
+function fileName(url: string): string {
+  return url.split(/[?#]/)[0]!.split('/').at(-1)!;
+}
+
+function parse(data: string): PageMessage | undefined {
+  try {
+    const message: unknown = JSON.parse(data);
+    return typeof message === 'object' && message !== null ? (message as PageMessage) : undefined;
+  } catch {
+    return undefined;
   }
 }
 

@@ -48,6 +48,10 @@ of destroying it (what keeps a pushed-away screen's scroll position and text inp
 `HardwareBack` and `DeepLinks` and need no wiring here - both already fall back to doing nothing off
 a device.
 
+Any app or web page on the device can open any of your routes by deep link, with whatever params
+and query it likes. A route that acts as it arrives (deletes, pays, signs out, changes a setting)
+needs a guard, or the person's confirmation on the page, rather than trusting the URL it came by.
+
 The native options are passed the same way: `withLinkParent` for deep links, and
 `withHeaderDefaults` and `withTabDefaults` for how every [header](/packages/router/header) and
 [tab bar](/packages/router/tabs) looks when a screen does not say.

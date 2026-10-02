@@ -54,6 +54,10 @@ export class SignIn {
   It resolves to that URL, with its `code` or `token` in the query string, ready for the app to
   exchange - or to **null** if the person closed it first.
 
+A URL that came from a person or a server can name any scheme. Check it against the schemes you
+mean to open, usually `https:` and the app's own, before passing it to `open()`, to
+[`DeepLinks`](/packages/device/deep-links)' `open()` or to a `ui-link`'s `destination`.
+
 As of iOS 11, `SFSafariViewController` no longer shares cookies with Safari - `signIn()`'s
 `ASWebAuthenticationSession` does, which is why sign-in uses it and `open()` does not.
 
