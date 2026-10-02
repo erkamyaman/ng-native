@@ -56,6 +56,7 @@ export function installJsdomEnvironment(): { document: Document; window: Window 
     HTMLElement: window.HTMLElement,
     Text: window.Text,
     Comment: window.Comment,
+    NodeFilter: window.NodeFilter,
     Event: window.Event,
     PointerEvent: window.PointerEvent ?? window.MouseEvent,
     KeyboardEvent: window.KeyboardEvent,

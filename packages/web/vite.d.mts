@@ -9,3 +9,10 @@ import type { Plugin } from 'vite';
  * `emitClassMetadata: false`.
  */
 export declare function ngNativeWeb(options?: PluginOptions): Plugin[];
+
+/**
+ * `ngNativeWeb()` without the compiler, for an app whose own Angular plugin compiles its
+ * components, as Analog's does: the resolution, and `@oxc-angular/vite`'s linker for the
+ * `@ng-native/*` packages.
+ */
+export declare function ngNativeWebLink(): Plugin[];

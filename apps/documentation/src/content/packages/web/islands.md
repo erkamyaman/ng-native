@@ -19,7 +19,8 @@ kinds, and the difference is who owns it:
 Either way, the page builds with Vite and `ngNativeWeb()` from `@ng-native/web/vite`, as
 [Setting up a browser app](/packages/web#setting-up-a-browser-app) describes. For an existing
 Angular app that is its build: `ngNativeWeb()` compiles the app's own components, with
-`bootstrapApplication` from `@angular/platform-browser`, as well as the islands inside them.
+`bootstrapApplication` from `@angular/platform-browser`, as well as the islands inside them. An
+Analog app keeps its own compiler; see [In an Analog app](#in-an-analog-app).
 
 ## In a template: `<ng-native-island>`
 
@@ -153,6 +154,56 @@ stylesheet on a device before relying on it.
 - **One component per island.** Nest as much as you like inside it, but an island's own inputs and
   outputs are the component's, so put a small wrapper component around several if they need to
   share a region.
+
+## In an Analog app
+
+[Analog](https://analogjs.org) compiles an app's components with its own Angular plugin, so it
+takes `ngNativeWebLink()` from `@ng-native/web/vite` instead of `ngNativeWeb()`: the same browser
+resolution and `@oxc-angular/vite`'s linker, without a second compiler. The linker is the part
+Analog needs. Its own links only the paths `@angular/*` ship their bundles under, and the
+`@ng-native/*` packages ship compiled output in `dist/`, which `@oxc-angular/vite`'s linker finds by
+what a file holds rather than by where it is.
+
+```ts
+// vite.config.ts
+import analog from '@analogjs/platform';
+import { ngNativeWebLink } from '@ng-native/web/vite';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  // ...the rest of the app's config, as Analog generated it
+  plugins: [analog(), ...ngNativeWebLink()],
+  ssr: { noExternal: [/^@ng-native\//] },
+});
+```
+
+`ssr.noExternal` bundles the packages into the server build with the app, so there is one copy of
+`@angular/core` on the server rather than one for the app and another for the packages.
+
+An island renders only in the browser, never on the server (see
+[No SSR or hydration](/guide/limitations#no-ssr-or-hydration)), so put it in a `@defer` block. The
+server renders the placeholder, and the island mounts once the page is running in a browser:
+
+```ts
+@Component({
+  selector: 'account-page',
+  imports: [NgNativeIsland],
+  template: `
+    @defer {
+      <ng-native-island [component]="wallet" />
+    } @placeholder {
+      <p>Loading your wallet</p>
+    }
+  `,
+})
+export class AccountPage {
+  protected readonly wallet = Wallet;
+}
+```
+
+`provideClientHydration()`, which Analog turns on, can stay on. The page around the island
+hydrates as usual, and the element an island is mounted into is marked `ngSkipHydration`, Angular's
+own opt-out, so the island renders from scratch inside it.
 
 ## An app of its own
 

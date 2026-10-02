@@ -14,7 +14,7 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { build, optimizeDeps, resolveConfig, type Plugin, type UserConfig } from 'vite';
-import { ngNativeWeb } from '../vite.mjs';
+import { ngNativeWeb, ngNativeWebLink } from '../vite.mjs';
 
 const config = () => {
   const found = ngNativeWeb().find((candidate) => candidate.name === 'ng-native:config');
@@ -119,5 +119,58 @@ describe("@ng-native/device's guard, through Vite", () => {
     assert.doesNotMatch(readFileSync(bundled, 'utf8'), /from "react-native"/);
     const { reactNative } = (await evaluate(bundled)) as { reactNative(): unknown };
     assert.equal(reactNative(), null);
+  });
+});
+
+/**
+ * `ngNativeWebLink()`, for an app whose own Angular plugin compiles it, as Analog's does: a package
+ * that ships `ngc` output in `dist/`, as the `@ng-native/*` packages do, built with nothing else.
+ */
+describe('ngNativeWebLink()', () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'ng-native-web-link-')));
+  const write = (file: string, text: string) => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), text);
+  };
+  write(
+    'node_modules/library/package.json',
+    JSON.stringify({ name: 'library', type: 'module', main: 'dist/index.js' }),
+  );
+  write(
+    'node_modules/library/dist/index.js',
+    [
+      "import * as i0 from '@angular/core';",
+      'export class Clock {}',
+      'Clock.ɵprov = i0.ɵɵngDeclareInjectable({ minVersion: "12.0.0", version: "22.2.0", ' +
+        'ngImport: i0, type: Clock, providedIn: "root" });',
+    ].join('\n'),
+  );
+  write('main.js', "export { Clock } from 'library';\n");
+
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  it('is the resolution and the linker, without the compiler', () => {
+    assert.deepEqual(
+      ngNativeWebLink().map((plugin) => plugin.name),
+      ['ng-native:config', '@oxc-angular/vite-linker'],
+    );
+  });
+
+  it("links a package's partial declarations in dist/", async () => {
+    await build({
+      root,
+      configFile: false,
+      logLevel: 'silent',
+      plugins: ngNativeWebLink(),
+      build: {
+        outDir: 'build',
+        minify: false,
+        lib: { entry: 'main.js', formats: ['es'], fileName: 'main' },
+        rolldownOptions: { external: ['@angular/core'] },
+      },
+    });
+    const built = readFileSync(path.join(root, 'build/main.mjs'), 'utf8');
+    assert.doesNotMatch(built, /ɵɵngDeclareInjectable/);
+    assert.match(built, /ɵɵdefineInjectable/);
   });
 });

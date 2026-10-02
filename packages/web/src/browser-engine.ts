@@ -193,10 +193,18 @@ export class BrowserEngine extends HostEngine {
     return makeAnchorNode(this.document.createComment(''));
   }
 
-  /** Wrap an existing real element - the app's own mount point - as the tree's root node. */
+  /**
+   * Wrap an existing real element - the app's own mount point - as the tree's root node.
+   *
+   * `ngSkipHydration` is Angular's own opt-out, and true of every tree this engine renders: none
+   * is server-rendered, so there is no markup to reuse. With hydration on, Angular reads it on a
+   * root component's host element, and without it walks that element's DOM for text markers,
+   * which a node is not.
+   */
   wrapRoot(el: Element): BrowserNode {
     const node = makeElementNode(el.tagName.toLowerCase(), el);
     el.setAttribute('data-rn', 'root');
+    el.setAttribute('ngSkipHydration', '');
     this.roots.add(node);
     this.owned.add(node);
     return node;

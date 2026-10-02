@@ -296,8 +296,9 @@ An existing Angular web app can host Angular Native components in any of its tem
 `<ng-native-island>`, or from code with `mount(element, component, { injector })`. The island joins
 the app: it uses the app's services and is checked by its change detection, while rendering
 `<view>`, `<text>` and `<pressable>` through this package. The app builds with Vite and
-`ngNativeWeb()`, as above. [Islands](/packages/web/islands) covers both, and what an island shares
-with the app and what it keeps.
+`ngNativeWeb()`, as above. [Islands](/packages/web/islands) covers both, what an island shares with
+the app and what it keeps, and an [Analog](/packages/web/islands#in-an-analog-app) app, which
+builds with `ngNativeWebLink()` and can keep hydration on.
 
 ## The other way round
 

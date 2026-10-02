@@ -70,6 +70,9 @@ Neither native nor web supports server rendering or hydration. Native `mount()` 
 Fabric UI manager; `@ng-native/web`'s `mount()` targets a real `document`. For prerendered pages,
 build prose statically and mount live examples on the client.
 
+A server-rendered Angular web app can still host [islands](/packages/web/islands#in-an-analog-app):
+the page renders on the server and hydrates, and each island renders in the browser alone.
+
 ## `HttpClient` needs `provideNativeHttpClient()`
 
 Angular 22's default `fetch` backend reads a response body only through `response.body`'s

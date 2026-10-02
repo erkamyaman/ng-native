@@ -98,3 +98,21 @@ function config() {
 export function ngNativeWeb(options = {}) {
   return [config(), ...angular({ zoneless: true, emitClassMetadata: false, ...options })];
 }
+
+/** The plugins of `ngNativeWeb()` that `ngNativeWebLink()` keeps. */
+const LINK = new Set(['ng-native:config', '@oxc-angular/vite-linker']);
+
+/**
+ * `ngNativeWeb()` without the compiler, for an app whose own Angular plugin compiles its
+ * components, as Analog's does: the resolution, and `@oxc-angular/vite`'s linker.
+ *
+ * The linker is the part such an app lacks. Analog's runs only on paths with `/fesm20` in them,
+ * where `@angular/*` ship their bundles, and the `@ng-native/*` packages ship `ngc` output in
+ * `dist/` instead. `@oxc-angular/vite`'s goes by what a file holds, so it links them wherever they
+ * are, and leaves a file it finds nothing to link in alone.
+ *
+ * @returns {import('vite').Plugin[]}
+ */
+export function ngNativeWebLink() {
+  return ngNativeWeb().filter((plugin) => LINK.has(plugin.name));
+}

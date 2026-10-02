@@ -3,12 +3,12 @@
  * writes what each route drew back to disk, so a request for `/packages/components/touch` answers
  * with that page's prose instead of an empty `<app-root>`.
  *
- * A browser, rather than `@angular/ssr` or Analog, and the reason is the one `docs/documentation-
- * site.md` records: `@angular/build`, `@angular/compiler-cli` and `@analogjs/vite-plugin-angular`
- * all depend on `@babel/core@^8`, React Native declares `@babel/core` as a peer with no range at
- * all, and pnpm answers an unconstrained peer with the highest copy in the workspace. Installing
- * any of them moves Metro and every `@react-native/babel-*` plugin onto a Babel major none of them
- * supports, and scoped `overrides` do not help because auto-installed peers ignore them. Playwright
+ * A browser, rather than `@angular/ssr` or Analog, because of Babel: `@angular/build`,
+ * `@angular/compiler-cli` and `@analogjs/vite-plugin-angular` all depend on `@babel/core@^8`,
+ * React Native declares `@babel/core` as a peer with no range at all, and pnpm answers an
+ * unconstrained peer with the highest copy in the workspace. Installing any of them moves Metro and
+ * every `@react-native/babel-*` plugin onto a Babel major none of them supports, and scoped
+ * `overrides` do not help because auto-installed peers ignore them. Playwright
  * is already here for `packages/web`'s browser suite, it has no Babel in its graph, and a headless
  * Chromium renders this site exactly as a reader's browser would - including the parts of it that
  * only a real layout engine can produce.

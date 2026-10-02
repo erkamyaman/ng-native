@@ -29,6 +29,14 @@ export interface BrowserNode extends HostNode {
   readonly name: string;
   /** `name` again on an element, for Angular 22.0, which reads it on a component's host element. */
   readonly tagName?: string;
+  /**
+   * The wrapped element's attributes, on an element, for Angular's hydration. Once an app on the
+   * page calls `provideClientHydration()`, every component's host element is asked for
+   * `ngSkipHydration` and `ngh`, an island's included, whatever renderer created it. See
+   * `BrowserEngine.wrapRoot` for the answer that keeps hydration out of an island.
+   */
+  readonly hasAttribute?: (this: BrowserNode, name: string) => boolean;
+  readonly getAttribute?: (this: BrowserNode, name: string) => string | null;
   props: Record<string, unknown>;
   text: string;
   children: BrowserNode[];
@@ -57,6 +65,14 @@ const registry = new WeakMap<Element | Text | Comment, BrowserNode>();
  */
 const SVG_BRUSH_ELEMENTS = new Set(['svg-g', 'svg-path', 'svg-circle', 'svg-ellipse', 'svg-rect']);
 
+function hasAttribute(this: BrowserNode, name: string): boolean {
+  return (this.el as Element).hasAttribute(name);
+}
+
+function getAttribute(this: BrowserNode, name: string): string | null {
+  return (this.el as Element).getAttribute(name);
+}
+
 export function makeElementNode(name: string, el: Element): BrowserNode {
   const props: Record<string, unknown> = {};
   // `packages/icons/src/svg-props.ts`'s `brushOf` turns a literal `fill="none"`/`stroke="none"`
@@ -81,6 +97,8 @@ export function makeElementNode(name: string, el: Element): BrowserNode {
     el,
     name,
     tagName: name,
+    hasAttribute,
+    getAttribute,
     props,
     text: '',
     children: [],
