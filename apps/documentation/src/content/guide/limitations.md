@@ -61,8 +61,9 @@ resolve to 8, and a worklets bundle then fails.
 
 ## Angular DevTools does not attach
 
-Angular DevTools requires a browser DOM component tree, so it cannot attach on a device. Use
-Hermes, React Native's debugger and the renderer's committed tree.
+Angular's DevTools extension reads a browser's DOM, so it cannot attach on a device. Use
+[Pangular Inspector](/guide/inspector) for components, signals and injectors, and React Native's
+debugger for breakpoints and the console.
 
 ## No SSR or hydration
 

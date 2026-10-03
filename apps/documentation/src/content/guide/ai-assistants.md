@@ -45,3 +45,8 @@ Each build generates both from the site's markdown, keeping them in sync.
 For an app set up by hand, save [`/agents.md`](/agents.md) as `AGENTS.md` at the app's root, and
 add a Commands section with the commands your app runs. It is the template's file without the
 template's own commands, rebuilt from the template on every deploy of this site.
+
+## A running app
+
+[Pangular Inspector](/guide/inspector)'s server speaks MCP, so an agent can read a running app's
+component tree, signals and injectors from the simulator rather than guessing from the source.
