@@ -347,10 +347,15 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     }
   }
 
+  /**
+   * Take the screen in front off the stack, when there is one: nothing once the router has
+   * detached it, as Angular's own outlet does nothing then. A route with no component of its own,
+   * a `loadChildren` wrapper or a group, has the router detach the page under it and then
+   * deactivate this same outlet, and that page is a screen pushed from, still to come back to.
+   */
   deactivate(): void {
-    const entry = this.entries.pop();
-    if (!entry) return;
-    this.drop(entry);
+    if (!this.isActivated) return;
+    this.drop(this.entries.pop()!);
   }
 
   /**

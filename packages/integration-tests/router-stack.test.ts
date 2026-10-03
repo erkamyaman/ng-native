@@ -201,6 +201,74 @@ describe('a native stack driven by the router', () => {
     });
   });
 
+  /**
+   * A route with no component of its own, a `loadChildren` wrapper or a group, leaves the router
+   * detaching the page under it and then deactivating the outlet the page was in. That outlet is
+   * the stack, and the page it just detached is still on it, covered, as for any push.
+   */
+  describe('a push from a page under a route with no component', () => {
+    const members = () => mod['members'] as { note: { set(value: string): void } }[];
+
+    beforeEach(() => {
+      members().length = 0;
+    });
+
+    it('keeps the page under a loadChildren wrapper, and back returns to it as it was', async () => {
+      await nav.push('/member/1');
+      await idle();
+      members()[0]!.note.set('edited');
+      await nav.push('/user/1');
+      await idle();
+      assert.deepEqual(stack(fabric), ['home', 'member edited', 'user 1']);
+      assert.equal(live['Member'], 1, 'the page pushed from is still alive');
+
+      nav.back();
+      await idle();
+      assert.equal(router.url, '/member/1');
+      assert.deepEqual(stack(fabric), ['home', 'member edited']);
+      assert.equal(created['Member'], 1, 'the same page, not a new one');
+      assert.equal(live['User'], 0);
+
+      await nav.push('/user/2');
+      await idle();
+      assert.deepEqual(stack(fabric), ['home', 'member edited', 'user 2']);
+      nav.back();
+      await idle();
+      assert.deepEqual(stack(fabric), ['home', 'member edited']);
+      assert.equal(created['Member'], 1);
+    });
+
+    it('keeps a page in a group of routes, and back returns to it', async () => {
+      await nav.push('/grouped');
+      await nav.push('/user/1');
+      await idle();
+      assert.deepEqual(stack(fabric), ['home', 'grouped', 'user 1']);
+      assert.equal(live['Grouped'], 1);
+
+      nav.back();
+      await idle();
+      assert.equal(router.url, '/grouped');
+      assert.deepEqual(stack(fabric), ['home', 'grouped']);
+      assert.equal(created['Grouped'], 1);
+    });
+
+    it('still drops the page for a replace, and only that page', async () => {
+      await nav.push('/member/1');
+      await nav.replace('/user/1');
+      await idle();
+      assert.deepEqual(stack(fabric), ['home', 'user 1']);
+      assert.equal(live['Member'], 0, 'the page replaced is destroyed');
+    });
+
+    it('still drops every page for a reset', async () => {
+      await nav.push('/member/1');
+      await nav.reset('/user/1');
+      await idle();
+      assert.deepEqual(stack(fabric), ['user 1']);
+      assert.equal(live['Member'], 0);
+    });
+  });
+
   describe('a push from a presented screen', () => {
     /** The app stack's own screens, bottom first: what each says, and how it is presented. */
     const appStack = () =>

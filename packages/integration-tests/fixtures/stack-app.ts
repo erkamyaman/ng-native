@@ -1,4 +1,4 @@
-import { Component, DestroyRef, inject, input } from '@angular/core';
+import { Component, DestroyRef, inject, input, signal } from '@angular/core';
 import type { Routes } from '@angular/router';
 import { Text } from '../../components/src/text.ts';
 import { NativeStackOutlet } from '../../router/src/native-stack-outlet.ts';
@@ -42,6 +42,27 @@ export class Photo {
   readonly index = input.required<string>();
   constructor() {
     track('Photo');
+  }
+}
+
+/** A page under a route with no component of its own, holding state a test can change. */
+@Component({ selector: 'x-member', imports: [Text], template: `<text>member {{ note() }}</text>` })
+export class Member {
+  readonly note = signal('fresh');
+  constructor() {
+    track('Member');
+    members.push(this);
+  }
+}
+
+/** Every `Member` created, oldest first. */
+export const members: Member[] = [];
+
+/** A page in a group of routes with no component of its own. */
+@Component({ selector: 'x-grouped', imports: [Text], template: `<text>grouped</text>` })
+export class Grouped {
+  constructor() {
+    track('Grouped');
   }
 }
 
@@ -115,6 +136,8 @@ export const routes: Routes = [
     ],
   },
   { path: 'user/:id', component: User },
+  { path: 'member/:id', loadChildren: () => [{ path: '', component: Member }] },
+  { path: '', children: [{ path: 'grouped', component: Grouped }] },
   reuseScreen({ path: 'photo/:index', component: Photo }),
   { path: 'modal', component: Modal },
   { path: 'broken', component: Broken },

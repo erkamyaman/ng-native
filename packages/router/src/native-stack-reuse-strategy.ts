@@ -157,9 +157,13 @@ export class NativeStackReuseStrategy extends BaseRouteReuseStrategy {
    * Whether the router goes back to a kept screen for this url. Not for a push: a push to a url
    * already on the stack is a new screen over it, as a native stack makes one, and Back returns
    * to where the push came from. Going back to the kept one is a back, or `popTo`.
+   *
+   * Never for a route with no component, which is never kept: the router asks for every route,
+   * and a group at path `''` has the same url as a page at `''` beside it, whose screen it would
+   * otherwise be handed.
    */
   override shouldAttach(route: ActivatedRouteSnapshot): boolean {
-    if (this.pushing()) return false;
+    if (route.component === null || this.pushing()) return false;
     return this.retrieve(route) !== null;
   }
 
