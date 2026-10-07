@@ -23,6 +23,8 @@ export interface PoppableStack {
   popToRoot(): Promise<boolean> | null;
   /** Pop to the screen showing `url`, or null when no screen below the top shows it. */
   popTo(url: string): Promise<boolean> | null;
+  /** Take every screen under the top off at once, or false when it is showing only that one. */
+  dropUnderTop(): boolean;
 }
 
 /**
@@ -94,6 +96,15 @@ export class NativeBack {
       if (popped) return popped;
     }
     return Promise.resolve(false);
+  }
+
+  /**
+   * Take the screens under the top of the innermost stack in front that has any off it, leaving
+   * the top one: a reset to the url already showing, which the router skips. False when no stack
+   * in front had any.
+   */
+  resetToTop(): boolean {
+    return [...this.stacks].reverse().some((stack) => stack.showing() && stack.dropUnderTop());
   }
 
   /** Pop the innermost stack in front that has a screen at `url` below its top, down to it. */

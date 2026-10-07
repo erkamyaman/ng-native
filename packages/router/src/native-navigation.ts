@@ -19,6 +19,8 @@ import {
   NavigationCancellationCode,
   NavigationEnd,
   NavigationError,
+  NavigationSkipped,
+  NavigationSkippedCode,
   Router,
   type Navigation,
   type NavigationExtras,
@@ -88,18 +90,51 @@ export function navigationIntent(
 /**
  * Hand a navigation's intent on to the one its guard redirects it to. The router schedules that
  * navigation as soon as it has reported the cancel, so it takes the next id.
+ *
+ * A reset to the url already showing, its own or the one a guard sends it to, is one the router
+ * skips: no outlet activates anything for it, so the stack is reset here, to the screen on top.
  */
 export function carryIntentAcrossRedirects(): void {
   const router = inject(Router);
+  const outlets = inject(NativeBack);
   const events = router.events.subscribe((event) => {
-    if (!(event instanceof NavigationCancel)) return;
-    if (event.code !== NavigationCancellationCode.Redirect) return;
-    const navigation = router.currentNavigation();
-    const intent = navigation?.id === event.id ? navigationIntent(router, navigation) : null;
-    if (intent) redirected.set(router, { id: event.id + 1, intent });
-    else redirected.delete(router);
+    if (event instanceof NavigationCancel && event.code === NavigationCancellationCode.Redirect) {
+      carryPast(router, event.id);
+      return;
+    }
+    if (
+      event instanceof NavigationSkipped &&
+      event.code === NavigationSkippedCode.IgnoredSameUrlNavigation &&
+      intentAt(router, event.id)?.stack === 'reset'
+    ) {
+      outlets.resetToTop();
+    }
+    if (ended(event) && redirected.get(router)?.id === event.id) redirected.delete(router);
   });
   inject(DestroyRef).onDestroy(() => events.unsubscribe());
+}
+
+/** The intent of the navigation in progress, when it is the one with `id`. */
+function intentAt(router: Router, id: number): NativeIntent | null {
+  const navigation = router.currentNavigation();
+  return navigation?.id === id ? navigationIntent(router, navigation) : null;
+}
+
+/** Hold the intent of the navigation a guard redirected for the one the redirect starts. */
+function carryPast(router: Router, id: number): void {
+  const intent = intentAt(router, id);
+  if (intent) redirected.set(router, { id: id + 1, intent });
+  else redirected.delete(router);
+}
+
+/** Whether the event is the last a navigation reports. */
+function ended(event: unknown): event is { readonly id: number } {
+  return (
+    event instanceof NavigationEnd ||
+    event instanceof NavigationCancel ||
+    event instanceof NavigationError ||
+    event instanceof NavigationSkipped
+  );
 }
 
 export class NativeNavigation {

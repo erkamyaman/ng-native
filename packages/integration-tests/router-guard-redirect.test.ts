@@ -129,3 +129,27 @@ it("keeps the intent through a route config's own redirect", async () => {
   await turns();
   assert.deepEqual(pages(reset.app), ['Login']);
 });
+
+it('resets the stack to the page on top when a guard redirects a reset to its url', async () => {
+  const { app, nav, router } = await twoDeep();
+  await router.navigateByUrl('/login');
+  await turns();
+  assert.deepEqual(pages(app), ['A', 'B', 'Login']);
+
+  await nav.reset('/home');
+  await turns();
+  assert.equal(router.url, '/login');
+  assert.deepEqual(pages(app), ['Login'], 'the router skips the same url, and the stack resets');
+
+  await router.navigateByUrl('/b');
+  await turns();
+  assert.deepEqual(pages(app), ['Login', 'B'], 'pushed, not a second reset');
+});
+
+it('resets the stack to the page on top for a reset to its own url', async () => {
+  const { app, nav, router } = await twoDeep();
+  await nav.reset('/b');
+  await turns();
+  assert.equal(router.url, '/b');
+  assert.deepEqual(pages(app), ['B']);
+});

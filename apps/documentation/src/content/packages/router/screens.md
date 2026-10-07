@@ -55,7 +55,9 @@ with, because it rode in history state along with everything else.
 A guard that redirects, by returning a `UrlTree`, sends the navigation to its page with the same
 intent: `reset('/home')` from a signed-out user whose `home` guard redirects to `/login` leaves the
 sign-in page alone on the stack, `replace()` swaps the top screen for it, and `present()` presents
-it the way it was asked for.
+it the way it was asked for. That holds when the user is on `/login` already: the router skips a
+navigation to the url it is showing, and the screens under the sign-in page still go, as they do for
+a `reset()` to that url without a guard. It resolves `false` then, as the router does.
 
 A push or a presentation asked for while the app's first screen is still loading, such as a
 lazily loaded root route waiting on its import when a notification is tapped at launch, waits for

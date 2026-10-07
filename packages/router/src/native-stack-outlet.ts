@@ -192,6 +192,11 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
         const index = this.entries.findIndex((entry) => this.urlOf(entry) === url);
         return index !== -1 && index < this.entries.length - 1 ? this.popToEntry(index) : null;
       },
+      dropUnderTop: () => {
+        if (this.entries.length < 2) return false;
+        for (const entry of this.entries.slice(0, -1)) this.remove(entry);
+        return true;
+      },
     });
     // Optional for the same reason as the router: the outlet's own tests stand one in without it.
     const navigations = this.router?.events?.subscribe((event) => {
