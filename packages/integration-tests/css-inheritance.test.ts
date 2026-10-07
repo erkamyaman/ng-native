@@ -167,6 +167,145 @@ describe('opting out of an inherited line height', () => {
   });
 });
 
+describe('a unitless line height a view hands down', () => {
+  /**
+   * CSS inherits a unitless line-height as the number, and each element multiplies its own font
+   * size by it; a percentage or an em is a length where it is written, and that length is what is
+   * inherited. The expected values were read from Chrome's `getComputedStyle`.
+   */
+  function scene(css: string) {
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1, { globalStyles: compileCss(css) as StyleSheet });
+    const card = engine.createElement('view');
+    const title = engine.createElement('text');
+    engine.setClasses(card, 'card');
+    engine.setClasses(title, 'title');
+    engine.appendChild(engine.root, card);
+    engine.appendChild(card, title);
+    return {
+      engine,
+      card,
+      title,
+      painted() {
+        engine.commit();
+        const [outer] = flatten(fabric.committed);
+        return { card: outer!.props, title: outer!.children[0]!.props };
+      },
+    };
+  }
+
+  const lineHeights = (css: string) => {
+    const { card, title } = scene(css).painted();
+    return [card['lineHeight'], title['lineHeight']];
+  };
+
+  it("multiplies the text's own font size by the number", () => {
+    assert.deepEqual(
+      lineHeights('.card { font-size: 10px; line-height: 2 } .title { font-size: 20px }'),
+      [20, 40],
+    );
+  });
+
+  it('does the same for the number a font shorthand writes', () => {
+    assert.deepEqual(
+      lineHeights('.card { font: 10px/2 serif } .title { font-size: 20px }'),
+      [20, 40],
+    );
+  });
+
+  it('does the same for a number held in a custom property', () => {
+    assert.deepEqual(
+      lineHeights(
+        ':root { --leading: 2 } .card { font-size: 10px; line-height: var(--leading) } ' +
+          '.title { font-size: 20px }',
+      ),
+      [20, 40],
+    );
+  });
+
+  it('takes the number again for line-height: inherit', () => {
+    assert.deepEqual(
+      lineHeights(
+        '.card { font-size: 10px; line-height: 2 } .title { font-size: 20px; line-height: inherit }',
+      ),
+      [20, 40],
+    );
+  });
+
+  it('hands down a percentage or an em as the length it came to', () => {
+    assert.deepEqual(
+      lineHeights('.card { font-size: 10px; line-height: 200% } .title { font-size: 20px }'),
+      [20, 20],
+    );
+    assert.deepEqual(
+      lineHeights('.card { font-size: 10px; line-height: 2em } .title { font-size: 20px }'),
+      [20, 20],
+    );
+    assert.deepEqual(
+      lineHeights('.card { font: 10px/200% serif } .title { font-size: 20px }'),
+      [20, 20],
+    );
+  });
+
+  it('measures a text with no font size of its own against the one it inherits', () => {
+    assert.deepEqual(lineHeights('.card { font-size: 10px; line-height: 2 }'), [20, 20]);
+  });
+
+  it('works out the number for loose text, which no rule matches', () => {
+    const fabric = createFakeFabric();
+    const css = '.card { font-size: 10px; line-height: 2 }';
+    const engine = new Engine(fabric, 1, { globalStyles: compileCss(css) as StyleSheet });
+    const card = engine.createElement('view');
+    engine.setClasses(card, 'card');
+    engine.appendChild(engine.root, card);
+    engine.appendChild(card, engine.createText('loose'));
+    engine.commit();
+    const paragraph = flatten(fabric.committed).find((n) => n.viewName === 'Paragraph')!;
+    assert.equal(paragraph.props['lineHeight'], 20);
+  });
+
+  it('measures against a font size set by inline style', () => {
+    const s = scene('.card { font-size: 10px; line-height: 2 }');
+    s.engine.setProp(s.title, 'style', { fontSize: 20 });
+    assert.equal(s.painted().title['lineHeight'], 40);
+  });
+
+  it("follows the text's own font size as it changes and goes away", () => {
+    const s = scene(
+      '.card { font-size: 10px; line-height: 2 } .title { font-size: 20px } ' +
+        '.big { font-size: 30px }',
+    );
+    assert.equal(s.painted().title['lineHeight'], 40);
+    s.engine.setClasses(s.title, 'big');
+    assert.equal(s.painted().title['lineHeight'], 60);
+    s.engine.setClasses(s.title, '');
+    assert.equal(s.painted().title['lineHeight'], 20);
+  });
+
+  it("follows the card's line height as it changes and goes away", () => {
+    const s = scene(
+      '.card { font-size: 10px; line-height: 2 } .title { font-size: 20px } ' +
+        '.loose { line-height: 3 } .tall { line-height: 50px }',
+    );
+    assert.equal(s.painted().title['lineHeight'], 40);
+    s.engine.setClasses(s.card, 'card loose');
+    assert.equal(s.painted().title['lineHeight'], 60);
+    s.engine.setClasses(s.card, 'card tall');
+    assert.equal(s.painted().title['lineHeight'], 50);
+    s.engine.setClasses(s.card, 'card');
+    assert.equal(s.painted().title['lineHeight'], 40);
+    s.engine.setClasses(s.card, '');
+    assert.equal(s.painted().title['lineHeight'], null, 'cleared');
+  });
+
+  it("follows the card's font size where the text has none of its own", () => {
+    const s = scene('.card { font-size: 10px; line-height: 2 } .large { font-size: 15px }');
+    assert.equal(s.painted().title['lineHeight'], 20);
+    s.engine.setClasses(s.card, 'card large');
+    assert.equal(s.painted().title['lineHeight'], 30);
+  });
+});
+
 describe('the text properties a view hands down', () => {
   // CSS inherits these, so `text-shadow-md` or `select-none` on a card reaches every text in it.
   // Native reads them on the text only, and a view that wore them did nothing for its contents.

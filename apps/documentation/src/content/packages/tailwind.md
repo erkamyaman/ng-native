@@ -144,9 +144,10 @@ in Tailwind's own resets, it is taken out of the list and the rest of the rule i
 A unitless `line-height`, the ratio form CSS defines and the one Tailwind's `leading-*` utilities
 write, works with or without a `font-size` beside it. When the rule also sets a `font-size`, as
 every type-scale utility does, the build multiplies the two. Otherwise it is settled on device
-against the font size the element ends up with, the way an `em` is. One difference from the web: a
-descendant with a font size of its own inherits the resulting number of points, where a browser
-would apply the ratio to the descendant's size, so set `leading-*` on the text it is for.
+against the font size the element ends up with, and a descendant with a font size of its own
+applies the ratio to that size, as a browser does. One difference from the web: the line height a
+type-scale utility brings is inherited as the points the build worked out, where a browser would
+apply its ratio to a descendant's own size, so put the `text-*` class on the text it is for.
 
 [Variants](/packages/tailwind/variants) covers the platform, dark-mode, `hover:` and
 `focus-visible:` variants the preset adds and why native gives them different meanings than the

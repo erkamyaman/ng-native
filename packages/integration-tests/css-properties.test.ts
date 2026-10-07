@@ -68,13 +68,15 @@ describe('shorthands that every stylesheet uses', () => {
     });
   });
 
-  it('font, including a unitless line-height resolved against the font size', () => {
+  it('font, with a unitless line-height left to be worked out against the font size', () => {
     assert.deepEqual(declarationsOf('font: bold 12px/1.5 system-ui'), {
       fontWeight: '700',
       fontSize: 12,
-      lineHeight: 18,
       fontFamily: 'system-ui',
     });
+    assert.deepEqual(compileCss('view { font: bold 12px/1.5 system-ui }').rules[0].deferred, [
+      { props: ['lineHeight'], compute: { unit: 'em', factor: 1.5, multiple: true } },
+    ]);
   });
 
   it('overflow, which is one axis on native', () => {

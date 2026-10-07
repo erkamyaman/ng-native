@@ -316,8 +316,9 @@ is committed as a basis, and so is `auto`.
 
 A length needs a unit, as in a browser: `margin-top: 3` is dropped with a warning, and so is a
 token holding a bare number where a length is read. `0` needs none, a bare number is a factor
-inside `calc()`, and `line-height` takes a ratio. An `opacity` outside 0 to 1 is clamped into it,
-and a `font-weight` outside 1 to 1000 is dropped.
+inside `calc()`, and `line-height` takes a ratio, in the longhand, the `font` shorthand or a token,
+which a descendant multiplies its own font size by, as on the web. An `opacity` outside 0 to 1 is
+clamped into it, and a `font-weight` outside 1 to 1000 is dropped.
 
 `calc()` may add one viewport or font-relative length to absolute ones
 (`calc(1.375rem + 1.5vw)`), which is settled on device. `min()`, `max()` and `clamp()` fold when

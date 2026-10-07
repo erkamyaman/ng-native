@@ -177,11 +177,11 @@ describe('viewport and font-relative lengths', () => {
 
   it('reads a unitless line-height as a multiple of the font size', () => {
     // `leading-none` is `line-height: 1`, and native wants points. Which points depends on a font
-    // size that may be inherited or set by another class, so it is the same deferral `em` uses -
-    // which is exactly what a unitless line-height means.
+    // size that may be inherited or set by another class, so it is the same deferral `em` uses,
+    // marked a multiple because what a child inherits is the number: see css-inheritance.test.ts.
     const rule = compileCss('.a { line-height: 1.5 }', 'unitless').rules[0];
     assert.deepEqual(rule.deferred, [
-      { props: ['lineHeight'], compute: { unit: 'em', factor: 1.5 } },
+      { props: ['lineHeight'], compute: { unit: 'em', factor: 1.5, multiple: true } },
     ]);
   });
 
@@ -291,7 +291,11 @@ describe('viewport and font-relative lengths', () => {
 
   it('reads the line-height in a font shorthand the way the longhand reads it', () => {
     assert.equal(declarationsOf('font: 12px/150% serif')['lineHeight'], 18);
-    assert.equal(declarationsOf('font: 12px/1.5 serif')['lineHeight'], 18);
+    const multiple = compileCss('.a { font: 12px/1.5 serif }', 'number').rules[0];
+    assert.equal('lineHeight' in multiple.declarations, false);
+    assert.deepEqual(multiple.deferred, [
+      { props: ['lineHeight'], compute: { unit: 'em', factor: 1.5, multiple: true } },
+    ]);
     // The shorthand resets what it leaves out, and line-height: normal is native's own default.
     assert.equal(declarationsOf('font: 12px serif')['lineHeight'], null);
     // A multiple of an em size was multiplied by the size's deferred marker, and committed NaN.
@@ -299,7 +303,7 @@ describe('viewport and font-relative lengths', () => {
     assert.equal('lineHeight' in rule.declarations, false);
     assert.deepEqual(rule.deferred, [
       { props: ['fontSize'], compute: { unit: 'em', factor: 1.5 } },
-      { props: ['lineHeight'], compute: { unit: 'em', factor: 1.5 } },
+      { props: ['lineHeight'], compute: { unit: 'em', factor: 1.5, multiple: true } },
     ]);
   });
 });

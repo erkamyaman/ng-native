@@ -349,6 +349,11 @@ export interface DeferredDeclaration {
     readonly unit: 'em' | 'vw' | 'vh' | 'vmin' | 'vmax';
     readonly factor: number;
     readonly offset?: number;
+    /**
+     * A unitless line-height: the node renders `factor` em, and what it hands down is the number,
+     * which each text under it multiplies its own font size by. See `LineHeightMultiple`.
+     */
+    readonly multiple?: true;
   };
   /**
    * A structured value - a transform list, a shadow, a filter - with lengths like `compute`'s
@@ -1980,6 +1985,55 @@ function emptyCacheFor(epoch: number, generation: number): StyleCache {
 }
 
 /**
+ * A unitless line-height as a node hands it down. CSS inherits the number, not the points it comes
+ * to where it is written, so a title under `.card { font-size: 10px; line-height: 2 }` with a
+ * font size of 20 is 40 tall, not 20. It is only ever in an inherited map: `settleLineHeight`
+ * turns it into points in every style a node renders with.
+ */
+interface LineHeightMultiple {
+  readonly multiple: number;
+}
+
+function isMultiple(value: unknown): value is LineHeightMultiple {
+  return typeof value === 'object' && value !== null && 'multiple' in value;
+}
+
+/** A line-height as points, for a node of font size `size`: what an em of it comes to. */
+function lineHeightPoints(line: LineHeightMultiple, size: unknown): number {
+  const points = line.multiple * (typeof size === 'number' ? size : DEFAULT_FONT_SIZE);
+  return Math.round(points * 1000) / 1000;
+}
+
+/** A node's style with a unitless line-height it set or inherited worked out against its font size. */
+function settleLineHeight(style: Record<string, unknown>): void {
+  const line = style['lineHeight'];
+  if (isMultiple(line)) style['lineHeight'] = lineHeightPoints(line, style['fontSize']);
+}
+
+/** The styles of nodes with no rules, by the map they inherit, for one that hands down a multiple. */
+const unstyledStyles = new WeakMap<Record<string, unknown>, Record<string, unknown>>();
+
+/**
+ * The style of a node no rule matches: what it inherits, with a unitless line-height worked out
+ * against its font size, which an inline style can set. The same object where there is none.
+ */
+function unstyledStyle(
+  inherited: Record<string, unknown>,
+  inline: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const line = inherited['lineHeight'];
+  if (!isMultiple(line)) return inherited;
+  const size = inline?.['fontSize'];
+  if (typeof size === 'number') return { ...inherited, lineHeight: lineHeightPoints(line, size) };
+  let style = unstyledStyles.get(inherited);
+  if (!style) {
+    style = { ...inherited, lineHeight: lineHeightPoints(line, inherited['fontSize']) };
+    unstyledStyles.set(inherited, style);
+  }
+  return style;
+}
+
+/**
  * What this node's children inherit: the parent's map, overlaid with any inheritable value the
  * node set itself. Copied on first write only, so a node that sets none hands the same object on
  * and a whole subtree can share it.
@@ -2517,7 +2571,7 @@ export class StyleResolver {
       generation: this.generation,
       context: {},
       parentContext,
-      style: parentInherited,
+      style: unstyledStyle(parentInherited, inline),
       inherited: inline ? inheritFrom(parentInherited, inline) : parentInherited,
       tokens,
     };
@@ -2713,6 +2767,7 @@ export class StyleResolver {
     // `pointer-events: inherit` won the cascade: what the parent hands down stands.
     if (own['pointerEvents'] === 'inherit') delete own['pointerEvents'];
     const style = { ...parentInherited, ...own };
+    settleLineHeight(style);
     const inherited = decorate(style, inheritFrom(parentInherited, own), own);
     const rtl = (style['direction'] ?? this.conditions.direction) === 'rtl';
     const important = importantNames(result, () => TWIN[rtl ? 'rtl' : 'ltr']);
@@ -3093,8 +3148,9 @@ export class StyleResolver {
     own: Record<string, unknown>,
     parentInherited: Record<string, unknown>,
   ): unknown {
-    const { unit, factor, offset = 0 } = declaration.compute!;
+    const { unit, factor, offset = 0, multiple } = declaration.compute!;
     if (unit !== 'em') return this.viewportLength(unit, factor) + offset;
+    if (multiple && !offset) return { multiple: factor } satisfies LineHeightMultiple;
     // The font size in scope. On `font-size` itself that is the inherited size rather than the
     // one being computed, which is what makes a nested `1.5em` compound as on the web.
     const base = declaration.props.includes('fontSize')

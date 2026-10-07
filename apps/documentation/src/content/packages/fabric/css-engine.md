@@ -96,6 +96,11 @@ where that expectation matters: `color`, `direction`, `fontFamily`, `fontSize`, 
 else cascades down past the element it is set on - `padding` on a wrapper never reaches its
 children, on this platform or in real CSS either.
 
+A unitless `line-height` is inherited as the number, as on the web: under
+`.card { font-size: 10px; line-height: 2 }`, a text with a font size of 20 has lines 40 points
+tall. A percentage or an `em` is worked out where it is written, and a descendant inherits those
+points, whatever its own font size.
+
 A paragraph's `text-align` is resolved against the `direction` it inherits, from a stylesheet or
 an inline style above it: with none written it starts at the start edge, `start` and `end` follow
 the direction, and `left` and `right` stay on their side. See

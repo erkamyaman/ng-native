@@ -293,20 +293,16 @@ const ALIGNMENT = {
 const fontStyle = (value) => (typeof value === 'string' ? value : value.type);
 
 /**
- * The line-height a `font` shorthand sets, beside the size it sets. A multiple or a percentage of
- * a size written in points is settled here; of one in em it is deferred, as the longhand is,
- * rather than multiplied by the marker the em size is and committed as NaN. `normal` clears it,
- * because the shorthand resets every part the author left out.
+ * The line-height a `font` shorthand sets, beside the size it sets. A percentage of a size written
+ * in points is settled here; of one in em it is deferred, as the longhand is, rather than
+ * multiplied by the marker the em size is and committed as NaN. A number is deferred as the
+ * longhand's is, because what a child inherits is the number and not the points it comes to here.
+ * `normal` clears it, because the shorthand resets every part the author left out.
  */
-function fontLineHeight(lineHeight, out, context) {
-  const factor =
-    lineHeight.type === 'number'
-      ? number(lineHeight, context)
-      : lineHeight.value?.type === 'percentage'
-        ? lineHeight.value.value
-        : undefined;
-  if (factor !== undefined && typeof out.fontSize === 'number') {
-    out.lineHeight = round(factor * out.fontSize);
+function fontLineHeight(lineHeight, out) {
+  const percentage = lineHeight.value?.type === 'percentage';
+  if (percentage && typeof out.fontSize === 'number') {
+    out.lineHeight = round(lineHeight.value.value * out.fontSize);
   } else {
     translate('line-height', lineHeight, out);
   }
@@ -1724,7 +1720,7 @@ const TRANSLATORS = new Map([
         if (style !== 'normal') out.fontStyle = style;
       }
       if (value.weight !== undefined) translate('font-weight', value.weight, out);
-      if (value.lineHeight !== undefined) fontLineHeight(value.lineHeight, out, property);
+      if (value.lineHeight !== undefined) fontLineHeight(value.lineHeight, out);
     },
   ],
   [
@@ -1975,8 +1971,9 @@ const FALLBACKS = [
     (property, value, out) => {
       // A unitless line-height is a multiple of the font size, and native wants points. The font
       // size is not known until the cascade has run - it may be inherited, or set by a class the
-      // node does not wear yet - so it is deferred exactly as `em` is, which means the same thing.
-      out.lineHeight = { __defer: { unit: 'em', factor: round(value.value) } };
+      // node does not wear yet - so it is deferred as `em` is. Unlike an em it is inherited as the
+      // number, which each text under it multiplies its own font size by: `multiple` says so.
+      out.lineHeight = { __defer: { unit: 'em', factor: round(value.value), multiple: true } };
     },
   ],
   [

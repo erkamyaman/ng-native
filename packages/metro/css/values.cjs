@@ -589,7 +589,7 @@ function fallbackToken(parts, context) {
  */
 function bareNumber(value) {
   return {
-    lineHeight: { __defer: { unit: 'em', factor: round(value) } },
+    lineHeight: { __defer: { unit: 'em', factor: round(value), multiple: true } },
     ...(value === 0 ? { length: 0 } : {}),
   };
 }
