@@ -20,10 +20,11 @@ in premultiplied alpha, as in a browser, so `transparent` to red is red fading i
 dark red; a length or an angle interpolates as long as both ends share the same unit
 (`translateY(10%)` to `translateY(100%)` works, `10%` to `20px` does not, because converting between
 them would be a guess). A named color (`'red'`) interpolates as well: the compiler emits `rgb()` for
-one in a stylesheet, and one bound straight into a style is looked up by name. An `opacity` or a
-`background-color` that nothing sets eases from or to its initial value, 1 or `transparent`, as in
-a browser, and a `@keyframes` list that leaves out its first or last frame starts or ends there
-too. A size that nothing sets is `auto`, and changes at once.
+one in a stylesheet, and one bound straight into a style is looked up by name. An `opacity`, a
+`background-color`, a padding, a margin or a `border-radius` that nothing sets eases from or to its
+initial value, 1, `transparent` or 0, as in a browser, and a `@keyframes` list that leaves out its
+first or last frame starts or ends there too. A size that nothing sets is `auto`, and changes at
+once. So does a border width nothing sets, which is 0 on a native view but `medium` in a browser.
 
 A transition that changes target part way starts from the value it has reached. One turned back to
 where it came from is shortened by how far it had got, as in a browser: a press fade released half

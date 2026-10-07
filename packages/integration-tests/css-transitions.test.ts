@@ -534,6 +534,60 @@ describe('running a transition', () => {
     assert.equal(s.painted('backgroundColor'), 'rgba(255, 255, 255, 0.5)');
   });
 
+  it('eases a padding nothing set in from 0, as CSS does', () => {
+    const s = scene(`
+      view { transition: padding 100ms linear; }
+      view.on { padding: 20px; }
+    `);
+    s.classes('on');
+    s.tick(50);
+    assert.equal(s.painted('paddingTop'), 10, 'halfway from 0');
+    assert.equal(s.painted('paddingLeft'), 10);
+  });
+
+  it('eases a padding back out to 0 when the class comes off', () => {
+    const s = scene(
+      `
+      view { transition: padding-top 100ms linear; }
+      view.on { padding-top: 20px; }
+    `,
+      'on',
+    );
+    s.classes('');
+    s.tick(50);
+    assert.equal(s.painted('paddingTop'), 10, 'halfway to 0');
+  });
+
+  it('eases a margin nothing set on its logical start side from 0', () => {
+    const s = scene(`
+      view { transition: margin-inline-start 100ms linear; }
+      view.on { margin-inline-start: 20px; }
+    `);
+    s.classes('on');
+    s.tick(50);
+    assert.equal(s.painted('marginStart'), 10);
+  });
+
+  it('eases a corner radius nothing set in from 0', () => {
+    const s = scene(`
+      view { transition: border-radius 100ms linear; }
+      view.on { border-radius: 20px; }
+    `);
+    s.classes('on');
+    s.tick(50);
+    assert.equal(s.painted('borderTopLeftRadius'), 10);
+  });
+
+  it('eases a padding nothing set under transition: all', () => {
+    const s = scene(`
+      view { transition: all 100ms linear; }
+      view.on { padding: 20px; }
+    `);
+    s.classes('on');
+    s.tick(50);
+    assert.equal(s.painted('paddingTop'), 10, 'halfway from 0');
+  });
+
   it('fades from the opacity nothing set under transition: all', () => {
     // `all` names no property, and one the element does not set is still one it transitions.
     const s = scene(`

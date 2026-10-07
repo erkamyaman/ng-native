@@ -10,6 +10,7 @@ import { describe, it } from 'node:test';
 import { createRequire } from 'node:module';
 import { Engine } from '@ng-native/fabric';
 import { createFakeFabric } from '@ng-native/testing';
+import { build, committedProps } from './tailwind-cli.ts';
 
 const require = createRequire(import.meta.url);
 const { compileCss } = require('@ng-native/metro/css/compile.cjs');
@@ -48,5 +49,39 @@ describe('a unitless line-height beside a font-size, through the Tailwind build'
     assert.deepEqual(size(0.875, 1.25), { fontSize: 14, lineHeight: 20 });
     assert.deepEqual(size(2.25, 2.5), { fontSize: 36, lineHeight: 40 });
     assert.deepEqual(size(2, 2.5), { fontSize: 32, lineHeight: 40 });
+  });
+});
+
+/**
+ * The line height of a text with its own font size, under a view wearing `classes` from the real
+ * Tailwind build. A type-scale utility's line height is a ratio, and a descendant multiplies its
+ * own font size by it, as in a browser, rather than taking the points it came to on the view.
+ */
+function inheritedLine(classes: string, fontSize: number): unknown {
+  const fabric = createFakeFabric();
+  const css = build('native', classes, `.own { font-size: ${fontSize}px }`);
+  const engine = new Engine(fabric, 1, {
+    globalStyles: compileCss(flattenTailwind(css), 'app.css') as never,
+  });
+  const view = engine.createElement('view');
+  engine.setClasses(view, classes);
+  const text = engine.createElement('text');
+  engine.setClasses(text, 'own');
+  engine.appendChild(text, engine.createText('a'));
+  engine.appendChild(view, text);
+  engine.appendChild(engine.root, view);
+  engine.commit();
+  return committedProps(fabric, text)['lineHeight'];
+}
+
+describe("a Tailwind utility's line height, on a text under the view that wears it", () => {
+  it("is the type scale's ratio times the text's own size", () => {
+    // 10 * 1.75 / 1.125. Inheriting the 28 points the view's own line comes to gave 28.
+    const line = inheritedLine('text-lg', 10) as number;
+    assert.equal(Math.round(line * 1000) / 1000, 15.556);
+  });
+
+  it("is a leading utility's number times the text's own size", () => {
+    assert.equal(inheritedLine('leading-loose', 20), 40);
   });
 });

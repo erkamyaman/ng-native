@@ -796,14 +796,28 @@ const isCurrentColour = (value: unknown): boolean =>
  * fades out from 1 and back in to it, and a background colour nothing set eases from
  * `transparent`, as in a browser.
  *
- * Only the properties that appear in an animation and have a meaningful resting value. A length
- * defaulting to zero is the same as absent for anything here.
+ * A padding, a margin and a corner radius start at 0, so `.open { padding: 20px }` eases in from
+ * no padding. Each edge and corner is here under both the physical name and the logical one, as
+ * the compiler writes either. A border width is not: one nothing sets is 0 on a native view and
+ * `medium`, 3px, in CSS, which a browser eases from. Nor is anything that starts at `auto` or
+ * `normal`, which has no number to ease from.
  */
 const INITIAL: Record<string, unknown> = {
   opacity: 1,
   scale: 1,
   rotate: '0deg',
   backgroundColor: 'transparent',
+  ...Object.fromEntries(
+    ['padding', 'margin'].flatMap((box) =>
+      ['Top', 'Right', 'Bottom', 'Left', 'Start', 'End'].map((edge) => [`${box}${edge}`, 0]),
+    ),
+  ),
+  ...Object.fromEntries(
+    [
+      ...['Top', 'Bottom'].flatMap((side) => [`${side}Left`, `${side}Right`]),
+      ...['Start', 'End'].flatMap((side) => [`${side}Start`, `${side}End`]),
+    ].map((corner) => [`border${corner}Radius`, 0]),
+  ),
 };
 
 /**

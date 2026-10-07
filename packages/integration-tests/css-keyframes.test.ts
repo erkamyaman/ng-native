@@ -752,6 +752,19 @@ describe('a keyframe list that anchors to nothing', () => {
     // Mixed with its alpha multiplied in, as a browser does: red at half strength, not a dark red.
     assert.equal(s.painted('backgroundColor'), 'rgba(255, 0, 0, 0.5)');
   });
+
+  it('anchors a padding, a margin and a corner radius nothing declared to 0', () => {
+    const s = scene(`
+      @keyframes open { to { padding-top: 20px; margin-top: 20px; border-top-left-radius: 20px; } }
+      .opening { animation: open 100ms linear; }
+    `);
+    s.engine.setClasses(s.view, 'opening');
+    s.engine.commit();
+    s.tick(50);
+    assert.equal(s.painted('paddingTop'), 10);
+    assert.equal(s.painted('marginTop'), 10);
+    assert.equal(s.painted('borderTopLeftRadius'), 10);
+  });
 });
 
 describe('a keyframe with a declaration it cannot compile', () => {
