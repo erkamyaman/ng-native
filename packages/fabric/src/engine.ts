@@ -987,6 +987,20 @@ function inlineOf(node: EngineNode): Readonly<Record<string, unknown>> {
 }
 
 /**
+ * What a node's `@keyframes` animation sets this frame, less each property a rule it matches
+ * declared `!important`: an important author declaration is above the animation in the cascade.
+ * A transition is above both, so `transitioned` takes no such care.
+ */
+function playedOver(node: EngineNode): Readonly<Record<string, unknown>> {
+  const values = node.playing?.values;
+  const important = node.styleCache?.important;
+  if (!values || !important) return values ?? NO_STYLE;
+  const played = { ...values };
+  for (const key of important) delete played[key];
+  return played;
+}
+
+/**
  * What a container's own style says for `key`, in the order `mergeProps` applies them: a
  * component's override, inline, a prop, its stylesheet, its default.
  */
@@ -4014,7 +4028,7 @@ export class Engine implements HostEngine {
     }
     if (spec.timeline) return this.scrollAnimated(node, spec, frames, props);
     this.startPlaying(node, spec, frames, props);
-    return Object.assign(props, node.playing?.values ?? {});
+    return Object.assign(props, playedOver(node));
   }
 
   /**

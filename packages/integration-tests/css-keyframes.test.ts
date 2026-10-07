@@ -680,6 +680,73 @@ describe('an animation against an inline style', () => {
   });
 });
 
+describe('an animation against an important declaration', () => {
+  /**
+   * An important author declaration sits above the animation in the cascade, so the animation
+   * does not move that property. A transition sits above both, so it still eases one.
+   */
+  function scene(css: string, initial = '') {
+    let now = 1000;
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1, {
+      globalStyles: compileCss(css) as never,
+      now: () => now,
+    });
+    const view = engine.createElement('view');
+    if (initial) engine.setClasses(view, initial);
+    engine.appendChild(engine.root, view);
+    engine.commit();
+    return {
+      painted: (prop: string) => flatten(fabric.committed)[0]?.props[prop],
+      tick(ms: number) {
+        now += ms;
+        engine.advanceAnimations();
+        engine.commit();
+      },
+      classes(value: string) {
+        engine.setClasses(view, value);
+        engine.commit();
+      },
+    };
+  }
+
+  const FADE =
+    '@keyframes fade { from { opacity: 0; width: 0px } to { opacity: 1; width: 100px } }';
+
+  it('leaves the important property where it is declared, as a browser does', () => {
+    const s = scene(`${FADE} view { opacity: 0.3 !important; animation: fade 100ms linear }`);
+    s.tick(50);
+    assert.equal(s.painted('opacity'), 0.3);
+  });
+
+  it('still animates the properties that are not important', () => {
+    const s = scene(`${FADE} view { opacity: 0.3 !important; animation: fade 100ms linear }`);
+    s.tick(50);
+    assert.equal(s.painted('width'), 50);
+  });
+
+  it('animates the property once the important declaration goes', () => {
+    const s = scene(
+      `${FADE} view { animation: fade 100ms linear } view.pinned { opacity: 0.3 !important }`,
+      'pinned',
+    );
+    s.tick(25);
+    assert.equal(s.painted('opacity'), 0.3);
+    s.classes('');
+    s.tick(25);
+    assert.equal(s.painted('opacity'), 0.5);
+  });
+
+  it('lets a transition ease an important property, which it sits above', () => {
+    const s = scene(
+      'view { opacity: 1 !important; transition: opacity 100ms linear } view.dim { opacity: 0 !important }',
+    );
+    s.classes('dim');
+    s.tick(50);
+    assert.equal(s.painted('opacity'), 0.5);
+  });
+});
+
 describe('a keyframe list that anchors to nothing', () => {
   /**
    * `animate-pulse` is one frame: `50% { opacity: 0.5 }`. CSS fills in the missing 0% and 100%
