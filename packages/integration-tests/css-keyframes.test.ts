@@ -1018,24 +1018,33 @@ describe('an animation it cannot compile', () => {
     }
   });
 
-  it('drops a step easing written as a longhand the same way', () => {
+  it('drops the animation a step easing is a longhand of, where the rule names one', () => {
     const { declarations, reports } = compiled(
-      `${SPIN} .spinner { width: 24px; animation-timing-function: step-end }`,
+      `${SPIN} .spinner { width: 24px; animation-name: spin; animation-duration: 1s; ` +
+        'animation-timing-function: steps(8) }',
     );
     assert.deepEqual(declarations, { width: 24 });
-    assert.match(reports[0]!, /dropped 'animation'/);
+    assert.equal(reports.length, 1);
+    assert.match(reports[0]!, /dropped 'animation': 'steps' easing/);
   });
 
-  it('keeps a keyframe whose own timing function is a step, without that timing', () => {
+  it('drops only the timing function where the rule names no animation', () => {
+    // The rule plays nothing itself: its duration is for an animation another rule names.
+    const { declarations, reports } = compiled(
+      '.slow { width: 24px; animation-duration: 2s; animation-timing-function: step-end }',
+    );
+    assert.deepEqual(declarations, { width: 24, $animationDuration: 2000 });
+    assert.equal(reports.length, 1);
+    assert.match(reports[0]!, /dropped 'animation-timing-function': 'steps' easing/);
+  });
+
+  it('drops the keyframes a step timing function is written in, rather than play them eased', () => {
     const { sheet, reports } = compiled(
       '@keyframes k { from { opacity: 0; animation-timing-function: steps(2) } to { opacity: 1 } }',
     );
-    assert.deepEqual(sheet.keyframes!['k'], [
-      { offset: 0, declarations: { opacity: 0 } },
-      { offset: 1, declarations: { opacity: 1 } },
-    ]);
+    assert.equal(sheet.keyframes?.['k'], undefined);
     assert.equal(reports.length, 1);
-    assert.match(reports[0]!, /dropped 'animation-timing-function': 'steps' easing/);
+    assert.match(reports[0]!, /^app\.css:1 \(@keyframes k\): dropped a rule: 'steps' easing/);
   });
 
   it('still compiles an animation with an easing it can draw', () => {

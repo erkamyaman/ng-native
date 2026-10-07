@@ -1163,10 +1163,22 @@ describe('a transition it cannot compile', () => {
   });
 
   it('drops only a timing list with no property list to pair it with', () => {
-    const { declarations, reports } = compiled('.a { opacity: 0.5; transition-duration: 1s, 2s }');
-    assert.deepEqual(declarations, { opacity: 0.5 });
+    const { declarations, reports } = compiled(
+      '.a { opacity: 0.5; transition-duration: 1s; transition-delay: 1s, 2s }',
+    );
+    assert.deepEqual(declarations, { opacity: 0.5, $transitionDuration: 1000 });
     assert.equal(reports.length, 1);
-    assert.match(reports[0]!, /dropped 'transition': a transition-duration list/);
+    assert.match(reports[0]!, /dropped 'transition-delay': a transition-delay list/);
+  });
+
+  it('drops only the timing function where the rule names no properties', () => {
+    // The rule transitions nothing itself: its duration is for the properties another rule names.
+    const { declarations, reports } = compiled(
+      '.slow { opacity: 0.5; transition-duration: 2s; transition-timing-function: steps(3) }',
+    );
+    assert.deepEqual(declarations, { opacity: 0.5, $transitionDuration: 2000 });
+    assert.equal(reports.length, 1);
+    assert.match(reports[0]!, /dropped 'transition-timing-function': 'steps' easing/);
   });
 
   it('still compiles a transition with an easing it can draw', () => {
