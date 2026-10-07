@@ -109,3 +109,29 @@ it('still replaces the screen from a link told to replace', async () => {
   assert.equal(router.url, '/customer');
   assert.equal(screens(), 1);
 });
+
+it('replaces the screen from a link whose extras replace the url, as nav.replace does', async () => {
+  const app = await render(mod['RepeatShell'] as Type<unknown>, {
+    providers: [provideNativeRouter(mod['linkRoutes'] as Routes)],
+  });
+  const nav = app.componentRef.injector.get(NativeNavigation);
+  const router = app.componentRef.injector.get(Router);
+  const turns = async () => {
+    for (let turn = 0; turn < 6; turn++) await settle();
+  };
+  const screens = () =>
+    flatten(app.fabric.committed).filter((node) => node.viewName === 'RNSScreen').length;
+
+  await fireEvent.press(await app.findByText('Customer'));
+  await turns();
+  await fireEvent.press(await app.findByText('Replace with the customer'));
+  await turns();
+  assert.equal(router.url, '/customer');
+  assert.equal(screens(), 1, 'the Job its history entry no longer has is gone');
+  assert.equal(app.queryByText('Job'), null);
+
+  nav.back();
+  await turns();
+  assert.equal(router.url, '/customer', 'and Back has no Job to land on');
+  assert.equal(screens(), 1);
+});

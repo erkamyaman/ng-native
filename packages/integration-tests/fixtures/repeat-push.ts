@@ -42,6 +42,9 @@ export class RepeatCustomer {}
   template: `
     <pressable nativeRouterLink="/customer"><text>Job</text></pressable>
     <pressable nativeRouterLink="/note" replace><text>Replace with a note</text></pressable>
+    <pressable nativeRouterLink="/customer" [extras]="{ replaceUrl: true }">
+      <text>Replace with the customer</text>
+    </pressable>
   `,
 })
 export class RepeatJob {}
