@@ -846,23 +846,35 @@ function matchesAttribute(node: StyleTarget, test: AttributeTest): boolean {
   const actual = node.props[test.name];
   if (actual === undefined || actual === null || actual === false) return false;
   if (test.operator === undefined) return true;
+  // `^=`, `$=`, `*=` and `~=` with an empty value match nothing, as Selectors 4 says.
+  if (test.value === '' && !EMPTY_MATCHES.has(test.operator)) return false;
+  return matchesValue(attributeText(actual, test), test.operator, test.value!);
+}
 
-  const value = attributeText(actual, test);
-  switch (test.operator) {
+/** The operators an empty value can still match by: `=` and `|=`. */
+const EMPTY_MATCHES: ReadonlySet<AttributeTest['operator']> = new Set(['equal', 'dash-match']);
+
+/** Whether an attribute's value, as `attributeText` gives it, passes an operator's test. */
+function matchesValue(
+  value: string,
+  operator: NonNullable<AttributeTest['operator']>,
+  expected: string,
+): boolean {
+  switch (operator) {
     case 'equal':
-      return value === test.value;
+      return value === expected;
     case 'prefix':
-      return value.startsWith(test.value!);
+      return value.startsWith(expected);
     case 'suffix':
-      return value.endsWith(test.value!);
+      return value.endsWith(expected);
     case 'substring':
-      return value.includes(test.value!);
+      return value.includes(expected);
     case 'includes':
       // `~=` matches one whole word of a space-separated list.
-      return value.split(/\s+/).includes(test.value!);
+      return value.split(/\s+/).includes(expected);
     case 'dash-match':
       // `|=` matches the value itself or the value followed by a hyphen, as `lang` uses.
-      return value === test.value || value.startsWith(`${test.value}-`);
+      return value === expected || value.startsWith(`${expected}-`);
   }
 }
 

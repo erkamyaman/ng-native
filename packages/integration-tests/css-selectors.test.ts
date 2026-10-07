@@ -73,6 +73,42 @@ describe('attribute selectors', () => {
     assert.equal(hits('view[tags~="new"]', node('view', { tags: 'renewed' })), false);
   });
 
+  describe('with an empty value, as Selectors 4 reads each operator', () => {
+    const empty = node('view', { 'data-x': '' });
+    const set = node('view', { 'data-x': 'a' });
+    const hyphened = node('view', { 'data-x': '-a' });
+    const absent = node('view');
+
+    it('matches nothing with ^=, $= and *=', () => {
+      for (const operator of ['^=', '$=', '*=']) {
+        const selector = `view[data-x${operator}""]`;
+        assert.equal(hits(selector, empty), false, `${selector} on an empty attribute`);
+        assert.equal(hits(selector, set), false, `${selector} on a set attribute`);
+        assert.equal(hits(selector, absent), false, `${selector} with no attribute`);
+      }
+    });
+
+    it('matches nothing with ~=, whose empty word is no word', () => {
+      assert.equal(hits('view[data-x~=""]', empty), false);
+      assert.equal(hits('view[data-x~=""]', set), false);
+      assert.equal(hits('view[data-x~=""]', node('view', { 'data-x': ' a' })), false);
+      assert.equal(hits('view[data-x~=""]', absent), false);
+    });
+
+    it('matches an empty attribute alone with =', () => {
+      assert.equal(hits('view[data-x=""]', empty), true);
+      assert.equal(hits('view[data-x=""]', set), false);
+      assert.equal(hits('view[data-x=""]', absent), false);
+    });
+
+    it('matches an empty attribute, or one starting with a hyphen, with |=', () => {
+      assert.equal(hits('view[data-x|=""]', empty), true);
+      assert.equal(hits('view[data-x|=""]', hyphened), true);
+      assert.equal(hits('view[data-x|=""]', set), false);
+      assert.equal(hits('view[data-x|=""]', absent), false);
+    });
+  });
+
   it('counts as a class for specificity', () => {
     assert.equal(ruleFor('view[disabled]').specificity, ruleFor('view.x').specificity);
   });
