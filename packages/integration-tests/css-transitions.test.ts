@@ -1181,6 +1181,16 @@ describe('a transition it cannot compile', () => {
     assert.match(reports[0]!, /dropped 'transition-timing-function': 'steps' easing/);
   });
 
+  it('keeps transition: none, which stops a weaker rule, when its timing is refused', () => {
+    const { declarations, reports } = compiled(
+      '.still { opacity: 0.5; transition: none 1s step-end }',
+    );
+    assert.deepEqual(declarations!['$transition'], {});
+    assert.equal(declarations!['opacity'], 0.5);
+    assert.equal(reports.length, 1);
+    assert.match(reports[0]!, /dropped 'transition-timing-function': 'steps' easing/);
+  });
+
   it('still compiles a transition with an easing it can draw', () => {
     const { declarations, reports } = compiled(
       '.dot { opacity: 0.5; transition: opacity 1s ease-in }',

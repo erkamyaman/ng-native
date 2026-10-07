@@ -1038,6 +1038,17 @@ describe('an animation it cannot compile', () => {
     assert.match(reports[0]!, /dropped 'animation-timing-function': 'steps' easing/);
   });
 
+  it('keeps animation-name: none, which stops a weaker rule, when its timing is refused', () => {
+    const { declarations, reports } = compiled(
+      '.still { width: 24px; animation-name: none; animation-timing-function: steps(2) }',
+    );
+    assert.equal(declarations!['$animation'], null);
+    assert.equal('$animation' in declarations!, true);
+    assert.equal(declarations!['width'], 24);
+    assert.equal(reports.length, 1);
+    assert.match(reports[0]!, /dropped 'animation-timing-function': 'steps' easing/);
+  });
+
   it('drops the keyframes a step timing function is written in, rather than play them eased', () => {
     const { sheet, reports } = compiled(
       '@keyframes k { from { opacity: 0; animation-timing-function: steps(2) } to { opacity: 1 } }',
