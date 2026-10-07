@@ -25,6 +25,10 @@ one in a stylesheet, and one bound straight into a style is looked up by name. A
 a browser, and a `@keyframes` list that leaves out its first or last frame starts or ends there
 too. A size that nothing sets is `auto`, and changes at once.
 
+A transition that changes target part way starts from the value it has reached. One turned back to
+where it came from is shortened by how far it had got, as in a browser: a press fade released half
+way to its end takes half its duration to come back, not all of it.
+
 A duration, a delay or a curve can be a token in the longhands: `transition-property: opacity`
 with `transition-duration: var(--duration-fast)`. The `transition` shorthand does not take one:
 `transition: opacity var(--duration-fast) ease-out` is dropped whole, with a build warning, and the
