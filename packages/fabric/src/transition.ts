@@ -501,11 +501,7 @@ export function interpolate(from: unknown, to: unknown, t: number): unknown {
 
   const a = parseColor(from);
   const b = parseColor(to);
-  if (a && b) {
-    const mix = (i: number): number => Math.round(a[i]! + (b[i]! - a[i]!) * t);
-    const alpha = Math.round((a[3] + (b[3] - a[3]) * t) * 1000) / 1000;
-    return `rgba(${mix(0)}, ${mix(1)}, ${mix(2)}, ${alpha})`;
-  }
+  if (a && b) return mixColours(a, b, t);
 
   const percent = interpolatePercentage(from, to, t);
   if (percent !== null) return percent;
@@ -514,6 +510,20 @@ export function interpolate(from: unknown, to: unknown, t: number): unknown {
   if (transform) return transform;
 
   return t >= 1 ? to : from;
+}
+
+/**
+ * Two colours part way, in premultiplied alpha as CSS mixes them: each channel weighted by its
+ * own alpha, so a colour at no opacity adds no colour at all. Halfway from `transparent`, which
+ * is black at no opacity, to red is red at half opacity rather than a dark red, and a colour at
+ * part opacity pulls the mix less than an opaque one does.
+ */
+function mixColours(a: readonly number[], b: readonly number[], t: number): string {
+  const alpha = a[3]! + (b[3]! - a[3]!) * t;
+  if (alpha <= 0) return 'rgba(0, 0, 0, 0)';
+  const mix = (i: number): number =>
+    Math.round((a[i]! * a[3]! + (b[i]! * b[3]! - a[i]! * a[3]!) * t) / alpha);
+  return `rgba(${mix(0)}, ${mix(1)}, ${mix(2)}, ${Math.round(alpha * 1000) / 1000})`;
 }
 
 /** `50%` -> `75%`. Both sides have to be percentages; a percentage and a length are not a scale. */

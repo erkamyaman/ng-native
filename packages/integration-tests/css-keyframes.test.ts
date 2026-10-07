@@ -280,6 +280,19 @@ describe('playing an animation', () => {
     assert.equal(s.painted('width'), 10);
   });
 
+  it('eases a colour in premultiplied alpha, so transparent adds no black', () => {
+    const s = scene(`
+      @keyframes glow {
+        from { background-color: transparent; }
+        to { background-color: red; }
+      }
+      view.glowing { animation: glow 100ms linear; }
+    `);
+    s.classes('glowing');
+    s.tick(50);
+    assert.equal(s.painted('backgroundColor'), 'rgba(255, 0, 0, 0.5)');
+  });
+
   it('plays from its own frames, not from what was on screen', () => {
     const s = scene(css);
     assert.equal(s.painted('opacity'), 1, 'resting');

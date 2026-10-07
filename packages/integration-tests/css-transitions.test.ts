@@ -413,6 +413,16 @@ describe('running a transition', () => {
     assert.equal(s.painted('backgroundColor'), 'rgba(50, 100, 20, 1)');
   });
 
+  it('eases a background colour in from transparent without darkening it', () => {
+    const s = scene(`
+      view { background-color: transparent; transition: background-color 100ms linear; }
+      view.on { background-color: red; }
+    `);
+    s.classes('on');
+    s.tick(50);
+    assert.equal(s.painted('backgroundColor'), 'rgba(255, 0, 0, 0.5)');
+  });
+
   it('interpolates a named colour the same way, not step, on either end', () => {
     // The compiler resolves every named colour in a stylesheet at build time, so this is for the
     // rarer case: a template binding a keyword straight into a style, which reaches here as the
@@ -1005,6 +1015,15 @@ describe('interpolating a transform', () => {
 describe('interpolating a colour', () => {
   it('eases the alpha along with the channels', () => {
     assert.equal(interpolate('rgba(0, 0, 0, 0)', 'rgba(0, 0, 0, 1)', 0.5), 'rgba(0, 0, 0, 0.5)');
+  });
+
+  it('eases in premultiplied alpha, as CSS does, so transparent adds no black', () => {
+    // Each channel weighted by its own alpha: halfway from `transparent` to red is red at half
+    // opacity, not a dark red, and a colour at part opacity pulls less than an opaque one.
+    assert.equal(interpolate('transparent', 'rgb(255, 0, 0)', 0.5), 'rgba(255, 0, 0, 0.5)');
+    assert.equal(interpolate('rgb(255, 0, 0)', 'transparent', 0.5), 'rgba(255, 0, 0, 0.5)');
+    assert.equal(interpolate('white', 'rgba(0, 0, 255, 0.2)', 0.5), 'rgba(213, 213, 255, 0.6)');
+    assert.equal(interpolate('transparent', 'rgba(0, 0, 0, 0)', 0.5), 'rgba(0, 0, 0, 0)');
   });
 
   it('reads the alpha of a four- and an eight-digit hex colour as a fraction', () => {
