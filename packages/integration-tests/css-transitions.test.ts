@@ -8,7 +8,15 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createRequire } from 'node:module';
-import { Engine, interpolate, redirect, settled, type StyleSheet } from '@ng-native/fabric';
+import {
+  Engine,
+  interpolate,
+  redirect,
+  settled,
+  step,
+  type StyleSheet,
+  type Transition,
+} from '@ng-native/fabric';
 import { createFakeFabric, type FakeFabricNode } from '@ng-native/testing';
 
 const require = createRequire(import.meta.url);
@@ -1309,6 +1317,23 @@ describe('turning a transition back', () => {
     const transition = settled([{ translateY: 0 }], rule);
     redirect(transition, [{ translateY: -10 }], rule, 0);
     redirect(transition, [{ translateY: 0 }], rule, 50);
+    assert.equal(transition.duration, 50);
+  });
+
+  it('takes a new transform list equal to where it is heading as no change at all', () => {
+    // A bound style hands over a new array each time. Taking one equal to the target as a new
+    // target started the transition again from part way, and the way back then took its full
+    // duration, as it no longer knew where it had come from.
+    const rule = { duration: 100, delay: 0, easing: [0, 0, 1, 1] };
+    const state = new Map<string, Transition>();
+    const to = (translateY: number, now: number) =>
+      step(state, 'transform', { transform: [{ translateY }] }, rule, now);
+    to(0, 0);
+    to(-10, 0);
+    const transition = state.get('transform')!;
+    transition.current = interpolate(transition.from, transition.to, 0.5);
+    assert.equal(to(-10, 50), false, 'the same list again is not a change');
+    to(0, 50);
     assert.equal(transition.duration, 50);
   });
 });

@@ -591,7 +591,7 @@ export function step(
   // `flex-direction`: CSS changes it at once rather than transitioning it, and `transition: all`
   // covers it. Holding the old one for the duration kept a `display: none` on screen until the
   // end and then made it vanish.
-  const started = !Object.is(seen.to, target);
+  const started = !sameValue(seen.to, target);
   if (started && !interpolable(seen.current, target)) {
     state.set(key, settled(target, rule));
     return false;
@@ -630,6 +630,13 @@ export function settled(value: unknown, rule: TransitionSpec): Transition {
   };
 }
 
+/** Whether two values are the same, a transform list by what is in it rather than by identity. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 /**
  * Aim an existing transition at a new value, starting from wherever it had got to.
  *
@@ -639,13 +646,6 @@ export function settled(value: unknown, rule: TransitionSpec): Transition {
  * out, so a transition turned round twice comes back by the same rule. A negative delay is
  * shortened with it; a positive one is waited out in full.
  */
-/** Whether two values are the same, a transform list by what is in it rather than by identity. */
-function sameValue(a: unknown, b: unknown): boolean {
-  if (Object.is(a, b)) return true;
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 export function redirect(
   transition: Transition,
   target: unknown,
