@@ -8,7 +8,7 @@ import { afterEach, before, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { Type } from '@angular/core';
 import { Router, type Routes } from '@angular/router';
-import { cleanup, render, settle, type FakeFabricNode } from '@ng-native/testing';
+import { cleanup, fireEvent, render, settle, type FakeFabricNode } from '@ng-native/testing';
 import { NativeNavigation } from '../router/src/native-navigation.ts';
 import { provideNativeRouter } from '../router/src/provide-native-router.ts';
 import { compileFixture } from './compile.ts';
@@ -56,4 +56,56 @@ it('pushes a second screen for a url already on the stack, and goes back through
   assert.equal(router.url, '/a');
   assert.equal(screens(), 1);
   assert.deepEqual(texts(), [first], 'and the first A is the one it was');
+});
+
+it('pushes a second screen for a url already on the stack from a link too', async () => {
+  const app = await render(mod['RepeatShell'] as Type<unknown>, {
+    providers: [provideNativeRouter(mod['linkRoutes'] as Routes)],
+  });
+  const nav = app.componentRef.injector.get(NativeNavigation);
+  const router = app.componentRef.injector.get(Router);
+  const turns = async () => {
+    for (let turn = 0; turn < 6; turn++) await settle();
+  };
+  const screens = () =>
+    flatten(app.fabric.committed).filter((node) => node.viewName === 'RNSScreen').length;
+
+  await fireEvent.press(await app.findByText('Customer'));
+  await turns();
+  await fireEvent.press(await app.findByText('Job'));
+  await turns();
+  assert.equal(router.url, '/customer');
+  assert.equal(screens(), 3, 'Customer, Job and a second Customer');
+  assert.equal(app.getAllByText('Customer').length, 2);
+
+  nav.back();
+  await turns();
+  assert.equal(router.url, '/job', 'back returns to the page the link was on');
+  assert.equal(screens(), 2);
+});
+
+it('still replaces the screen from a link told to replace', async () => {
+  const app = await render(mod['RepeatShell'] as Type<unknown>, {
+    providers: [provideNativeRouter(mod['linkRoutes'] as Routes)],
+  });
+  const nav = app.componentRef.injector.get(NativeNavigation);
+  const router = app.componentRef.injector.get(Router);
+  const turns = async () => {
+    for (let turn = 0; turn < 6; turn++) await settle();
+  };
+  const screens = () =>
+    flatten(app.fabric.committed).filter((node) => node.viewName === 'RNSScreen').length;
+
+  await fireEvent.press(await app.findByText('Customer'));
+  await turns();
+  await fireEvent.press(await app.findByText('Replace with a note'));
+  await turns();
+  assert.equal(router.url, '/note');
+  assert.equal(screens(), 2, 'Customer and the note, with no Job between');
+  assert.equal(app.queryByText('Job'), null);
+
+  nav.back();
+  await turns();
+  assert.equal(router.url, '/customer');
+  assert.equal(screens(), 1);
 });

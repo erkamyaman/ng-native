@@ -35,12 +35,12 @@ export class NativeRouterLink {
       replaceUrl: this.replace(),
       ...own,
     };
-    // `replaceUrl` only swaps the history entry. The stack reads the intent to swap the screen,
-    // as `NativeNavigation.replace` sets it; without it the replaced screen stays mounted
-    // underneath, and a swipe back lands on a page the history no longer has.
-    if (this.replace()) {
-      extras.state = { ...own?.state, [NATIVE_INTENT]: { stack: 'replace' } };
-    }
+    // The stack reads the intent, as `NativeNavigation` sets it. `replaceUrl` only swaps the
+    // history entry: without `replace` the replaced screen stays mounted underneath, and a swipe
+    // back lands on a page the history no longer has. Without `push` a link to a url already on
+    // the stack goes back to that screen rather than putting a new one over it.
+    const stack = this.replace() ? 'replace' : 'push';
+    extras.state = { ...own?.state, [NATIVE_INTENT]: { stack } };
 
     void this.router.navigate(Array.isArray(target) ? [...target] : [target], extras);
   }

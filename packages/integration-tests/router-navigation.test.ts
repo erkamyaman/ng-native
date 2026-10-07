@@ -254,6 +254,8 @@ describe('nativeRouterLink', () => {
     await fireEvent.press(labelled('push'));
     assert.deepEqual(navigated[0]!.commands, ['/pushed']);
     assert.notEqual(navigated[0]!.extras['replaceUrl'], true);
+    const state = navigated[0]!.extras['state'] as Record<string, unknown> | undefined;
+    assert.deepEqual(state?.[NATIVE_INTENT], { stack: 'push' });
   });
 });
 

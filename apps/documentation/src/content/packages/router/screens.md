@@ -68,6 +68,11 @@ for the route and feeds it the new parameters instead; the native stack keeps th
 changes that do not change the path: a different query string or fragment updates the screen
 already there.
 
+A push to a url further down the stack is a new screen too: a customer that links to one of its
+jobs, whose page links back to the customer, is three screens, and back from the second customer
+returns to the job. That holds for `push()` and `nativeRouterLink`. A plain `Router.navigate()` to
+that url goes back to the screen already there instead, as `popTo()` does.
+
 A route whose parameter picks what one screen shows, rather than naming another screen to go to,
 opts back into the web behavior with `reuseScreen`:
 
