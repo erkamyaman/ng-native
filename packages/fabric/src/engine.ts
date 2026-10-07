@@ -1011,6 +1011,12 @@ function pinnedIn(node: EngineNode, tracks: ReadonlyMap<string, unknown>): strin
   return important ? [...tracks.keys()].filter((key) => important.has(key)) : [];
 }
 
+/** Whether native is playing an animation whose important properties are no longer the ones left out. */
+function pinsChanged(node: EngineNode, running: RunningAnimation): boolean {
+  if (!running.native) return false;
+  return pinnedIn(node, running.tracks).join(' ') !== running.pinned?.join(' ');
+}
+
 /** `tracks` less the properties named. */
 function unpinned<T>(
   tracks: ReadonlyMap<string, T>,
@@ -4259,13 +4265,7 @@ export class Engine implements HostEngine {
     }
     // A view made again is another view: the one native was moving is gone. And one whose
     // important declarations changed is moving what it now must not, or not what it now may.
-    if (node.committed === null) this.backToScript(node, current);
-    else if (
-      current.native &&
-      pinnedIn(node, current.tracks).join(' ') !== current.pinned?.join(' ')
-    ) {
-      this.backToScript(node, current);
-    }
+    if (node.committed === null || pinsChanged(node, current)) this.backToScript(node, current);
     if (this.playedFrames.get(current) !== frames || inherited !== current.inherited) {
       this.backToScript(node, current);
       this.reframe(node, current, frames, props, inherited);
