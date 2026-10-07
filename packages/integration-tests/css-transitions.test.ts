@@ -578,6 +578,40 @@ describe('running a transition', () => {
     assert.equal(s.painted('borderTopLeftRadius'), 10);
   });
 
+  it('eases a padding nothing set in from 0 to a percentage', () => {
+    // 0 is the one length that is also a percentage, so a browser eases it: halfway to 50% is 25%.
+    const s = scene(`
+      view { transition: padding-top 100ms linear; }
+      view.on { padding-top: 50%; }
+    `);
+    s.classes('on');
+    s.tick(50);
+    assert.equal(s.painted('paddingTop'), '25%');
+  });
+
+  it('eases a percentage padding back out to the 0 nothing set', () => {
+    const s = scene(
+      `
+      view { transition: padding-top 100ms linear; }
+      view.on { padding-top: 50%; }
+    `,
+      'on',
+    );
+    s.classes('');
+    s.tick(50);
+    assert.equal(s.painted('paddingTop'), '25%');
+  });
+
+  it('still changes a length to a percentage at once', () => {
+    const s = scene(`
+      view { padding-top: 10px; transition: padding-top 100ms linear; }
+      view.on { padding-top: 20%; }
+    `);
+    s.classes('on');
+    s.tick(50);
+    assert.equal(s.painted('paddingTop'), '20%');
+  });
+
   it('eases a padding nothing set under transition: all', () => {
     const s = scene(`
       view { transition: all 100ms linear; }

@@ -532,16 +532,24 @@ function mixColours(a: readonly number[], b: readonly number[], t: number): stri
   return `rgba(${mix(0)}, ${mix(1)}, ${mix(2)}, ${Math.round(alpha * 1000) / 1000})`;
 }
 
-/** `50%` -> `75%`. Both sides have to be percentages; a percentage and a length are not a scale. */
+/**
+ * `50%` -> `75%`. Both sides have to be percentages; a percentage and a length are not a scale.
+ * Except 0, which is 0% too: a padding nothing sets eases from it to `50%`, as in a browser.
+ */
 const PERCENTAGE = /^(-?[\d.]+)%$/;
 
 function interpolatePercentage(from: unknown, to: unknown, t: number): string | null {
-  if (typeof from !== 'string' || typeof to !== 'string') return null;
-  const a = PERCENTAGE.exec(from);
-  const b = PERCENTAGE.exec(to);
-  if (!a || !b) return null;
-  const value = Number(a[1]) + (Number(b[1]) - Number(a[1])) * t;
+  const a = percentageOf(from);
+  const b = percentageOf(to);
+  if (a === null || b === null) return null;
+  const value = a + (b - a) * t;
   return `${Math.round(value * 1000) / 1000}%`;
+}
+
+function percentageOf(value: unknown): number | null {
+  if (value === 0) return 0;
+  const percent = typeof value === 'string' ? PERCENTAGE.exec(value) : null;
+  return percent ? Number(percent[1]) : null;
 }
 
 /**

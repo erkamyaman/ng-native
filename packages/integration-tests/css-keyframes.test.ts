@@ -765,6 +765,17 @@ describe('a keyframe list that anchors to nothing', () => {
     assert.equal(s.painted('marginTop'), 10);
     assert.equal(s.painted('borderTopLeftRadius'), 10);
   });
+
+  it('eases a corner radius nothing declared from 0 to a percentage', () => {
+    const s = scene(`
+      @keyframes round { to { border-top-left-radius: 50%; } }
+      .rounding { animation: round 100ms linear; }
+    `);
+    s.engine.setClasses(s.view, 'rounding');
+    s.engine.commit();
+    s.tick(50);
+    assert.equal(s.painted('borderTopLeftRadius'), '25%');
+  });
 });
 
 describe('a keyframe with a declaration it cannot compile', () => {
