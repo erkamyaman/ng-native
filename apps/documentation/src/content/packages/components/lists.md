@@ -262,10 +262,11 @@ with everything else, so its `top` is at the bottom of the screen. A separator i
 the trailing edge of its row, before the gap.
 
 `endReached` fires once per change in item count, when the scroll position comes within
-`endReachedThreshold` viewport-heights of the end - the hook for loading another page. Scrolling
-away from the end and back fires it again, so a page that failed to load is retried.
-`viewableItemsChanged` reports which rows are currently on screen by
-`itemVisiblePercentThreshold`.
+`endReachedThreshold` viewport-heights of the end - the hook for loading another page. It is
+checked on a scroll, a layout and a change of items, so a list shorter than its viewport asks for
+its next page without a drag. Scrolling away from the end and back fires it again, so a page that
+failed to load is retried. `viewableItemsChanged` reports which rows are currently on screen by
+`itemVisiblePercentThreshold`, and reports again when the items change under them.
 
 <!-- api: VirtualList -->
 

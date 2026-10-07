@@ -362,6 +362,8 @@ export class VirtualList<T> extends ScrollViewProps {
   private readonly headerHeight = signal(0);
   /** What native reported the content measures along the axis, once it has. */
   private contentSize = 0;
+  /** The rows' own extent when native reported that, so a report for other rows is not used. */
+  private contentSizeFor = -1;
   /** The item count `endReached` last fired for, cleared once the list is away from the end. */
   private endReachedFor = -1;
 
@@ -723,6 +725,7 @@ export class VirtualList<T> extends ScrollViewProps {
     afterEveryRender(() => {
       this.flushScroll();
       if (this.nativeSticky) this.driveStickyRows();
+      this.recheckItems();
     });
     const stop = dismissKeyboardOnTap(this.engine, this.node, () =>
       this.keyboardShouldPersistTaps(),
@@ -734,6 +737,22 @@ export class VirtualList<T> extends ScrollViewProps {
       for (const held of this.drives.values()) held.drive.stop();
     });
     if (this.zeroSize) this.checkZeroSize(this.zeroSize);
+  }
+
+  /** The items the end and viewability were last checked against after a render. */
+  private checkedItems: readonly T[] | null = null;
+
+  /**
+   * New items can bring the end within reach or change what is on screen with no scroll: a list
+   * shorter than its viewport, a page appended while at the end, a filter. Checked once the rows
+   * they make are rendered, and only when they changed, so any other render costs a comparison.
+   */
+  private recheckItems(): void {
+    const items = this.items();
+    if (items === this.checkedItems) return;
+    this.checkedItems = items;
+    this.checkEnd(this.headerHeight() + this.lastOffset);
+    this.announceViewable(this.lastOffset);
   }
 
   /** Whether the viewport has been laid out yet, so a zero in it is a measurement. */
@@ -1168,6 +1187,8 @@ export class VirtualList<T> extends ScrollViewProps {
 
   /** The last set announced, so the output fires on a change rather than on every frame. */
   private announced: number[] = [];
+  /** The items the last set was announced from: new items are a change even at the same indices. */
+  private announcedFrom: readonly T[] | null = null;
 
   /**
    * Announce a change in what is on screen.
@@ -1181,10 +1202,12 @@ export class VirtualList<T> extends ScrollViewProps {
     const viewable = this.viewableAt(offset);
     const entered = viewable.filter((index) => !this.announced.includes(index));
     const left = this.announced.filter((index) => !viewable.includes(index));
-    if (entered.length === 0 && left.length === 0) return;
+    const items = this.items();
+    const same = items === this.announcedFrom || viewable.length === 0;
+    if (entered.length === 0 && left.length === 0 && same) return;
 
     this.announced = viewable;
-    const items = this.items();
+    this.announcedFrom = items;
     this.viewableItemsChanged.emit({
       viewable: viewable.map((index) => {
         const key = this.keyAt(index);
@@ -1296,6 +1319,7 @@ export class VirtualList<T> extends ScrollViewProps {
     this.viewport.set((this.horizontal() ? layout?.width : layout?.height) ?? 0);
     this.viewportMeasured = true;
     this.zeroSize?.laidOut(this.viewport(), this.items().length > 0);
+    this.checkEnd(this.headerHeight() + this.lastOffset);
     this.announceViewable(this.lastOffset);
   }
 
@@ -1326,13 +1350,18 @@ export class VirtualList<T> extends ScrollViewProps {
   protected onContentSize(event: NativeSyntheticEvent<{ width?: number; height?: number }>): void {
     const size = event.nativeEvent;
     this.contentSize = (this.horizontal() ? size?.width : size?.height) ?? 0;
+    this.contentSizeFor = this.extent();
+    this.checkEnd(this.headerHeight() + this.lastOffset);
   }
 
   private checkEnd(y: number): void {
     const count = this.items().length;
     const viewport = this.viewport();
     if (!count || !viewport) return;
-    const total = this.contentSize || this.headerHeight() + this.extent();
+    // Native's size is for the rows it last laid out; until it reports for these, their own extent.
+    const extent = this.extent();
+    const reported = this.contentSizeFor === extent ? this.contentSize : 0;
+    const total = reported || this.headerHeight() + extent;
     const distanceFromEnd = total - (y + viewport);
     // Away from the end again re-arms it, as React Native does, so a load that failed is retried
     // the next time the user comes back down.

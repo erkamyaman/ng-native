@@ -148,6 +148,99 @@ describe('windowed list, when its items are replaced', () => {
   });
 });
 
+describe('windowed list, checking the end and what is on screen without a scroll', () => {
+  // Both were only checked on a scroll, so a list shorter than its viewport never asked for a
+  // second page, a page appended at the end did nothing until a drag, and rows that arrived or
+  // were filtered away after the first layout were never reported.
+  let Component: Type<unknown>;
+  let fabric: FakeFabric;
+  let instance: { rows: { set(value: string[]): void }; ended: number; viewable: string[] };
+  const make = (count: number, prefix = 'row') =>
+    Array.from({ length: count }, (_, i) => `${prefix} ${i}`);
+  const scrollView = () => flatten(fabric.committed).find((n) => n.viewName === 'ScrollView')!;
+
+  before(async () => {
+    const mod = await compileFixture(
+      fileURLToPath(new URL('./fixtures/virtual.ts', import.meta.url)),
+    );
+    Component = mod['VirtualFeed'] as Type<unknown>;
+  });
+
+  beforeEach(async () => {
+    const rendered = await render(Component);
+    fabric = rendered.fabric;
+    instance = rendered.instance as typeof instance;
+  });
+
+  it('asks for more and reports the rows when they arrive after the first layout', async () => {
+    await fireEvent(scrollView(), 'layout', { layout: { height: 800 } });
+    instance.rows.set(['a', 'b', 'c']);
+    await settle();
+    assert.equal(instance.ended, 1);
+    assert.deepEqual(instance.viewable, ['a', 'b', 'c']);
+  });
+
+  it('asks for more when the rows it mounted with fall short of the viewport', async () => {
+    instance.rows.set(['a', 'b', 'c']);
+    await settle();
+    await fireEvent(scrollView(), 'layout', { layout: { height: 800 } });
+    await fireEvent(scrollView(), 'contentSizeChange', { width: 300, height: 120 });
+    assert.equal(instance.ended, 1);
+  });
+
+  it('reports what is on screen after a filter leaves fewer rows', async () => {
+    instance.rows.set(make(50));
+    await settle();
+    await fireEvent(scrollView(), 'layout', { layout: { height: VIEWPORT } });
+    assert.equal(instance.viewable.length, 10);
+    instance.rows.set(['row 7']);
+    await settle();
+    assert.deepEqual(instance.viewable, ['row 7']);
+    instance.rows.set([]);
+    await settle();
+    assert.deepEqual(instance.viewable, []);
+  });
+
+  it('reports new rows that take the place of as many old ones', async () => {
+    await fireEvent(scrollView(), 'layout', { layout: { height: VIEWPORT } });
+    instance.rows.set(['a', 'b', 'c']);
+    await settle();
+    instance.rows.set(['x', 'y', 'z']);
+    await settle();
+    assert.deepEqual(instance.viewable, ['x', 'y', 'z']);
+  });
+
+  it('asks again for a page appended while at the end, and once per item count', async () => {
+    instance.rows.set(make(40));
+    await settle();
+    await fireEvent(scrollView(), 'layout', { layout: { height: VIEWPORT } });
+    await fireEvent(scrollView(), 'contentSizeChange', { width: 300, height: 40 * ITEM_HEIGHT });
+    assert.equal(instance.ended, 0, 'three viewports from the end');
+    await fireEvent.scroll(scrollView(), { contentOffset: { y: 40 * ITEM_HEIGHT - VIEWPORT } });
+    assert.equal(instance.ended, 1);
+
+    instance.rows.set(make(50));
+    await settle();
+    assert.equal(instance.ended, 2, 'the new end is still within two viewports');
+    await fireEvent(scrollView(), 'contentSizeChange', { width: 300, height: 50 * ITEM_HEIGHT });
+    instance.rows.set(make(50, 'same'));
+    await settle();
+    assert.equal(instance.ended, 2, 'not again for the same count');
+  });
+
+  it('does not ask for another page by the content size of the rows before', async () => {
+    instance.rows.set(make(40));
+    await settle();
+    await fireEvent(scrollView(), 'layout', { layout: { height: VIEWPORT } });
+    await fireEvent(scrollView(), 'contentSizeChange', { width: 300, height: 40 * ITEM_HEIGHT });
+    await fireEvent.scroll(scrollView(), { contentOffset: { y: 40 * ITEM_HEIGHT - VIEWPORT } });
+    assert.equal(instance.ended, 1);
+    instance.rows.set(make(80));
+    await settle();
+    assert.equal(instance.ended, 1, 'the new rows end four viewports further on');
+  });
+});
+
 describe('windowed list, recycled by slot', () => {
   let fabric: FakeFabric;
   let host: FakeFabricNode;

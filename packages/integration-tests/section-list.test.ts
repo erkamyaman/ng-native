@@ -244,6 +244,14 @@ describe('section list', () => {
     app.unmount();
   });
 
+  it('fires endReached when the sections become shorter than the viewport', async () => {
+    const { app, instance } = await boot();
+    instance.sections.update(() => [{ title: 'S0', data: ['a'] }]);
+    await settle();
+    assert.equal(instance.ended, 1);
+    app.unmount();
+  });
+
   it('scrolls to a location, allowing for the pinned header', async () => {
     const { fabric, app, instance } = await boot();
     instance.list().scrollToLocation({ sectionIndex: 2, itemIndex: 1 });

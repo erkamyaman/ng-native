@@ -1,7 +1,7 @@
 import { Component, signal, viewChild } from '@angular/core';
 import { Text } from '../../components/src/text.ts';
 import { View } from '../../components/src/view.ts';
-import { VirtualList } from '../../components/src/virtual-list.ts';
+import { VirtualList, VirtualListRow } from '../../components/src/virtual-list.ts';
 
 @Component({
   selector: 'x-virtual',
@@ -153,4 +153,33 @@ export class VirtualRecycled {
 export class VirtualCarousel {
   rows = signal(Array.from({ length: 20 }, (_, i) => ({ id: i, label: `page ${i}` })));
   fill = { flex: 1 };
+}
+
+/** A feed that loads its rows after it is laid out, and pages and filters them. */
+@Component({
+  selector: 'x-virtual-feed',
+  imports: [VirtualList, VirtualListRow, Text, View],
+  template: `
+    <virtual-list
+      #list
+      [items]="rows()"
+      [itemHeight]="40"
+      [style]="fill"
+      (endReached)="ended = ended + 1"
+      (viewableItemsChanged)="viewable = $event.viewable.map(label)"
+    >
+      @for (row of list.window(); track row.slot) {
+        <view [virtualListRow]="row"
+          ><text>{{ row.item }}</text></view
+        >
+      }
+    </virtual-list>
+  `,
+})
+export class VirtualFeed {
+  readonly rows = signal<string[]>([]);
+  readonly fill = { flex: 1 };
+  ended = 0;
+  viewable: string[] = [];
+  readonly label = (row: { item: string }) => row.item;
 }
