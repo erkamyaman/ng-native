@@ -727,6 +727,17 @@ describe('a keyframe list that anchors to nothing', () => {
     s.tick(250);
     assert.equal(s.painted('opacity'), 0.55);
   });
+
+  it('anchors a background colour nothing declared to transparent', () => {
+    const s = scene(`
+      @keyframes flash { 50% { background-color: red; } }
+      .flashing { animation: flash 1000ms linear; }
+    `);
+    s.engine.setClasses(s.view, 'flashing');
+    s.engine.commit();
+    s.tick(250);
+    assert.match(String(s.painted('backgroundColor')), /^rgba\(\d+, 0, 0, 0\.5\)$/, 'half opaque');
+  });
 });
 
 describe('a keyframe with a declaration it cannot compile', () => {

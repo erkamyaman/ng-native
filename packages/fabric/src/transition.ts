@@ -546,10 +546,13 @@ export function step(
     state.delete(key);
     return false;
   }
+  // A property nothing sets still has a value to ease from or to: `opacity` is 1. Only the
+  // painted value is read this way, so one the element never writes is still not sent.
+  const target = props[key] ?? INITIAL[key];
   if (rule.duration <= 0) {
     // Named, with no time to take: it arrives at once, and where it is stays known. A change
     // that comes with a duration, as a ripple's style sets both in one go, starts from here.
-    state.set(key, settled(props[key], rule));
+    state.set(key, settled(target, rule));
     return false;
   }
 
@@ -557,13 +560,13 @@ export function step(
   if (seen === undefined) {
     // First sight of the property. CSS does not animate one of these either; without the rule
     // every element would animate in from whatever the previous value happened to be.
-    state.set(key, settled(props[key], rule));
+    state.set(key, settled(target, rule));
     return false;
   }
 
   // Nothing to interpolate when one end is missing: `null` here is `auto`, or a property the
-  // element no longer sets at all, and there is no value halfway between a number and "whatever
-  // this works out to be". CSS refuses the same transition. Interpolating anyway held the old
+  // element no longer sets at all and that has no initial value worth easing to, and there is no
+  // value halfway between a number and "whatever this works out to be". CSS refuses the same transition. Interpolating anyway held the old
   // value for the whole duration, which is how a section that opened to a height nothing had
   // measured stayed shut - and clearing a height is also what stops the layout that would have
   // corrected it, so it stayed shut rather than catching up a frame later.
@@ -572,12 +575,12 @@ export function step(
   // `flex-direction`: CSS changes it at once rather than transitioning it, and `transition: all`
   // covers it. Holding the old one for the duration kept a `display: none` on screen until the
   // end and then made it vanish.
-  const started = !Object.is(seen.to, props[key]);
-  if (started && !interpolable(seen.current, props[key])) {
-    state.set(key, settled(props[key], rule));
+  const started = !Object.is(seen.to, target);
+  if (started && !interpolable(seen.current, target)) {
+    state.set(key, settled(target, rule));
     return false;
   }
-  if (started) redirect(seen, props[key], rule, now);
+  if (started) redirect(seen, target, rule, now);
   if (!seen.done) props[key] = seen.current;
   return started;
 }
@@ -745,14 +748,18 @@ const isCurrentColour = (value: unknown): boolean =>
  * skeleton that declares no opacity of its own - so both of its implicit frames were empty and the
  * pulse did not fade, in every skeleton in the library.
  *
+ * A transition reads it too, for an end the element does not set: `.closed { opacity: 0 }`
+ * fades out from 1 and back in to it, and a background colour nothing set eases from
+ * `transparent`, as in a browser.
+ *
  * Only the properties that appear in an animation and have a meaningful resting value. A length
- * defaulting to zero is the same as absent for anything here, and a colour has no initial worth
- * animating from.
+ * defaulting to zero is the same as absent for anything here.
  */
 const INITIAL: Record<string, unknown> = {
   opacity: 1,
   scale: 1,
   rotate: '0deg',
+  backgroundColor: 'transparent',
 };
 
 /**

@@ -19,7 +19,10 @@ frame at a time until nothing is left running. Numbers interpolate directly; col
 channel by channel; a length or an angle interpolates as long as both ends share the same unit
 (`translateY(10%)` to `translateY(100%)` works, `10%` to `20px` does not, because converting between
 them would be a guess). A named color (`'red'`) interpolates as well: the compiler emits `rgb()` for
-one in a stylesheet, and one bound straight into a style is looked up by name.
+one in a stylesheet, and one bound straight into a style is looked up by name. An `opacity` or a
+`background-color` that nothing sets eases from or to its initial value, 1 or `transparent`, as in
+a browser, and a `@keyframes` list that leaves out its first or last frame starts or ends there
+too. A size that nothing sets is `auto`, and changes at once.
 
 A duration, a delay or a curve can be a token in the longhands: `transition-property: opacity`
 with `transition-duration: var(--duration-fast)`. The `transition` shorthand does not take one:
@@ -33,8 +36,8 @@ element to know how long to wait.
 
 An entering element starts in the style its enter class gives it. Angular adds the class in the
 turn that creates the element and takes it off a frame later, and that is the one change a
-`transition` on the element's resting style runs for: `.panel { opacity: 1; transition: opacity
-200ms }` with `.panel.entering { opacity: 0 }` fades in once. A class added to any element in the
+`transition` on the element's resting style runs for: `.panel { transition: opacity 200ms }` with
+`.panel.entering { opacity: 0 }` fades in once. A class added to any element in the
 turn that created it is its starting style in the same way, as in a browser.
 
 The engine only emits `transitionstart`/`transitionend` for a value the cascade recomputed. A

@@ -283,7 +283,7 @@ describe('running a transition', () => {
   const sheet = (css: string) => compileCss(css) as StyleSheet;
 
   /** A node with a stylesheet attached, and a clock the test drives. */
-  function scene(css: string) {
+  function scene(css: string, initial = '') {
     let now = 1000;
     const fabric = createFakeFabric();
     const engine = new Engine(fabric, 1, {
@@ -291,6 +291,7 @@ describe('running a transition', () => {
       now: () => now,
     });
     const view = engine.createElement('view');
+    if (initial) engine.setClasses(view, initial);
     engine.appendChild(engine.root, view);
     engine.commit();
 
@@ -463,6 +464,45 @@ describe('running a transition', () => {
     s.engine.commit();
     s.tick(50);
     assert.equal(s.painted('height'), 40);
+  });
+
+  it('fades from the opacity nothing set, which is 1, as CSS does', () => {
+    // A rule that only fades out, `.closed { opacity: 0 }`, on an element that never writes the 1
+    // it fades from. The missing end was read as nothing to interpolate, so it jumped.
+    const s = scene(`
+      view { transition: opacity 100ms linear; }
+      view.closed { opacity: 0; }
+    `);
+    s.classes('closed');
+    s.tick(50);
+    assert.equal(s.painted('opacity'), 0.5, 'halfway from 1');
+    s.tick(50);
+    assert.equal(s.painted('opacity'), 0);
+  });
+
+  it('fades back to that opacity when the class comes off', () => {
+    const s = scene(
+      `
+      view { transition: opacity 100ms linear; }
+      view.closed { opacity: 0; }
+    `,
+      'closed',
+    );
+    s.classes('');
+    s.tick(50);
+    assert.equal(s.painted('opacity'), 0.5, 'halfway to 1');
+    s.tick(50);
+    assert.equal(s.engine.animating, false, 'and done');
+  });
+
+  it('eases a background colour nothing set in from transparent', () => {
+    const s = scene(`
+      view { transition: background-color 100ms linear; }
+      view.on { background-color: red; }
+    `);
+    s.classes('on');
+    s.tick(50);
+    assert.match(String(s.painted('backgroundColor')), /^rgba\(\d+, 0, 0, 0\.5\)$/, 'half opaque');
   });
 
   it('leaves a property with no transition to jump', () => {
