@@ -639,13 +639,20 @@ export function settled(value: unknown, rule: TransitionSpec): Transition {
  * out, so a transition turned round twice comes back by the same rule. A negative delay is
  * shortened with it; a positive one is waited out in full.
  */
+/** Whether two values are the same, a transform list by what is in it rather than by identity. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export function redirect(
   transition: Transition,
   target: unknown,
   rule: TransitionSpec,
   now: number,
 ): void {
-  const reversing = !transition.done && Object.is(target, transition.reversingFrom);
+  const reversing = !transition.done && sameValue(target, transition.reversingFrom);
   let shortening = 1;
   if (reversing) {
     const elapsed = transition.duration <= 0 ? 1 : (now - transition.start) / transition.duration;

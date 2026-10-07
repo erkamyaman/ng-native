@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createRequire } from 'node:module';
-import { Engine, interpolate, type StyleSheet } from '@ng-native/fabric';
+import { Engine, interpolate, redirect, settled, type StyleSheet } from '@ng-native/fabric';
 import { createFakeFabric, type FakeFabricNode } from '@ng-native/testing';
 
 const require = createRequire(import.meta.url);
@@ -1300,5 +1300,15 @@ describe('a transition it cannot compile', () => {
     assert.deepEqual(declarations!['$transition'], {
       opacity: { duration: 1000, delay: 0, easing: [0.42, 0, 1, 1] },
     });
+  });
+});
+
+describe('turning a transition back', () => {
+  it('counts a new transform list equal to where it started as a reversal', () => {
+    const rule = { duration: 100, delay: 0, easing: [0, 0, 1, 1] };
+    const transition = settled([{ translateY: 0 }], rule);
+    redirect(transition, [{ translateY: -10 }], rule, 0);
+    redirect(transition, [{ translateY: 0 }], rule, 50);
+    assert.equal(transition.duration, 50);
   });
 });
