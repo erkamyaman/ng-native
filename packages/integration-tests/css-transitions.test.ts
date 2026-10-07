@@ -1131,3 +1131,52 @@ describe('a transition shorthand whose time is a token', () => {
     assert.equal(s.opacity(), 1, 'no time to take: there at once');
   });
 });
+
+describe('a transition it cannot compile', () => {
+  // The transition is put together once the rule is read, and a step easing refused there took the
+  // whole rule with it, where a declaration it cannot compile costs only itself.
+  const compiled = (css: string) => {
+    const reports: string[] = [];
+    const sheet = compileCss(css, 'app.css', {
+      onUnsupported: (message: string) => reports.push(message),
+    }) as { rules: { declarations: Record<string, unknown> }[] };
+    return { declarations: sheet.rules[0]?.declarations, reports };
+  };
+
+  it('drops only the transition, and says it was the transition', () => {
+    for (const easing of ['step-end', 'step-start', 'steps(4, end)']) {
+      const { declarations, reports } = compiled(
+        `.dot { opacity: 0.5; transition: opacity 1s ${easing} }`,
+      );
+      assert.deepEqual(declarations, { opacity: 0.5 }, easing);
+      assert.equal(reports.length, 1, easing);
+      assert.match(reports[0]!, /^app\.css:1: dropped 'transition': 'steps' easing/, easing);
+    }
+  });
+
+  it('drops a step easing written as a longhand the same way', () => {
+    const { declarations, reports } = compiled(
+      '.dot { opacity: 0.5; transition: opacity 1s; transition-timing-function: step-end }',
+    );
+    assert.deepEqual(declarations, { opacity: 0.5 });
+    assert.match(reports[0]!, /dropped 'transition'/);
+  });
+
+  it('drops only a timing list with no property list to pair it with', () => {
+    const { declarations, reports } = compiled('.a { opacity: 0.5; transition-duration: 1s, 2s }');
+    assert.deepEqual(declarations, { opacity: 0.5 });
+    assert.equal(reports.length, 1);
+    assert.match(reports[0]!, /dropped 'transition': a transition-duration list/);
+  });
+
+  it('still compiles a transition with an easing it can draw', () => {
+    const { declarations, reports } = compiled(
+      '.dot { opacity: 0.5; transition: opacity 1s ease-in }',
+    );
+    assert.deepEqual(reports, []);
+    assert.equal(declarations!['opacity'], 0.5);
+    assert.deepEqual(declarations!['$transition'], {
+      opacity: { duration: 1000, delay: 0, easing: [0.42, 0, 1, 1] },
+    });
+  });
+});

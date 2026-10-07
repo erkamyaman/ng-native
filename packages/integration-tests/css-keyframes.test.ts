@@ -994,3 +994,63 @@ describe('an animation with no fill, at its end', () => {
     assert.deepEqual(s.seen, [0.5, 1]);
   });
 });
+
+describe('an animation it cannot compile', () => {
+  // The animation is put together once the rule is read, and a step easing refused there took the
+  // whole rule with it, where a declaration it cannot compile costs only itself.
+  const SPIN = '@keyframes spin { to { transform: rotate(360deg) } }';
+  const compiled = (css: string) => {
+    const reports: string[] = [];
+    const sheet = compileCss(css, 'app.css', {
+      onUnsupported: (message: string) => reports.push(message),
+    }) as Sheet;
+    return { sheet, declarations: sheet.rules[0]?.declarations, reports };
+  };
+
+  it('drops only the animation, and says it was the animation', () => {
+    for (const easing of ['steps(8, end)', 'step-start', 'step-end']) {
+      const { declarations, reports } = compiled(
+        `${SPIN} .spinner { width: 24px; height: 24px; animation: spin 1s ${easing} infinite }`,
+      );
+      assert.deepEqual(declarations, { width: 24, height: 24 }, easing);
+      assert.equal(reports.length, 1, easing);
+      assert.match(reports[0]!, /^app\.css:1: dropped 'animation': 'steps' easing/, easing);
+    }
+  });
+
+  it('drops a step easing written as a longhand the same way', () => {
+    const { declarations, reports } = compiled(
+      `${SPIN} .spinner { width: 24px; animation-timing-function: step-end }`,
+    );
+    assert.deepEqual(declarations, { width: 24 });
+    assert.match(reports[0]!, /dropped 'animation'/);
+  });
+
+  it('keeps a keyframe whose own timing function is a step, without that timing', () => {
+    const { sheet, reports } = compiled(
+      '@keyframes k { from { opacity: 0; animation-timing-function: steps(2) } to { opacity: 1 } }',
+    );
+    assert.deepEqual(sheet.keyframes!['k'], [
+      { offset: 0, declarations: { opacity: 0 } },
+      { offset: 1, declarations: { opacity: 1 } },
+    ]);
+    assert.equal(reports.length, 1);
+    assert.match(reports[0]!, /dropped 'animation-timing-function': 'steps' easing/);
+  });
+
+  it('still compiles an animation with an easing it can draw', () => {
+    const { declarations, reports } = compiled(
+      `${SPIN} .spinner { width: 24px; animation: spin 1s linear infinite }`,
+    );
+    assert.deepEqual(reports, []);
+    assert.equal(declarations!['width'], 24);
+    assert.deepEqual(declarations!['$animation'], {
+      name: 'spin',
+      duration: 1000,
+      delay: 0,
+      easing: [0, 0, 1, 1],
+      iterations: null,
+      fill: 'none',
+    });
+  });
+});
