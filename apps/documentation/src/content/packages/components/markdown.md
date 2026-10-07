@@ -37,7 +37,9 @@ Markdown is not asked to install it.
 ## What it draws
 
 Each block is its own element, and each paragraph is one `<text>` with a nested `<text>` for every
-emphasis, code span and link inside it, so the paragraph wraps as a single run of text.
+emphasis, code span and link inside it, so the paragraph wraps as a single run of text. A line
+break in the source is a space, as in CommonMark; two spaces or a backslash at the end of a line
+break the text there.
 
 | Markdown                 | Drawn as                                                          |
 | ------------------------ | ----------------------------------------------------------------- |
@@ -66,8 +68,9 @@ The document can come from anywhere, a server or a person, so nothing in it runs
   characters in it change nothing.
 - **Images** load only over `http` and `https`. Anything else is drawn as its alt text.
 
-HTML entities marked leaves in the text, such as `&amp;`, `&quot;` and `&#39;`, are decoded once.
-A code span or block keeps them as written.
+HTML entities marked leaves in the text, such as `&amp;`, `&rarr;`, `&eacute;` and `&#39;`, are
+decoded once: every named one HTML has, and any by number. A code span or block keeps them as
+written.
 
 ## Links
 

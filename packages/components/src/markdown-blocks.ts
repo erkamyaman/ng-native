@@ -7,6 +7,7 @@
  * `marked.lexer` on the device, or a build step that lexed them ahead of time.
  */
 import type { Token, Tokens } from 'marked';
+import { HTML_ENTITIES } from './html-entities.ts';
 
 /** The elements a document is drawn with, by the HTML names the Markdown would have produced. */
 export type MarkdownElement =
@@ -73,43 +74,29 @@ export type MarkdownBlock =
       readonly rows: readonly (readonly (readonly MarkdownInline[])[])[];
     };
 
-/** The named references marked leaves in text, beside the numeric ones every reference can use. */
-const NAMED_ENTITIES: Readonly<Record<string, string>> = {
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-  nbsp: ' ',
-  copy: '©',
-  reg: '®',
-  trade: '™',
-  hellip: '…',
-  mdash: '—',
-  ndash: '–',
-  lsquo: '‘',
-  rsquo: '’',
-  ldquo: '“',
-  rdquo: '”',
-  laquo: '«',
-  raquo: '»',
-  middot: '·',
-  bull: '•',
-  deg: '°',
-  times: '×',
-};
+let namedEntities: Map<string, string> | undefined;
+
+/** The character HTML names `name`, from its full table, built on the first name looked up. */
+function namedEntity(name: string): string | undefined {
+  if (!namedEntities) {
+    namedEntities = new Map();
+    const pairs = HTML_ENTITIES.split(' ');
+    for (let i = 0; i + 1 < pairs.length; i += 2) namedEntities.set(pairs[i]!, pairs[i + 1]!);
+  }
+  return namedEntities.get(name);
+}
 
 const ENTITY = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,31}));/g;
 
 /**
  * The text an HTML reader would show for `text`, in one pass so `&amp;lt;` is `&lt;` and not `<`.
  * A reference to no character, or to one outside Unicode, is the replacement character, as HTML
- * makes it; a name not in the table stays as written.
+ * makes it; a name HTML does not have stays as written.
  */
 export function decodeEntities(text: string): string {
   if (!text.includes('&')) return text;
   return text.replace(ENTITY, (whole, decimal?: string, hex?: string, name?: string) => {
-    if (name !== undefined) return NAMED_ENTITIES[name] ?? whole;
+    if (name !== undefined) return namedEntity(name) ?? whole;
     const code = decimal !== undefined ? Number(decimal) : parseInt(hex!, 16);
     const valid = code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
     return valid ? String.fromCodePoint(code) : '�';
@@ -181,7 +168,7 @@ const BLOCKS: Readonly<Record<string, (token: Token) => MarkdownBlock[]>> = {
     const text = token as Tokens.Text;
     return text.tokens
       ? paragraphs(text.tokens)
-      : [{ kind: 'paragraph', children: [plain(text.text)] }];
+      : [{ kind: 'paragraph', children: [plain(softBreaks(text.text))] }];
   },
   blockquote: (token) => [
     { kind: 'blockquote', children: markdownBlocks((token as Tokens.Blockquote).tokens) },
@@ -268,6 +255,14 @@ function inlines(tokens: readonly Token[] | undefined): MarkdownInline[] {
   return (tokens ?? []).flatMap(inline);
 }
 
+/**
+ * Text with each line break the source wrapped it at made a space, as CommonMark reads a soft
+ * break, with the spaces around it. A hard break is a `br` token of its own, and stays one.
+ */
+function softBreaks(text: string): string {
+  return text.replace(/ *\n */g, ' ');
+}
+
 function plain(text: string): MarkdownInline {
   return { kind: 'text', text: decodeEntities(text) };
 }
@@ -281,7 +276,7 @@ function emphasis(token: Token): MarkdownInline[] {
 const INLINES: Readonly<Record<string, (token: Token) => MarkdownInline[]>> = {
   text: (token) => {
     const text = token as Tokens.Text;
-    return text.tokens ? inlines(text.tokens) : [plain(text.text)];
+    return text.tokens ? inlines(text.tokens) : [plain(softBreaks(text.text))];
   },
   escape: (token) => [plain((token as Tokens.Escape).text)],
   strong: emphasis,

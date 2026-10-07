@@ -10,7 +10,16 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { describe, it } from 'node:test';
 import { Injector, runInInjectionContext, signal, type Provider } from '@angular/core';
-import { ActivatedRoute, convertToParamMap, type Params, type Routes } from '@angular/router';
+import {
+  ActivatedRoute,
+  DefaultUrlSerializer,
+  UrlSegment,
+  UrlSegmentGroup,
+  UrlTree,
+  convertToParamMap,
+  type Params,
+  type Routes,
+} from '@angular/router';
 import {
   contentFileResource,
   contentFilesResource,
@@ -180,6 +189,34 @@ describe('injectContent', () => {
     };
     assert.equal((await find('café')).content, '# Café\n');
     assert.equal((await find('my post')).content, '# Post\n');
+  });
+
+  it('finds a file by the slug the list gives it, as a link to it hands it over', async () => {
+    const files = { './café au lait.md': '# Café\n' };
+    const [listed] = inContext(provideContentFiles(context(files)), () => injectContentFiles());
+    assert.equal(listed!.slug, 'caf%C3%A9%20au%20lait');
+    const serializer = new DefaultUrlSerializer();
+    const link = new UrlTree(
+      new UrlSegmentGroup([], {
+        primary: new UrlSegmentGroup(
+          [new UrlSegment('blog', {}), new UrlSegment(listed!.slug, {})],
+          {},
+        ),
+      }),
+    );
+    const opened = serializer.parse(serializer.serialize(link));
+    const slug = opened.root.children['primary']!.segments[1]!.path;
+    assert.equal(slug, listed!.slug);
+    const { provider } = route({ slug });
+    const file = await firstValueFrom(
+      inContext([...provideContentFiles(context(files)), provider], () => injectContent()),
+    );
+    assert.equal(file.content, '# Café\n');
+    const injector = injectService(Injector, {
+      providers: [...provideContentFiles(context(files)), provider],
+    });
+    const resource = runInInjectionContext(injector, () => contentFileResource(signal(slug)));
+    await waitFor(() => assert.equal(resource.value()?.content, '# Café\n'));
   });
 
   it('finds a file by its front matter slug rather than its name', async () => {

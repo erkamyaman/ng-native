@@ -77,6 +77,20 @@ describe('a paragraph', () => {
     assert.equal(paragraph!.children[3]!.props['fontFamily'], 'Menlo');
   });
 
+  it('runs the lines the source wrapped it at together, and breaks only at a hard break', async () => {
+    const { blocks } = await show(
+      'Metro parses its **front matter** and lexes its\n_Markdown_ as it bundles.\n\n' +
+        'Two spaces  \nend a line, as does a backslash\\\nhere.\n\n' +
+        '- a tight item\n  wrapped once',
+    );
+    assert.equal(
+      textOf(blocks()[0]!),
+      'Metro parses its front matter and lexes its Markdown as it bundles.',
+    );
+    assert.equal(textOf(blocks()[1]!), 'Two spaces\nend a line, as does a backslash\nhere.');
+    assert.equal(textOf(blocks()[2]!.children[0]!.children[1]!), 'a tight item wrapped once');
+  });
+
   it('nests emphasis inside strong, and strikes through deleted text', async () => {
     const { blocks } = await show('**bold _both_** ~~gone~~');
     const strong = blocks()[0]!.children[0]!;
@@ -227,6 +241,11 @@ describe('text as written', () => {
       'Fish &amp; chips &quot;now&quot; &#39;ok&#39; &#x263A; &amp;lt;',
     );
     assert.equal(textOf(blocks()[0]!), 'Fish & chips "now" \'ok\' ☺ &lt;');
+  });
+
+  it('decodes every name HTML has, and leaves a name it does not have as written', async () => {
+    const { blocks } = await show('&rarr; Caf&eacute; 5&euro; &hearts; &notaname;');
+    assert.equal(textOf(blocks()[0]!), '→ Café 5€ ♥ &notaname;');
   });
 
   it('leaves the entities in a code span as written', async () => {

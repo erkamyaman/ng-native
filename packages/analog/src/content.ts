@@ -188,7 +188,8 @@ function listed<Attributes extends Record<string, any>>(found: FoundFile): Conte
 /**
  * Where `injectContent` finds each file, as Analog finds it: by its slug, in its own folder, so a
  * front matter `slug` renames the file. A slug with a `/` in it is from the folder under
- * `src/content` it is in, or from `src/content` itself.
+ * `src/content` it is in, or from `src/content` itself. A slug is there both as written and
+ * encoded, as the list gives it: Analog finds `caf%C3%A9` and the route parameter can be either.
  */
 function filesBySlug(files: readonly FoundFile[]): Map<string, FoundFile> {
   const bySlug = new Map<string, FoundFile>();
@@ -197,7 +198,9 @@ function filesBySlug(files: readonly FoundFile[]): Map<string, FoundFile> {
     const folder = parts.slice(0, -1).join('/');
     const slug = rawSlugOf(found) || 'index';
     const root = parts.length > 4 ? parts.slice(0, 4).join('/') : '/src/content';
-    bySlug.set(`${slug.includes('/') ? root : folder}/${slug}.md`.replace(/\/{2,}/g, '/'), found);
+    for (const name of new Set([slug, encodeURI(slug)])) {
+      bySlug.set(`${slug.includes('/') ? root : folder}/${name}.md`.replace(/\/{2,}/g, '/'), found);
+    }
   }
   return bySlug;
 }

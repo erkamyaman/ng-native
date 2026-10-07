@@ -39,6 +39,15 @@ describe('<markdown> in the browser', () => {
     componentRef.destroy();
   });
 
+  it('runs the lines the source wrapped a paragraph at together', async () => {
+    const { document, componentRef } = await boot('Metro lexes its\n_Markdown_ as it bundles.');
+    assert.equal(
+      document.querySelector('markdown > text')!.textContent,
+      'Metro lexes its Markdown as it bundles.',
+    );
+    componentRef.destroy();
+  });
+
   it('keeps raw HTML as text, making no element of it', async () => {
     const { document, componentRef } = await boot('<img src=x onerror=alert(1)>');
     const markdown = document.querySelector('markdown')!;

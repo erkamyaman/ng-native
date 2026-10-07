@@ -255,6 +255,20 @@ describe('fileRoutes, navigated', () => {
     await go('/docs/a/b');
     assert.equal(top(), 'docs [a/b]');
   });
+
+  it('tries a dotted static name before the folder whose parameter would take it, as Analog does', async () => {
+    const files = {
+      'index.page.ts': page('Home'),
+      'users/[id].page.ts': page('User'),
+      'users.new.page.ts': page('Draft'),
+    };
+    assert.deepEqual(paths(fileRoutes(eager(files))), ['', 'users/new', 'users']);
+    const { go, top } = await start(fileRoutes(eager(files)));
+    await go('/users/new');
+    assert.equal(top(), 'draft');
+    await go('/users/7');
+    assert.equal(top(), 'user 7');
+  });
 });
 
 const failing = { unsubscribed: false };

@@ -355,8 +355,9 @@ drawn instead.
 They behave as Analog's do. A file is found at `<slug>.md` or `<slug>/index.md`; a front matter
 `slug` replaces the file's name; `index.md` has the slug `''`; and a file that is not there, or a
 route with no `slug`, gives `{ attributes: {}, slug: '', content: 'No Content Found' }`, with your
-own text as the second argument. The context is read each time the list or a file is asked for,
-so a file the dev server adds or removes is in the next one.
+own text as the second argument. A slug with a space or an accent in it is found both as written
+and as the list encodes it, so a link to `post.slug` opens the post. The context is read each time
+the list or a file is asked for, so a file the dev server adds or removes is in the next one.
 
 ### What differs from @analogjs/content
 

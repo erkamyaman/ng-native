@@ -278,9 +278,10 @@ function urlOf(parts: Part[]): string {
 }
 
 /**
- * The routes under `entry`, in the order Angular should try them: a static path first, then a
- * group's layout, then a path with a parameter, then a catch-all, each by its path. A group with no
- * layout of its own adds nothing to the URL or the tree, so its routes join its siblings'.
+ * The routes under `entry`, in the order Angular should try them: a static path first, a longer
+ * one before a shorter it starts with, then a group's layout, then a path with a parameter, then a
+ * catch-all, each by its path. A group with no layout of its own adds nothing to the URL or the
+ * tree, so its routes join its siblings'.
  */
 function routesOf(entry: Entry, options: FileRoutesOptions): Ranked[] {
   const ranked: Ranked[] = [];
@@ -291,11 +292,21 @@ function routesOf(entry: Entry, options: FileRoutesOptions): Ranked[] {
     else ranked.push(rankedRoute(child, path, children, options));
   }
   return ranked.sort(
-    (a, b) =>
-      a.rank - b.rank ||
-      (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) ||
-      (a.key < b.key ? -1 : 1),
+    (a, b) => a.rank - b.rank || byPath(a.path, b.path) || (a.key < b.key ? -1 : 1),
   );
+}
+
+/**
+ * Paths by their segments, a longer one before the path it starts with: `users/new` is tried
+ * before the `users` folder, whose `:id` would take `new`, as Analog orders them.
+ */
+function byPath(a: string, b: string): number {
+  const left = a.split('/');
+  const right = b.split('/');
+  for (let i = 0; i < Math.min(left.length, right.length); i++) {
+    if (left[i] !== right[i]) return left[i]! < right[i]! ? -1 : 1;
+  }
+  return right.length - left.length;
 }
 
 /** The route for a file or folder name at `path`, with its routes under it. */

@@ -83,9 +83,9 @@ export default class UserPage {
 | `[...missing].page.ts`   | Any URL no other page has: a not-found page                  |
 
 At each level a static path is tried first, then a group's layout, then a path with a parameter,
-then a catch-all, so `users/new.page.ts` wins over `users/[id].page.ts` for `/users/new`, whatever
-order the files are listed in. A catch-all takes `/docs` itself too, with `slug` as `''`, when
-there is no `docs/index.page.ts`.
+then a catch-all, so `users/new.page.ts`, or `users.new.page.ts`, wins over `users/[id].page.ts`
+for `/users/new`, whatever order the files are listed in. A catch-all takes `/docs` itself too,
+with `slug` as `''`, when there is no `docs/index.page.ts`.
 
 ## Layouts
 
