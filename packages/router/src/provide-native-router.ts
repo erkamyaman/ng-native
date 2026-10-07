@@ -44,7 +44,12 @@ import {
   type TabDefaults,
 } from './native-bar-defaults.ts';
 import { followLink, linkAncestry, type LinkParent } from './native-links.ts';
-import { NATIVE_INTENT, NativeNavigation, intentOf } from './native-navigation.ts';
+import {
+  NATIVE_INTENT,
+  NativeNavigation,
+  carryIntentAcrossRedirects,
+  intentOf,
+} from './native-navigation.ts';
 import { NativePlatformLocation } from './native-platform-location.ts';
 import { NativeStackReuseStrategy } from './native-stack-reuse-strategy.ts';
 import { ROUTE_PARKING, type ParkedPage } from './route-parking.ts';
@@ -134,6 +139,7 @@ function nativeProviders(parentOf: LinkParent | undefined): (Provider | Environm
     // Without this the router never detaches, so a pushed-away screen is destroyed and rebuilt.
     { provide: RouteReuseStrategy, useClass: NativeStackReuseStrategy },
     NativeNavigation,
+    provideEnvironmentInitializer(carryIntentAcrossRedirects),
     provideEnvironmentInitializer(keepHistoryAcrossReloads),
   ];
   if (!parentOf) {

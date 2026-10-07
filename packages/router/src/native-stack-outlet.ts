@@ -53,7 +53,7 @@ import { Location, PlatformLocation } from '@angular/common';
 import { SCREEN_IN_FRONT } from '@ng-native/device';
 import { bindRouteInputs } from './bind-route-inputs.ts';
 import { NativeBack, isShowing } from './native-back.ts';
-import { intentOf, type NativeIntent } from './native-navigation.ts';
+import { navigationIntent, type NativeIntent } from './native-navigation.ts';
 import { NativePlatformLocation } from './native-platform-location.ts';
 import { PRESENTED, withoutPresented } from './presented-route.ts';
 import { markScreenRoute } from './tab-routes.ts';
@@ -548,7 +548,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * because the router is mid-navigation for exactly as long as an activation takes.
    */
   private currentIntent(): NativeIntent | null {
-    return intentOf(this.router?.getCurrentNavigation()?.extras.state);
+    return this.router ? navigationIntent(this.router, this.router.getCurrentNavigation()) : null;
   }
 
   /**

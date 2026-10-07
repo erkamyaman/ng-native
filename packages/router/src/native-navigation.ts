@@ -13,12 +13,14 @@
  * No decorators, so tests can import it at runtime and so it can be provided with `useClass`,
  * exactly as `NativePlatformLocation` and `NativeStackReuseStrategy` are.
  */
-import { inject } from '@angular/core';
+import { DestroyRef, inject } from '@angular/core';
 import {
   NavigationCancel,
+  NavigationCancellationCode,
   NavigationEnd,
   NavigationError,
   Router,
+  type Navigation,
   type NavigationExtras,
 } from '@angular/router';
 import { NativeBack } from './native-back.ts';
@@ -59,6 +61,45 @@ export function intentOf(state: unknown): NativeIntent | null {
   if (!state || typeof state !== 'object') return null;
   const intent = (state as Record<string, unknown>)[NATIVE_INTENT];
   return intent && typeof intent === 'object' ? (intent as NativeIntent) : null;
+}
+
+/**
+ * The intent of a navigation a guard redirected, for the navigation the redirect starts.
+ *
+ * The router starts a new navigation for a guard's `UrlTree`, keeping `replaceUrl` but not
+ * `state`, so a reset to a page that sends a signed-out user to sign in would push the sign-in
+ * page over the stack it was meant to clear. Held for that one navigation by its id, which no
+ * later navigation shares.
+ */
+const redirected = new WeakMap<object, { readonly id: number; readonly intent: NativeIntent }>();
+
+/** What a navigation asks of the stack: its own intent, or the one it was redirected from. */
+export function navigationIntent(
+  router: object,
+  navigation: Pick<Navigation, 'id' | 'extras'> | null | undefined,
+): NativeIntent | null {
+  if (!navigation) return null;
+  const own = intentOf(navigation.extras.state);
+  if (own) return own;
+  const carried = redirected.get(router);
+  return carried?.id === navigation.id ? carried.intent : null;
+}
+
+/**
+ * Hand a navigation's intent on to the one its guard redirects it to. The router schedules that
+ * navigation as soon as it has reported the cancel, so it takes the next id.
+ */
+export function carryIntentAcrossRedirects(): void {
+  const router = inject(Router);
+  const events = router.events.subscribe((event) => {
+    if (!(event instanceof NavigationCancel)) return;
+    if (event.code !== NavigationCancellationCode.Redirect) return;
+    const navigation = router.currentNavigation();
+    const intent = navigation?.id === event.id ? navigationIntent(router, navigation) : null;
+    if (intent) redirected.set(router, { id: event.id + 1, intent });
+    else redirected.delete(router);
+  });
+  inject(DestroyRef).onDestroy(() => events.unsubscribe());
 }
 
 export class NativeNavigation {

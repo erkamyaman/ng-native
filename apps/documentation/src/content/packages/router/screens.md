@@ -52,6 +52,11 @@ extra intent riding on `NavigationExtras.state`, guards and resolvers still run 
 still lands correctly - a presented screen going back restores the same presentation it was opened
 with, because it rode in history state along with everything else.
 
+A guard that redirects, by returning a `UrlTree`, sends the navigation to its page with the same
+intent: `reset('/home')` from a signed-out user whose `home` guard redirects to `/login` leaves the
+sign-in page alone on the stack, `replace()` swaps the top screen for it, and `present()` presents
+it the way it was asked for.
+
 A push or a presentation asked for while the app's first screen is still loading, such as a
 lazily loaded root route waiting on its import when a notification is tapped at launch, waits for
 that screen and goes above it, so Back returns to it. `reset()` goes at once, since it replaces the

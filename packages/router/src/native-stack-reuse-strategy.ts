@@ -16,7 +16,7 @@ import {
   Router,
   type Route,
 } from '@angular/router';
-import { intentOf } from './native-navigation.ts';
+import { navigationIntent } from './native-navigation.ts';
 import { PRESENTED } from './presented-route.ts';
 import { isScreenRoute, isTabRoute } from './tab-routes.ts';
 
@@ -191,11 +191,12 @@ export class NativeStackReuseStrategy extends BaseRouteReuseStrategy {
   }
 
   private pushing(): boolean {
-    const navigation = this.injector?.get(Router).currentNavigation();
+    const router = this.injector?.get(Router);
+    const navigation = router?.currentNavigation();
     // A back restores the state its history entry was pushed with, intent and all: that is the
     // screen being returned to, not a push.
-    if (!navigation || navigation.trigger === 'popstate') return false;
-    return intentOf(navigation.extras.state)?.stack === 'push';
+    if (!router || !navigation || navigation.trigger === 'popstate') return false;
+    return navigationIntent(router, navigation)?.stack === 'push';
   }
 
   override retrieve(route: ActivatedRouteSnapshot): DetachedRouteHandle | null {
