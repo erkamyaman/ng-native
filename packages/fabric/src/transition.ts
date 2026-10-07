@@ -692,6 +692,8 @@ export interface RunningAnimation {
    * is then the frame it started at, which is what the view is committed with.
    */
   native?: { stop(): void };
+  /** The properties left out of what native plays, as a rule declared them `!important`. */
+  pinned?: readonly string[];
 }
 
 /**

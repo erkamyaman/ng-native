@@ -301,6 +301,64 @@ describe('a @keyframes animation of opacity and transforms', () => {
   });
 });
 
+describe('a @keyframes animation against an important declaration', () => {
+  /**
+   * An important declaration is above the animation in the cascade, so native is not handed the
+   * property it pins: native would set it on the view over what the rule says.
+   */
+  const POP =
+    '@keyframes pop { from { opacity: 0; transform: rotate(0deg) } to { opacity: 1; transform: rotate(360deg) } }';
+
+  it('plays natively what is not important, and leaves the important opacity where it is', () => {
+    const s = scene(`${POP} .a { opacity: 0.3 !important; animation: pop 1s linear infinite }`);
+    assert.equal(s.started().length, 1);
+    assert.deepEqual(s.at(0.5), { rotate: round(Math.PI) });
+    assert.equal(s.props()['opacity'], 0.3);
+    assert.equal(s.engine.animating, false);
+  });
+
+  it('leaves an important transform where it is, and plays the opacity natively', () => {
+    const s = scene(
+      `${POP} .a { transform: rotate(45deg) !important; animation: pop 1s linear infinite }`,
+    );
+    const still = scene('.a { transform: rotate(45deg) }');
+    assert.deepEqual(s.at(0.5), { opacity: 0.5 });
+    assert.deepEqual(s.props()['transform'], still.props()['transform']);
+  });
+
+  it('hands native nothing when all it moves is important, and paints the important value', () => {
+    const s = scene('.a { opacity: 0.3 !important; animation: fade 1s linear infinite }');
+    assert.equal(s.started().length, 0);
+    s.later(250);
+    assert.equal(s.props()['opacity'], 0.3);
+  });
+
+  it('plays the opacity again once its important declaration goes', () => {
+    const s = scene(
+      `${POP} .a { animation: pop 1s linear infinite } .pinned { opacity: 0.3 !important }`,
+      'a pinned',
+    );
+    assert.deepEqual(s.at(0.5), { rotate: round(Math.PI) });
+    s.engine.setClasses(s.view, 'a');
+    s.engine.commit();
+    assert.equal(s.rec.named('stop').length, 1);
+    s.later(250);
+    assert.equal(s.props()['opacity'], 0.25);
+  });
+
+  it('takes the opacity back from native once a rule declares it important', () => {
+    const s = scene(
+      `${POP} .a { animation: pop 1s linear infinite } .pinned { opacity: 0.3 !important }`,
+    );
+    assert.deepEqual(s.at(0.5), { opacity: 0.5, rotate: round(Math.PI) });
+    s.engine.setClasses(s.view, 'a pinned');
+    s.engine.commit();
+    assert.equal(s.rec.named('stop').length, 1);
+    s.later(250);
+    assert.equal(s.props()['opacity'], 0.3);
+  });
+});
+
 describe('a @keyframes animation native cannot play', () => {
   it('is played from JavaScript when it moves anything but opacity and transforms', () => {
     const s = scene('.a { animation: tint 1s linear infinite }');

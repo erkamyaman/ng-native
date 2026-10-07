@@ -152,6 +152,8 @@ interface ScrollAnimation {
   /** The `@keyframes` it was laid out from, so a hot swap that edits them lays it out again. */
   readonly frames: readonly Keyframe[];
   readonly tracks: ReadonlyMap<string, readonly { offset: number; value: unknown }[]>;
+  /** The properties among `tracks` declared `!important`, left where the rule puts them. */
+  readonly pinned: readonly string[];
   readonly resting: Record<string, unknown>;
   readonly first: Record<string, unknown>;
   /** The colour the node inherits, which the tracks were built with, for frames that read it. */
@@ -998,6 +1000,26 @@ function playedOver(node: EngineNode): Readonly<Record<string, unknown>> {
   const played = { ...values };
   for (const key of important) delete played[key];
   return played;
+}
+
+/**
+ * The properties among an animation's tracks that a rule `node` matches declared `!important`,
+ * which native is not handed: what native plays it sets on the view, over what the rule says.
+ */
+function pinnedIn(node: EngineNode, tracks: ReadonlyMap<string, unknown>): string[] {
+  const important = node.styleCache?.important;
+  return important ? [...tracks.keys()].filter((key) => important.has(key)) : [];
+}
+
+/** `tracks` less the properties named. */
+function unpinned<T>(
+  tracks: ReadonlyMap<string, T>,
+  pinned: readonly string[],
+): ReadonlyMap<string, T> {
+  if (!pinned.length) return tracks;
+  const kept = new Map(tracks);
+  for (const key of pinned) kept.delete(key);
+  return kept;
 }
 
 /**
@@ -4139,7 +4161,9 @@ export class Engine implements HostEngine {
     const { spec } = running;
     const sized = this.scrollDriver ? this.sized(node, running, props) : null;
     if (!this.scrollDriver || !sized) return false;
-    const { channels, held, span } = clockChannels(sized.tracks, spec, sized.resting);
+    const pinned = pinnedIn(node, sized.tracks);
+    const tracks = unpinned(sized.tracks, pinned);
+    const { channels, held, span } = clockChannels(tracks, spec, sized.resting);
     if (held.length || !(channels.opacity || channels.transform.length)) return false;
     // There and back is one native animation: an odd number of ways has no whole number of them.
     const count = spec.iterations === null ? -1 : spec.iterations / span;
@@ -4155,6 +4179,7 @@ export class Engine implements HostEngine {
     );
     if (!native) return false;
     running.native = native;
+    running.pinned = pinned;
     // As Animated does: Fabric flattens a view that only lays out, and then there is no native
     // view for the animation to move.
     running.values = { ...running.values, collapsable: false };
@@ -4232,8 +4257,15 @@ export class Engine implements HostEngine {
       this.emitTransition(node, 'topAnimationstart', spec.name);
       return;
     }
-    // A view made again is another view: the one native was moving is gone.
+    // A view made again is another view: the one native was moving is gone. And one whose
+    // important declarations changed is moving what it now must not, or not what it now may.
     if (node.committed === null) this.backToScript(node, current);
+    else if (
+      current.native &&
+      pinnedIn(node, current.tracks).join(' ') !== current.pinned?.join(' ')
+    ) {
+      this.backToScript(node, current);
+    }
     if (this.playedFrames.get(current) !== frames || inherited !== current.inherited) {
       this.backToScript(node, current);
       this.reframe(node, current, frames, props, inherited);
@@ -4315,24 +4347,27 @@ export class Engine implements HostEngine {
   ): Record<string, unknown> {
     const current = node.scrolled;
     const inherited = this.inheritedColour(node, frames);
-    if (current?.frames === frames && sameAnimation(current.spec, spec)) {
+    const same = current?.frames === frames && sameAnimation(current.spec, spec);
+    if (same && pinnedIn(node, current.tracks).join(' ') === current.pinned.join(' ')) {
       return Object.assign(props, this.rescrolled(node, current, frames, props, inherited));
     }
     this.stopScrolled(node);
     this.handOverToScroll(node, spec);
 
     const tracks = tracksOf(frames, props, inherited);
+    const pinned = pinnedIn(node, tracks);
+    const played = unpinned(tracks, pinned);
     const source = this.scrollSourceOf(node);
     const extent = source ? (this.scrollExtents.get(source)?.[spec.timeline!] ?? null) : null;
     const range = rangeOf(spec, extent);
-    const first: Record<string, unknown> = firstFrame(tracks, spec, range);
+    const first: Record<string, unknown> = firstFrame(played, spec, range);
     const resting = { ...props };
     if (!source && this.dev) this.reportUnscrolled(spec.name);
-    const drive = source ? this.driveScrolled(node, source, spec, tracks, resting, range) : null;
+    const drive = source ? this.driveScrolled(node, source, spec, played, resting, range) : null;
     // As Animated does: Fabric flattens a view that only lays out, and then there is no native
     // view for the animation to move. Committed with the first frame, so it stays put.
     if (drive) first['collapsable'] = false;
-    node.scrolled = { spec, frames, tracks, resting, first, source, drive, inherited };
+    node.scrolled = { spec, frames, tracks, pinned, resting, first, source, drive, inherited };
     return Object.assign(props, first);
   }
 
@@ -4426,7 +4461,12 @@ export class Engine implements HostEngine {
       if (!scrolled?.drive) continue;
       const range = rangeOf(scrolled.spec, extent[scrolled.spec.timeline!]);
       scrolled.drive.update(
-        scrollChannels(scrolled.tracks, scrolled.spec, scrolled.resting, range).channels,
+        scrollChannels(
+          unpinned(scrolled.tracks, scrolled.pinned),
+          scrolled.spec,
+          scrolled.resting,
+          range,
+        ).channels,
       );
     }
   }

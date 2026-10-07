@@ -267,3 +267,27 @@ describe('a scroll-driven animation on the native side', () => {
     assert.match(String(errors.flat().join(' ')), /scroll view/);
   });
 });
+
+describe('a scroll-driven animation against an important declaration', () => {
+  const LIFT =
+    '@keyframes lift { from { opacity: 1; transform: translateY(0) } to { opacity: 0; transform: translateY(-20px) } }';
+  const played =
+    '.a { animation: lift linear both; animation-timeline: scroll(); animation-range: 0 100px; }';
+
+  it('leaves the important opacity where it is, and drives the rest along the scroll', () => {
+    const { at, view } = scene(`${LIFT} ${played} .a { opacity: 0.3 !important }`);
+    assert.deepEqual(at(50), { transform: [{ translateY: -10 }] });
+    assert.equal(view.committed?.props['opacity'], 0.3);
+  });
+
+  it('drives the opacity again once its important declaration goes', () => {
+    const { at, view, engine } = scene(
+      `${LIFT} ${played} .pinned { opacity: 0.3 !important }`,
+      'a pinned',
+    );
+    engine.setClasses(view, 'a');
+    engine.commit();
+    assert.deepEqual(at(50), { opacity: 0.5, transform: [{ translateY: -10 }] });
+    assert.equal(view.committed?.props['opacity'], 1);
+  });
+});

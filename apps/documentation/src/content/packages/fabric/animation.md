@@ -82,8 +82,8 @@ only `animation-duration` changes the animation another rule names.
 
 A running animation wins over the element's inline style and its plain declarations, but not over
 a property a rule declares `!important`, as in a browser: `opacity: 0.3 !important` keeps the
-element at 0.3 while its keyframes move everything else. A transition still eases an important
-property.
+element at 0.3 while its keyframes move everything else, whether native or JavaScript plays
+them, or a scroll does. A transition still eases an important property.
 
 A duration or delay can be a token, or `calc()` with tokens in it, which is how a list staggers
 its rows: `animation-delay: calc(var(--i) * 60ms)` with `[style.--i]="$index"` on each. A token of
