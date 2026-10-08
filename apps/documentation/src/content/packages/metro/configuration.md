@@ -210,8 +210,8 @@ A release build empties that module, so it cannot carry the edit there. Instead,
 worker writes down each template and stylesheet a component's transform read, with a hash of its
 text, and the cache stores the preset wraps answer a miss once one of them has changed or been
 deleted. Metro then compiles the component again against the new text. Without that, two
-`npx expo export` runs with only a `.html` or `.css` file edited between them shipped the same bundle
-until `--clear`.
+`npx expo export` runs with only a `.html` or `.css` file edited between them shipped the same
+bundle until `--clear`.
 
 A stylesheet several screens share is swapped on every one of them by the one edit. The ceiling is
 the project: a component in another package of a monorepo that reaches the file across the package
