@@ -59,8 +59,15 @@ function write(root: string, files: Record<string, string>): void {
   }
 }
 
-/** A Metro release build of `index.ts`, as `npx expo export` makes one, reading and writing `cache`. */
-async function releaseBuild(root: string, cache: string | object): Promise<string> {
+/**
+ * A Metro release build of `index.ts`, as `npx expo export` makes one, reading and writing `cache`,
+ * with each import named in `replacements` resolved as the one it is mapped to.
+ */
+async function releaseBuild(
+  root: string,
+  cache: string | object,
+  replacements: Record<string, string> = {},
+): Promise<string> {
   const config = getDefaultConfig(root);
   config['cacheStores'] = [typeof cache === 'string' ? new FileStore({ root: cache }) : cache];
   withAngularNative(config);
@@ -76,7 +83,7 @@ async function releaseBuild(root: string, cache: string | object): Promise<strin
     platform: string,
   ) =>
     name.startsWith('.') || path.isAbsolute(name)
-      ? resolve({ ...context, resolveRequest: resolve }, name, platform)
+      ? resolve({ ...context, resolveRequest: resolve }, replacements[name] ?? name, platform)
       : { type: 'empty' };
   const cwd = process.cwd();
   process.chdir(root);
@@ -153,6 +160,18 @@ describe('a release build from a warm Metro cache', () => {
     const back = await releaseBuild(root, cache);
     assert.ok(shipped(back, 'THIRD_TEMPLATE'), 'the edit is in the bundle');
     assert.ok(!shipped(back, 'FIRST_TEMPLATE'), 'what the edit replaced is not');
+  });
+
+  it('builds a module importing a stylesheet a resolver replaces with another file', async () => {
+    const { root, cache } = project({
+      'index.ts': `import './theme.css';\n${INDEX}`,
+      'card.ts': card(`template: '<view><text>FIRST_TEMPLATE</text></view>'`),
+      'theme.ios.css': '.theme { opacity: 0.5 }',
+    });
+    const replacements = { './theme.css': './theme.ios.css' };
+    assert.ok(shipped(await releaseBuild(root, cache, replacements), 'FIRST_TEMPLATE'));
+    const warm = await releaseBuild(root, cache, replacements);
+    assert.ok(shipped(warm, 'FIRST_TEMPLATE'), 'from the warm cache');
   });
 
   it('still reuses a transform when nothing it read has changed', async () => {

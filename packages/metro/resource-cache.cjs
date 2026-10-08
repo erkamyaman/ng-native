@@ -19,29 +19,22 @@
 const { createHash } = require('node:crypto');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
-const { isResource } = require('./angular-transform.cjs');
+const { takeResourcesRead } = require('./angular-transform.cjs');
 
 /** Where a transform result keeps its resources, `{ file, sha1 }` each, the file from the project. */
 const RESOURCES = 'angularNativeResources';
 
 const sha1Of = (file) => createHash('sha1').update(readFileSync(file)).digest('hex');
 
-/** The import a compiled component puts in front of itself for each resource: see `transformAngular`. */
-const isRelative = (name) => /^\.\.?[\\/]/.test(name) || path.isAbsolute(name);
-
 /**
  * The result, with the resources the transform of `filename` read written onto it. Named from the
  * project root, as Metro names `filename`, so a cache moved with the project still holds.
  */
 function withResources(result, projectRoot, filename) {
-  const directory = path.dirname(path.resolve(projectRoot, filename));
-  const resources = (result?.dependencies ?? [])
-    .map((dependency) => dependency.name)
-    .filter((name) => typeof name === 'string' && isRelative(name) && isResource(name))
-    .map((name) => {
-      const absolute = path.resolve(directory, name);
-      return { file: path.relative(projectRoot, absolute), sha1: sha1Of(absolute) };
-    });
+  const resources = takeResourcesRead(filename).map((absolute) => ({
+    file: path.relative(projectRoot, absolute),
+    sha1: sha1Of(absolute),
+  }));
   return resources.length ? { ...result, [RESOURCES]: resources } : result;
 }
 
