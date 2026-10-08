@@ -124,16 +124,41 @@ describe('a permission the person turns on in Settings', () => {
     const app = foreground();
     const permission = runInInjectionContext(
       Injector.create({ providers: [{ provide: Permission.FOREGROUND, useValue: app.events }] }),
-      () => Permission.of(native.get, native.request),
+      () => Permission.of(() => native.get(), native.request),
     );
     await permission.check();
 
+    let failedChecks = 0;
     native.get = async () => {
+      failedChecks++;
       throw new Error('the module went away');
     };
     app.return();
     await settled();
+    assert.equal(failedChecks, 1);
     assert.equal(permission.blocked(), true);
+  });
+
+  it('keeps a yes recorded while a check on coming back was still out', async () => {
+    const native = platform(blocked);
+    const app = foreground();
+    const permission = runInInjectionContext(
+      Injector.create({ providers: [{ provide: Permission.FOREGROUND, useValue: app.events }] }),
+      () => Permission.of(() => native.get(), native.request),
+    );
+    await permission.check();
+
+    let answerLateCheck = (_: PermissionResponse) => {};
+    native.get = () => new Promise((resolve) => (answerLateCheck = resolve));
+    app.return();
+    await settled();
+
+    native.answer = granted;
+    assert.equal(await permission.request(), true);
+    answerLateCheck(blocked);
+    await settled();
+    assert.equal(permission.granted(), true, 'an older check replaced a newer yes');
+    assert.equal(permission.blocked(), false);
   });
 
   it('works without foreground events, as in Node or a build without React Native', async () => {

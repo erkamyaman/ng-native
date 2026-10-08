@@ -66,6 +66,8 @@ export class Permission {
 
   private readonly api: PermissionApi;
   private readonly last = signal<PermissionResponse | null>(null);
+  private asked = 0;
+  private answered = 0;
 
   /**
    * Built in an injection context, as a field of a service or a component, it checks again each
@@ -103,12 +105,12 @@ export class Permission {
 
   /** Ask the platform what it currently thinks, without showing anything to the user. */
   async check(): Promise<boolean> {
-    return this.record(await this.api.get());
+    return this.ask(() => this.api.get());
   }
 
   /** Show the dialog. Resolves to what the user said. */
   async request(): Promise<boolean> {
-    return this.record(await this.api.request());
+    return this.ask(() => this.api.request());
   }
 
   /**
@@ -130,8 +132,14 @@ export class Permission {
     return this.request();
   }
 
-  private record(response: PermissionResponse): boolean {
-    this.last.set(response);
+  /** An answer to a call made before the one last answered is older, and is not recorded. */
+  private async ask(call: () => Promise<PermissionResponse>): Promise<boolean> {
+    const turn = ++this.asked;
+    const response = await call();
+    if (turn > this.answered) {
+      this.answered = turn;
+      this.last.set(response);
+    }
     return response.granted;
   }
 
