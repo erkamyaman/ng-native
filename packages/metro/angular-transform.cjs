@@ -1423,8 +1423,9 @@ function transformAngular(src, filename, options = {}) {
 
     // An external template is not an import, so without an edge Metro would never watch it. The
     // edge does not re-transform this file when the template changes - Metro caches a transform
-    // on the file's own content - so the template's module carries the update instead, and is
-    // empty in a release build. See `resourceBlock`.
+    // on the file's own content - so in dev the template's module carries the update instead (see
+    // `resourceBlock`), and a cached transform of this file is a miss once the template has
+    // changed (see `resource-cache.cjs`).
     const edges = dependencies
       .map((dependency) => `import ${JSON.stringify(relativeSpecifier(dependency))};\n`)
       .join('');

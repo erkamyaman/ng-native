@@ -17,6 +17,7 @@
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { existsSync, readdirSync, readFileSync, watch } = require('node:fs');
+const { checkingResources } = require('./resource-cache.cjs');
 
 const SOURCE_EXTS = ['html', 'css', 'scss', 'md'];
 
@@ -649,6 +650,10 @@ function withAngularNative(config, options = {}) {
   }
 
   recordLibraryStyles(config, options);
+
+  // A component's cached transform is a miss once a template or stylesheet it read has changed:
+  // see `resource-cache.cjs`. The stores the config has now; one set after this is not checked.
+  config.cacheStores = checkingResources(config.cacheStores, config.projectRoot);
 
   // So a change to the compiler invalidates every cached transform rather than only the files
   // that happen to be edited alongside it.

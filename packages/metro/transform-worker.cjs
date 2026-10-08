@@ -12,6 +12,7 @@
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { isAngularDomComponent, domComponentEntry } = require('./dom-component.cjs');
+const { withResources } = require('./resource-cache.cjs');
 
 const IS_STYLESHEET = /\.(s?css|sass)$/;
 const IS_CSS_MODULE = /\.module\.(s?css|sass)$/;
@@ -70,22 +71,31 @@ function withLibraryStyles(config, options) {
   };
 }
 
+/** The file through Expo's worker, or through the one under it that runs our transformer. */
+function transformFile(config, projectRoot, filename, data, options) {
+  const expo = upstreamPath(config, projectRoot);
+  options = withLibraryStyles(config, options);
+  const page = domComponentPage(filename, options);
+  if (page) return innerWorker(expo).transform(config, projectRoot, filename, page, options);
+
+  const ours =
+    options.dev &&
+    options.platform !== 'web' &&
+    options.type !== 'asset' &&
+    IS_STYLESHEET.test(filename) &&
+    !IS_CSS_MODULE.test(filename);
+  if (!ours) return require(expo).transform(config, projectRoot, filename, data, options);
+
+  return innerWorker(expo).transform(config, projectRoot, filename, data, options);
+}
+
 module.exports = {
+  // With the templates and stylesheets the transform read, so a cached one is not served once they
+  // change: see `resource-cache.cjs`.
   transform(config, projectRoot, filename, data, options) {
-    const expo = upstreamPath(config, projectRoot);
-    options = withLibraryStyles(config, options);
-    const page = domComponentPage(filename, options);
-    if (page) return innerWorker(expo).transform(config, projectRoot, filename, page, options);
-
-    const ours =
-      options.dev &&
-      options.platform !== 'web' &&
-      options.type !== 'asset' &&
-      IS_STYLESHEET.test(filename) &&
-      !IS_CSS_MODULE.test(filename);
-    if (!ours) return require(expo).transform(config, projectRoot, filename, data, options);
-
-    return innerWorker(expo).transform(config, projectRoot, filename, data, options);
+    const result = transformFile(config, projectRoot, filename, data, options);
+    const done = (output) => withResources(output, projectRoot, filename);
+    return typeof result?.then === 'function' ? result.then(done) : done(result);
   },
 
   getCacheKey(config, context) {

@@ -44,6 +44,12 @@ module.exports = withAngularNative(getDefaultConfig(__dirname));
   same sources and logs a warning if they change, because Metro loads the transformer into a worker
   pool once at startup: an edit to the compiler otherwise reaches nothing until you restart, with no
   error at all.
+- Wraps each of `config.cacheStores` so a component's cached transform is not reused once a
+  `templateUrl` or `styleUrl` file it read has changed or gone (see
+  [External templates and stylesheets](#external-templates-and-stylesheets)). Only the stores the
+  config has when `withAngularNative` runs are wrapped, so set your own `cacheStores` before calling
+  it. The worker above is what records those files, so with a worker you configured yourself there
+  is nothing to check and a release build needs `--clear` after such an edit.
 
 Pass `{ workspaceRoot }` in a monorepo where the framework packages live outside your app's own
 `node_modules` - it adds the workspace root to `watchFolders` and both `node_modules` directories to
@@ -199,6 +205,13 @@ file is a stylesheet. The module accepts its own update, so nothing bubbles into
 The same module also fixes what a full reload after the edit shows. It runs before the component's
 module (the component imports it), and when the component registers, any template or sheet newer
 than the one it was compiled with is applied first.
+
+A release build empties that module, so it cannot carry the edit there. Instead, the transform
+worker writes down each template and stylesheet a component's transform read, with a hash of its
+text, and the cache stores the preset wraps answer a miss once one of them has changed or been
+deleted. Metro then compiles the component again against the new text. Without that, two
+`npx expo export` runs with only a `.html` or `.css` file edited between them shipped the same bundle
+until `--clear`.
 
 A stylesheet several screens share is swapped on every one of them by the one edit. The ceiling is
 the project: a component in another package of a monorepo that reaches the file across the package
