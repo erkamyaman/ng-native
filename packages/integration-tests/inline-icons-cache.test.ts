@@ -28,7 +28,7 @@ const { getDefaultConfig } = require('expo/metro-config') as {
   getDefaultConfig(root: string): Record<string, unknown>;
 };
 const { withAngularNative } = require('@ng-native/metro/config.cjs') as {
-  withAngularNative(config: object): Record<string, unknown>;
+  withAngularNative(config: object, options?: { projectRoot?: string }): Record<string, unknown>;
 };
 const { iconSetVersions } = require('@ng-native/metro/inline-icons.cjs') as {
   iconSetVersions(projectRoot: string): string | undefined;
@@ -132,6 +132,31 @@ describe('an icon set in the transform cache key', () => {
 
       rmSync(path.join(root, 'node_modules', '@ng-icons'), { recursive: true });
       assert.equal(icon(await releaseBuild(root, cache)), undefined);
+    } finally {
+      done();
+    }
+  });
+
+  it('reads the sets of an app below the config root', () => {
+    const { root, done } = app();
+    try {
+      const parent = path.dirname(root);
+      writeFileSync(path.join(parent, 'package.json'), JSON.stringify({ private: true }));
+      const cacheVersion = () =>
+        (
+          withAngularNative(getDefaultConfig(parent), { projectRoot: root })['transformer'] as {
+            cacheVersion: string;
+          }
+        ).cacheVersion;
+
+      publishSet(root, '1.0.0', 'ICON_ONE');
+      const before = cacheVersion();
+      publishSet(root, '1.1.0', 'ICON_TWO');
+      const upgraded = cacheVersion();
+      assert.notEqual(upgraded, before);
+
+      rmSync(path.join(root, 'node_modules', '@ng-icons'), { recursive: true });
+      assert.notEqual(cacheVersion(), upgraded);
     } finally {
       done();
     }

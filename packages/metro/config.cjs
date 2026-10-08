@@ -661,7 +661,7 @@ function withAngularNative(config, options = {}) {
     fingerprint,
     angularVersion(config.projectRoot),
     ...babelPluginVersions(config.projectRoot),
-    iconSetVersions(config.projectRoot),
+    iconSetVersions(projectRoot),
   ]
     .filter(Boolean)
     .join('-');
