@@ -14,7 +14,7 @@
  * ponytail: a set is parsed with a regex over its published `fesm2022` file, which is one
  * `const name = \`<svg ...>\`;` per icon; a set published in another shape is left alone.
  */
-const { readFileSync, statSync } = require('node:fs');
+const { readdirSync, readFileSync, statSync } = require('node:fs');
 const path = require('node:path');
 
 const IMPORT = /^import\s*\{([^}]*)\}\s*from\s*['"](@ng-icons\/(?!core\b)[^'"]+)['"];?[ \t]*$/gm;
@@ -84,4 +84,46 @@ function inlineIcons(src, filename) {
   });
 }
 
-module.exports = { inlineIcons };
+/** The names in `dir`, or none where it does not exist. */
+function namesIn(dir) {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Every icon set installed for the app, with its version, for the transform cache key.
+ *
+ * A set is read while the app's own file is transformed, so it is an input of that file's
+ * transform that Metro knows nothing about. Upgraded with an icon redrawn, every file importing it
+ * kept the old SVG in a release build, and in a dev server after a restart, until a `--clear`. In
+ * the key, installing, upgrading or removing a set starts the cache afresh.
+ *
+ * Up the app's own `node_modules` folders, as `babelPluginVersions` in `config.cjs` looks, and
+ * through pnpm's store there, which holds one folder per set and version whichever workspace
+ * package depends on it.
+ */
+function iconSetVersions(projectRoot) {
+  const found = new Set();
+  for (let dir = path.resolve(projectRoot ?? process.cwd()); ; dir = path.dirname(dir)) {
+    const scope = path.join(dir, 'node_modules', '@ng-icons');
+    for (const name of namesIn(scope)) {
+      if (name === 'core') continue;
+      try {
+        const manifest = path.join(scope, name, 'package.json');
+        found.add(`@ng-icons/${name}@${JSON.parse(readFileSync(manifest, 'utf8')).version}`);
+      } catch {
+        // Not a package: nothing a set could be read from.
+      }
+    }
+    for (const name of namesIn(path.join(dir, 'node_modules', '.pnpm'))) {
+      if (name.startsWith('@ng-icons+') && !name.startsWith('@ng-icons+core@')) found.add(name);
+    }
+    if (path.dirname(dir) === dir) break;
+  }
+  return found.size ? `ng-icons-${[...found].sort().join(',')}` : undefined;
+}
+
+module.exports = { inlineIcons, iconSetVersions };

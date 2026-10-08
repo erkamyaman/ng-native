@@ -17,6 +17,7 @@
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { existsSync, readdirSync, readFileSync, watch } = require('node:fs');
+const { iconSetVersions } = require('./inline-icons.cjs');
 
 const SOURCE_EXTS = ['html', 'css', 'scss', 'md'];
 
@@ -660,6 +661,7 @@ function withAngularNative(config, options = {}) {
     fingerprint,
     angularVersion(config.projectRoot),
     ...babelPluginVersions(config.projectRoot),
+    iconSetVersions(config.projectRoot),
   ]
     .filter(Boolean)
     .join('-');
