@@ -58,9 +58,9 @@ export class App {
 ```
 
 The permission is `notifications.permission`, a [`Permission`](/packages/expo/permissions):
-`ensure()` asks only if it has not been answered, and `blocked()` says when the user has to go to
-Settings. `requestPermission(options)` asks with iOS's finer options, such as provisional
-authorization.
+`ensure()` shows a dialog only when the platform will show one, and `blocked()` says when the user
+has to go to Settings. Both follow a permission turned on there once the app is back.
+`requestPermission(options)` asks with iOS's finer options, such as provisional authorization.
 
 ## What it reports and does
 

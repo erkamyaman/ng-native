@@ -64,20 +64,38 @@ readonly notifications = Permission.of(getPermissionsAsync, requestPermissionsAs
   asked yet.
 - **`granted`** is a signal: whether the permission is currently granted.
 - **`blocked`** is a signal: true once the platform will no longer show a dialog at all - refused
-  for good. This is the moment to send the person to Settings instead of asking again.
+  for good. This is the moment to send the person to Settings instead of asking again. It is not
+  final: see [Coming back from Settings](#coming-back-from-settings).
 - **`check()`** asks the platform what it currently thinks, without showing the person anything.
 - **`request()`** shows the dialog and resolves to whether they granted it.
 - **`ensure()`** is the method most call sites want: it has the permission if it can be had, and
-  only shows a dialog if showing one would do something. It checks first if nothing has asked yet,
-  returns `true` immediately if already granted, returns `false` immediately if blocked (asking
-  again would resolve to the same no while reading as though the person had been consulted twice),
-  and otherwise shows the request dialog.
+  only shows a dialog if showing one would do something. A granted answer is kept, so it returns
+  `true` without asking the platform again. Anything else, including nothing asked yet, is checked
+  first, which shows nothing. Then it returns `true` if granted, `false` if blocked (asking again
+  would resolve to the same no while reading as though the person had been consulted twice), and
+  otherwise shows the request dialog.
 
 ```ts
 protected async open(): Promise<void> {
   if (await this.camera.ensure()) this.scanning.set(true);
 }
 ```
+
+## Coming back from Settings
+
+A permission refused for good can still be turned on in Settings, and neither platform restarts the
+app for that. So a no is never taken as final:
+
+- **`ensure()`** checks a no again before answering. The next tap after the person comes back
+  works, with no dialog.
+- A `Permission` built in an injection context (a field of a service or a component, as above)
+  also checks a no again each time the app comes back to the front, so `blocked`, `granted` and
+  `status` change by themselves and a "turn it on in Settings" screen can go away. It stops when
+  that service or component is destroyed. One built outside an injection context only changes when
+  you call `check()`, `request()` or `ensure()`.
+
+A granted answer is not checked again either way, which keeps the common path free of platform
+calls. Call `check()` where you need to know a permission was not turned off since.
 
 ## Reference
 
