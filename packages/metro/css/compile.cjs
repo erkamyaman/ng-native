@@ -1383,7 +1383,10 @@ function functionalPseudo(part, context) {
   const found = { compounds: [], ancestors: [], parents: [] };
   let top = { ids: 0, classes: 0, types: 0 };
 
-  for (const argument of part.selectors) {
+  // `:not()` of a list matches none of it, so an argument that is a list with an ancestor test in
+  // it is each of its alternatives, as it is at the top of a selector: see `alternatives`.
+  const args = part.kind === 'not' ? part.selectors.flatMap(alternatives) : part.selectors;
+  for (const argument of args) {
     const { list, parts } = functionalArgument(part, argument, context);
     const built = compound(parts, context);
     found[list].push(under(built.compound, parts.under, context));
@@ -2902,7 +2905,10 @@ function compileCss(source, context = 'styles', options = {}) {
         const before = rules.length;
         // Conditioned even when it throws: a selector list can fail part way, after the selectors
         // before the bad one were already added, and those must not apply unconditionally.
-        guarded(() => (isLayer(inner) ? compileRule(inner) : styleRule(inner)), locationOf(inner));
+        guarded(
+          () => (isLayer(inner) || inner.type === 'media' ? compileRule(inner) : styleRule(inner)),
+          locationOf(inner),
+        );
         for (let i = before; i < rules.length; i++) {
           const own = rules[i].condition;
           rules[i].condition = own ? { all: [condition, own] } : condition;

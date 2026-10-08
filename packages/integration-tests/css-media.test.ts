@@ -238,6 +238,36 @@ describe('the ways a media query can be written', () => {
   });
 });
 
+describe('a media query inside another', () => {
+  // Tailwind 4 writes a stacked variant, `md:max-lg:` or `md:motion-reduce:`, as one query inside
+  // another. The inner one was refused as an at-rule a style rule cannot hold, so the rule was
+  // dropped at every width.
+  it('applies its rules only where both hold', () => {
+    const dropped: string[] = [];
+    const sheet = compileCss(
+      '.a { color: red } @media (min-width: 300px) { @media (max-width: 499px) { .a { color: blue } } }',
+      'media',
+      { onUnsupported: (message: string) => dropped.push(message) },
+    );
+    const holdsAt = (width: number) => {
+      const resolver = new StyleResolver(sheet, { width, height: 800, colorScheme: 'light' });
+      const target: StyleTarget = {
+        name: 'view',
+        parent: null,
+        classes: new Set(['a']),
+        props: {},
+        sheet: null,
+        hostSheet: null,
+        styleCache: null,
+        styleDirty: true,
+      };
+      return resolver.resolve(target, 1).style['color'] === 'rgb(0, 0, 255)';
+    };
+    assert.deepEqual(dropped, []);
+    assert.deepEqual([299, 300, 499, 500].map(holdsAt), [false, true, true, false]);
+  });
+});
+
 describe('a media feature written with no value', () => {
   const sheet = (query: string) => {
     const refused: string[] = [];

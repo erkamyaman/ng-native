@@ -223,6 +223,19 @@ describe('alternatives inside :is() and :where(), some of them ancestor tests', 
     assert.equal(anyRule(selector, node('view', {}, ['x'], node('view', {}, ['c']))), false);
   });
 
+  it('excludes every alternative under :not(), as not-dark: does', () => {
+    // Tailwind's `not-dark:` is this list under `:not()`. Read as one compound, it excluded only an
+    // element that was dark and inside something dark, so it still applied in dark mode.
+    const selector = '.x:not(:where(.dark, .dark *))';
+    assert.equal(anyRule(selector, node('view', {}, ['x', 'dark'])), false, 'the element is dark');
+    assert.equal(
+      anyRule(selector, node('view', {}, ['x'], node('view', {}, ['dark']))),
+      false,
+      'inside',
+    );
+    assert.equal(anyRule(selector, node('view', {}, ['x'])), true, 'neither');
+  });
+
   it('keeps the specificity of the most specific alternative, as :is() has', () => {
     const [first, second] = compileCss('.x:is(#id *, .a) { color: red }').rules as StyleRule[];
     assert.equal(first!.specificity, ruleFor('.x#id').specificity);

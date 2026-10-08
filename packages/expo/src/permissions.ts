@@ -14,7 +14,8 @@
  *                                 Camera.Camera.requestCameraPermissionsAsync);
  * ```
  */
-import { computed, signal, type Signal } from '@angular/core';
+import { DestroyRef, InjectionToken, computed, inject, signal, type Signal } from '@angular/core';
+import { optional } from './native.ts';
 
 /** What every Expo permission call answers with. */
 export interface PermissionResponse {
@@ -37,12 +38,48 @@ export const UNAVAILABLE: PermissionResponse = {
   canAskAgain: false,
 };
 
+/** Calls the listener each time the app comes back to the front, and answers how to stop. */
+export type ForegroundEvents = (listener: () => void) => () => void;
+
 export class Permission {
+  /**
+   * Overridden in a test to bring the app back to the front without a device.
+   *
+   * Turning a permission on means going to Settings, so coming back is when an answer can have
+   * changed. Neither platform restarts the app for that.
+   */
+  static readonly FOREGROUND = new InjectionToken<ForegroundEvents | null>(
+    'angular-native.permissionForeground',
+    {
+      factory: () => {
+        const rn = optional(() => require('react-native') as typeof import('react-native'));
+        if (!rn?.AppState) return null;
+        return (listener) => {
+          const subscription = rn.AppState.addEventListener('change', (state) => {
+            if (state === 'active') listener();
+          });
+          return () => subscription?.remove();
+        };
+      },
+    },
+  );
+
   private readonly api: PermissionApi;
   private readonly last = signal<PermissionResponse | null>(null);
+  private asked = 0;
+  private answered = 0;
 
+  /**
+   * Built in an injection context, as a field of a service or a component, it checks again each
+   * time the app comes back to the front while its answer is a no, and stops when that injector is
+   * destroyed. Built outside one, it only learns what `check()`, `request()` and `ensure()` tell it.
+   */
   constructor(api: PermissionApi) {
     this.api = api;
+    const context = foregroundContext();
+    if (!context) return;
+    const stop = context.events?.(() => this.recheckRefusal());
+    if (stop) context.destroy.onDestroy(stop);
   }
 
   /** `unknown` until something has asked the platform, which is not the same as `undetermined`. */
@@ -68,12 +105,12 @@ export class Permission {
 
   /** Ask the platform what it currently thinks, without showing anything to the user. */
   async check(): Promise<boolean> {
-    return this.record(await this.api.get());
+    return this.ask(() => this.api.get());
   }
 
   /** Show the dialog. Resolves to what the user said. */
   async request(): Promise<boolean> {
-    return this.record(await this.api.request());
+    return this.ask(() => this.api.request());
   }
 
   /**
@@ -81,10 +118,11 @@ export class Permission {
    *
    * The method most call sites want. A permission already granted needs no dialog, and one the
    * platform has stopped asking about would return the same no while looking like the user had
-   * been consulted.
+   * been consulted. A no is checked again first, because the person can have changed it in
+   * Settings since, and checking shows nothing.
    */
   async ensure(): Promise<boolean> {
-    if (this.last() === null) await this.check();
+    if (!this.last()?.granted) await this.check();
 
     const current = this.last();
     if (current?.granted) return true;
@@ -94,8 +132,29 @@ export class Permission {
     return this.request();
   }
 
-  private record(response: PermissionResponse): boolean {
-    this.last.set(response);
+  /** An answer to a call made before the one last answered is older, and is not recorded. */
+  private async ask(call: () => Promise<PermissionResponse>): Promise<boolean> {
+    const turn = ++this.asked;
+    const response = await call();
+    if (turn > this.answered) {
+      this.answered = turn;
+      this.last.set(response);
+    }
     return response.granted;
+  }
+
+  /** A failed check leaves the last answer as it was, as a check that never ran would. */
+  private recheckRefusal(): void {
+    const response = this.last();
+    if (response && !response.granted) this.check().catch(() => {});
+  }
+}
+
+/** The foreground events and the injector's end, or null outside an injection context. */
+function foregroundContext(): { events: ForegroundEvents | null; destroy: DestroyRef } | null {
+  try {
+    return { events: inject(Permission.FOREGROUND), destroy: inject(DestroyRef) };
+  } catch {
+    return null;
   }
 }

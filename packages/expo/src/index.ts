@@ -7,7 +7,12 @@
  * identically, the signal-from-a-listener those services are built out of, and the view names.
  */
 export { observed, type Observed } from './observed.ts';
-export { Permission, type PermissionApi, type PermissionResponse } from './permissions.ts';
+export {
+  Permission,
+  type ForegroundEvents,
+  type PermissionApi,
+  type PermissionResponse,
+} from './permissions.ts';
 export {
   MissingModuleError,
   expoModule,
