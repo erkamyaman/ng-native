@@ -154,7 +154,8 @@ by default commits one without you writing it, the way `<switch>` commits `acces
 - `{ exact: false }` matches a case-insensitive substring instead:
   `getByText('apple', { exact: false })` finds `Apples`.
 - A `RegExp` is tested against the normalized value as given, so `/pears/i` is case-insensitive
-  and `/^and plums$/` is anchored.
+  and `/^and plums$/` is anchored. Its `lastIndex` is set back to 0 before each test, so one with
+  the `g` or `y` flag finds every match, on every call.
 - In `ByRole`, the role itself is always an exact match, and `exact` applies to `name`.
 
 **Hidden elements** are left out, as React Native Testing Library leaves them out by default: a view
@@ -207,6 +208,13 @@ wrapping a field reaches the field. The navigation bar's search field (`RNSSearc
 `<native-header-item type="searchBar">`) counts as one too, for `userEvent.type` as well. With
 neither there it rejects with `No TextInput or search bar at or under this <view name>.`
 
+A press, by `fireEvent.press` or `fireEvent(node, 'press')`, does nothing at all on a node a finger
+could not reach, as React Native Testing Library decides it from `pointerEvents` on the node as last
+committed: one that is `none` or `box-none` itself, or one under a view that is `none` or
+`box-only`. `pointer-events: none` in CSS commits as the same prop. Nothing is sent and nothing is
+thrown, so a test asserts on what did not happen: the handler never ran. Any other event by name is
+sent as before.
+
 ### `userEvent`
 
 ```ts
@@ -229,7 +237,9 @@ What a person does, as the several events the platform sends, a task apart. `use
 returns the same four methods, and they can be called on `userEvent` directly too. `longPress`
 holds for `duration` milliseconds, 500 by default, which is React Native's long-press delay.
 `type` and `clear` go to the text field at or under `node`, and do nothing at all if it has
-`editable` set to `false`: a disabled or read-only field takes no input.
+`editable` set to `false`: a disabled or read-only field takes no input. `press`, `longPress`,
+`type` and `clear` also do nothing on a node `pointerEvents` keeps a finger from, as
+`fireEvent.press` does.
 
 ### Event sequences
 

@@ -68,7 +68,10 @@ const normalize = (text: string): string => text.replace(/\s+/g, ' ').trim();
 function matches(value: unknown, matcher: Matcher, exact = true): boolean {
   if (typeof value !== 'string') return false;
   const text = normalize(value);
-  if (matcher instanceof RegExp) return matcher.test(text);
+  if (matcher instanceof RegExp) {
+    matcher.lastIndex = 0;
+    return matcher.test(text);
+  }
   const wanted = normalize(matcher);
   return exact ? text === wanted : text.toLowerCase().includes(wanted.toLowerCase());
 }

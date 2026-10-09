@@ -7,11 +7,14 @@
  * rest, then the component's listener. Nothing here calls a handler directly, and a disabled
  * pressable ignores a press here for the same reason it does on a phone.
  *
+ * A touch is only sent where a finger could land, as React Native Testing Library decides it from
+ * `pointerEvents`: a press, a type or a clear on a node that takes no touch does nothing at all.
+ *
  * Both are async where RNTL's `fireEvent` is not. Change detection is zoneless and commits on a
  * later task, so an event has to be awaited before the tree it changed can be read.
  */
 import { currentOf, ownerOf, settle } from './render.ts';
-import { flatten, isSearchBar, isTextInput } from './queries.ts';
+import { flatten, isSearchBar, isTextInput, withParents } from './queries.ts';
 import type { FakeFabricNode } from './test-utils.ts';
 
 /** A payload as a handler would see it (`{ nativeEvent }`), or the native event itself. */
@@ -45,6 +48,21 @@ function touch(node: FakeFabricNode, phase: 'start' | 'end'): Record<string, unk
   return { ...point, touches: phase === 'start' ? [point] : [], changedTouches: [point] };
 }
 
+/**
+ * Whether a finger could reach the node, by RNTL's reading of `pointerEvents` on the node as last
+ * committed: not when it is `none` or `box-none` itself, nor under a `none` or `box-only` view.
+ */
+function touchable(node: FakeFabricNode): boolean {
+  withParents(ownerOf(node).fabric.committed);
+  let blocking = 'box-none';
+  for (let at: FakeFabricNode | null = currentOf(node) ?? node; at; at = at.parent ?? null) {
+    const pointerEvents = at.props['pointerEvents'];
+    if (pointerEvents === 'none' || pointerEvents === blocking) return false;
+    blocking = 'box-only';
+  }
+  return true;
+}
+
 /** The text field at or under a node, so a query for its wrapper still reaches the input. */
 function fieldOf(node: FakeFabricNode): FakeFabricNode {
   const current = currentOf(node) ?? node;
@@ -63,6 +81,7 @@ function changeText(field: FakeFabricNode, text: string): void {
 }
 
 async function press(node: FakeFabricNode): Promise<void> {
+  if (!touchable(node)) return;
   emit(node, 'topTouchStart', touch(node, 'start'));
   emit(node, 'topTouchEnd', touch(node, 'end'));
   await settle();
@@ -155,6 +174,7 @@ export interface UserEvent {
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function hold(node: FakeFabricNode, duration: number): Promise<void> {
+  if (!touchable(node)) return;
   emit(node, 'topTouchStart', touch(node, 'start'));
   await settle();
   if (duration) await sleep(duration);
@@ -173,7 +193,7 @@ const user: UserEvent = {
   longPress: (node, { duration = 500 } = {}) => hold(node, duration),
   async type(node, text, options = {}) {
     const field = fieldOf(node);
-    if (field.props['editable'] === false) return;
+    if (field.props['editable'] === false || !touchable(field)) return;
     emit(field, 'topFocus');
     await settle();
     const maxLength = field.props['maxLength'];
@@ -194,7 +214,7 @@ const user: UserEvent = {
   },
   async clear(node) {
     const field = fieldOf(node);
-    if (field.props['editable'] === false) return;
+    if (field.props['editable'] === false || !touchable(field)) return;
     emit(field, 'topFocus');
     changeText(field, '');
     await settle();

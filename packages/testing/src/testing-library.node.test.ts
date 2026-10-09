@@ -48,6 +48,13 @@ class List {
   label = 'plain';
 }
 
+@Component({
+  selector: 'x-items',
+  imports: [Text],
+  template: `<text>Item 1</text><text>Item 2</text><text>Item 3</text><text>Item 4</text>`,
+})
+class Items {}
+
 describe('queries', () => {
   it('finds by test id, through testID or nativeID', async () => {
     await render(List);
@@ -81,6 +88,15 @@ describe('queries', () => {
     assert.ok(screen.getByText(/^and plums$/), 'a nested span is part of its paragraph');
     assert.equal(screen.queryAllByText(/plums/).length, 1, 'and not a match of its own');
     assert.ok(screen.getByText('  Pears '), 'whitespace is normalised on both sides');
+  });
+
+  it('finds every match with a global or sticky RegExp, every time', async () => {
+    await render(Items);
+    assert.equal(screen.getAllByText(/item/gi).length, 4);
+    assert.equal(screen.queryAllByText(/Item/y).length, 4);
+    const third = /3/g;
+    assert.ok(screen.getByText(third));
+    assert.ok(screen.getByText(third), 'and again with the same RegExp');
   });
 
   it('finds by label', async () => {
@@ -217,6 +233,93 @@ class Controls {
 class PressOnly {
   presses = 0;
 }
+
+@Component({
+  selector: 'x-checkout',
+  imports: [Pressable, Text, TextInput, View],
+  template: `
+    <view pointerEvents="none">
+      <pressable accessibilityRole="button" (press)="bought = bought + 1"
+        ><text>Buy</text></pressable
+      >
+      <text-input placeholder="Note" [(value)]="note" />
+    </view>
+    <pressable accessibilityRole="button" pointerEvents="box-none" (press)="saved = saved + 1"
+      ><text>Save</text></pressable
+    >
+    <view pointerEvents="box-only">
+      <pressable accessibilityRole="button" (press)="shared = shared + 1"
+        ><text>Share</text></pressable
+      >
+    </view>
+    <view pointerEvents="box-none">
+      <pressable accessibilityRole="button" (press)="kept = kept + 1"><text>Keep</text></pressable>
+    </view>
+    <view class="blocked">
+      <pressable accessibilityRole="button" (press)="sent = sent + 1"><text>Send</text></pressable>
+    </view>
+  `,
+  styles: `
+    .blocked {
+      pointer-events: none;
+    }
+  `,
+})
+class Checkout {
+  bought = 0;
+  saved = 0;
+  shared = 0;
+  kept = 0;
+  sent = 0;
+  readonly note = signal('');
+}
+
+describe('pointerEvents', () => {
+  const pressEveryWay = async (name: string): Promise<void> => {
+    await userEvent.press(screen.getByRole('button', { name }));
+    await userEvent.longPress(screen.getByRole('button', { name }), { duration: 0 });
+    await fireEvent.press(screen.getByRole('button', { name }));
+    await fireEvent(screen.getByRole('button', { name }), 'press');
+  };
+
+  it('does not press a pressable under pointerEvents="none"', async () => {
+    const { instance } = await render(Checkout);
+    await pressEveryWay('Buy');
+    assert.equal(instance.bought, 0);
+  });
+
+  it('does not press a pressable that is pointerEvents="box-none" itself', async () => {
+    const { instance } = await render(Checkout);
+    await pressEveryWay('Save');
+    assert.equal(instance.saved, 0);
+  });
+
+  it('does not press a pressable under pointerEvents="box-only"', async () => {
+    const { instance } = await render(Checkout);
+    await pressEveryWay('Share');
+    assert.equal(instance.shared, 0);
+  });
+
+  it('still presses a pressable under pointerEvents="box-none"', async () => {
+    const { instance } = await render(Checkout);
+    await pressEveryWay('Keep');
+    assert.equal(instance.kept, 4);
+  });
+
+  it('does not press a pressable under pointer-events: none from a class', async () => {
+    const { instance } = await render(Checkout);
+    await pressEveryWay('Send');
+    assert.equal(instance.sent, 0);
+  });
+
+  it('does not type into or clear a field under pointerEvents="none"', async () => {
+    const { instance } = await render(Checkout);
+    instance.note.set('Hi');
+    await userEvent.type(screen.getByPlaceholderText('Note'), 'x');
+    await userEvent.clear(screen.getByPlaceholderText('Note'));
+    assert.equal(instance.note(), 'Hi');
+  });
+});
 
 describe('events', () => {
   const field = (): FakeFabricNode => screen.getByPlaceholderText('Name');
