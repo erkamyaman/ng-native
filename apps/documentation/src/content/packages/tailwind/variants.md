@@ -37,7 +37,8 @@ accessibility state, and the component puts it back on the node as the attribute
 `aria-disabled="true"` matches `aria-disabled:` and `aria-disabled="false"` does not. The attribute
 stays on the node for selectors and never reaches native.
 
-`dark:` matches a `.dark` class. `watchConditions(app.engine)` - which the template's
+`dark:` matches a view with the `dark` class and everything inside it, as Tailwind's own
+class-based dark mode does. `watchConditions(app.engine)` - which the template's
 `src/main.ts` already calls - keeps `dark` on the root in step with the system scheme, so `dark:`
 follows the device with nothing to set up. An app with its own theme switch passes
 `{ darkClass: false }` and puts `dark` on its own root view instead:

@@ -26,7 +26,7 @@ describe('tailwindCss', () => {
     expect(used).toBe(true);
     expect(css).toContain('.flex-row');
     expect(css).toContain('.platform-android .android\\:gap-2');
-    expect(css).toContain('.dark .dark\\:bg-black');
+    expect(css).toContain('.dark\\:bg-black:where(.dark, .dark *)');
     expect(css).toContain('var(--safe-area-inset-top, 0px)');
   });
 

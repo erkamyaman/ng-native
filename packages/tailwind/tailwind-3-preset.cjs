@@ -68,6 +68,12 @@ const STATES = {
  */
 const beneath = (platform, name) => (platform === 'web' ? `[class~="${name}"] &` : `.${name} &`);
 
+/** The same, but matching the element wearing the class too: Tailwind's `&:where(.x, .x *)`. */
+const selfOrBeneath = (platform, name) => {
+  const root = platform === 'web' ? `[class~="${name}"]` : `.${name}`;
+  return `&:where(${root}, ${root} *)`;
+};
+
 /** `web.css`'s root tokens: the browser's own safe-area insets, and a hairline per density. */
 const WEB_BASE = {
   ':root': Object.fromEntries(
@@ -182,7 +188,7 @@ function presetPlugin(
 function tailwind3Preset(platform) {
   return {
     // A class seeded from the OS, so an app can disagree with it.
-    darkMode: ['variant', beneath(platform, 'dark')],
+    darkMode: ['variant', selfOrBeneath(platform, 'dark')],
     // A browser reset in terms of `html` and `::before`. None of it means anything on a phone, and
     // in a browser the host's `reset.css` is the reset.
     corePlugins: { preflight: false },

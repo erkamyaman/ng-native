@@ -50,17 +50,18 @@
  * Tailwind's own `dark:` is `@media (prefers-color-scheme: dark)`, which the engine answers and
  * keeps in step with the system. That is one variant short of what a theme needs: a design system
  * ships its dark palette as `.dark { --background: ... }`, and an app wants a switcher that can
- * disagree with the OS. A class does both - put `dark` on the root and everything beneath it
- * flips, whatever the system thinks.
+ * disagree with the OS. A class does both - put `dark` on the root and it flips, along with
+ * everything beneath it, whatever the system thinks.
  *
  * Bind it from `ColorScheme` and the default behaviour is unchanged:
  *
  *   <view [class]="scheme.colorScheme()" style="flex: 1">
  *
- * `.dark &` rather than `&:is(.dark *)`, for the same reason as the platform variants above: the
- * compiler refuses a combinator inside `:is()`, and a descendant selector says it plainly.
+ * Tailwind's own class-based form, so the view wearing `dark` matches as well as everything inside
+ * it, at the same specificity as on the web. The compiler reads the list as two rules, the view
+ * itself and an ancestor test.
  */
-@custom-variant dark (.dark &);
+@custom-variant dark (&:where(.dark, .dark *));
 
 /*
  * The safe area, as utilities.

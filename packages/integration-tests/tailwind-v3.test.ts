@@ -731,7 +731,7 @@ describe('the Tailwind 3 preset beside an app preset', () => {
     const { theme, darkMode } = resolveConfig({ presets: [nativePreset], content: ['x'] });
     assert.equal(theme['spacing']?.['2'], '0.5rem');
     assert.equal((theme['colors']?.['red'] as Record<string, string>)['500'], '#ef4444');
-    assert.deepEqual(darkMode, ['variant', '.dark &']);
+    assert.deepEqual(darkMode, ['variant', '&:where(.dark, .dark *)']);
   });
 
   it("keeps the app preset's theme when listed after it with presets: []", () => {
@@ -743,7 +743,7 @@ describe('the Tailwind 3 preset beside an app preset', () => {
     assert.deepEqual(theme['fontSize']?.['sm'], ['14px', { lineHeight: '1.5' }]);
     assert.equal(theme['spacing']?.['4'], undefined, 'no default step beside the app scale');
     assert.equal((theme['colors']?.['red'] as Record<string, string>)['500'], '#ef4444');
-    assert.deepEqual(darkMode, ['variant', '.dark &']);
+    assert.deepEqual(darkMode, ['variant', '&:where(.dark, .dark *)']);
   });
 
   it('keeps the app theme and the dark variant through the CLI', () => {
@@ -763,7 +763,7 @@ describe('the Tailwind 3 preset beside an app preset', () => {
         { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
       );
       assert.match(built, /\.p-2 \{\s*padding: 8px/);
-      assert.match(built, /\.dark \.dark\\:p-0 \{/);
+      assert.match(built, /\.dark\\:p-0:where\(\.dark, \.dark \*\) \{/);
       assert.match(built, /\.bg-red-500 \{/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
