@@ -145,10 +145,94 @@ describe(':has() as what is beneath a node changes', () => {
   });
 });
 
+describe(':has() on a box the styled node is in', () => {
+  // A component library's own: `.field:has(.input:focus) .label`, a label moved by what is in
+  // the field beside it, and `.group:has(.button) .input`, a field squared off for its button.
+  const ABOVE = '.card:has(.action) .title { opacity: 0.5 }';
+  const titled = (css = ABOVE) => {
+    const s = scene(css);
+    const body = s.el('body', s.card);
+    const title = s.el('title', body);
+    s.engine.setProp(title, 'testID', 'title');
+    return { ...s, body, title };
+  };
+
+  it('styles the node where the box has what is asked, and not where it has not', () => {
+    const s = titled();
+    assert.equal(s.opacity('title'), undefined);
+    const action = s.el('action', s.card);
+    assert.equal(s.opacity('title'), 0.5);
+    assert.deepEqual(s.reports, []);
+    s.engine.removeChild(s.card, action);
+    assert.equal(s.opacity('title') ?? null, null);
+  });
+
+  it('follows a class coming to what is in the box, and going', () => {
+    const s = titled();
+    const button = s.el('button', s.card);
+    assert.equal(s.opacity('title'), undefined);
+    s.engine.addClass(button, 'action');
+    assert.equal(s.opacity('title'), 0.5);
+    s.engine.removeClass(button, 'action');
+    assert.equal(s.opacity('title') ?? null, null);
+  });
+
+  it('is asked of a parent after >, and of any box above with a space', () => {
+    const s = titled(
+      '.card:has(.action) > .title { opacity: 0.5 } .card:has(> .mark) .title { opacity: 0.25 }',
+    );
+    s.el('action', s.card);
+    // The title is in the body, which is in the card: no child of the card.
+    assert.equal(s.opacity('title'), undefined);
+    s.el('mark', s.body);
+    assert.equal(s.opacity('title'), undefined);
+    s.el('mark', s.card);
+    assert.equal(s.opacity('title'), 0.25);
+  });
+
+  it('follows what is in a box that a box above the node is asked to be inside', () => {
+    // `.body:is(.card:has(.action) *) .title`: the box asked is one the body is in.
+    const s = titled('.body:is(.card:has(.action) *) .title { opacity: 0.5 }');
+    assert.deepEqual(s.reports, []);
+    assert.equal(s.opacity('title'), undefined);
+    const button = s.el('button', s.card);
+    assert.equal(s.opacity('title'), undefined);
+    s.engine.addClass(button, 'action');
+    assert.equal(s.opacity('title'), 0.5);
+    s.engine.removeClass(button, 'action');
+    assert.equal(s.opacity('title') ?? null, null);
+  });
+
+  it('asks nothing more once the sheet that asked is taken away', () => {
+    const s = titled('.unused { opacity: 1 }');
+    const sheet = compileCss(ABOVE, 'more.css', { onUnsupported: () => {} });
+    s.engine.addGlobalSheet(sheet);
+    s.el('action', s.card);
+    assert.equal(s.opacity('title'), 0.5);
+    s.engine.removeGlobalSheet(sheet);
+    assert.equal(s.opacity('title') ?? null, null);
+    const before = s.title.styleCache;
+    s.el('action', s.card);
+    s.engine.commit();
+    assert.equal(s.title.styleCache, before, 'nothing under the box was matched again');
+  });
+
+  it('styles again only what such a rule is for, of all that is in the box', () => {
+    const s = titled();
+    const other = s.el('other', s.body);
+    s.engine.commit();
+    const before = other.styleCache;
+    s.el('action', s.card);
+    assert.equal(s.opacity('title'), 0.5);
+    assert.equal(other.styleCache, before, 'what no such rule is for was not resolved again');
+  });
+});
+
 describe(':has() the engine does not take', () => {
-  it('refuses one on an ancestor, a combinator inside, and a sibling, each by name', () => {
+  it('refuses one beside the styled node, a combinator inside, and a sibling, each by name', () => {
     for (const [css, why] of [
-      ['.card:has(.action) .title { opacity: 0.5 }', /the node the rule styles/],
+      ['.card:has(.action) + .title { opacity: 0.5 }', /the node the rule styles/],
+      ['.card:has(.action) ~ .panel .title { opacity: 0.5 }', /the node the rule styles/],
       ['.card:has(.a .b) { opacity: 0.5 }', /one compound/],
       ['.card:has(+ .next) { opacity: 0.5 }', /one compound/],
       ['.card:has(~ .later) { opacity: 0.5 }', /one compound/],

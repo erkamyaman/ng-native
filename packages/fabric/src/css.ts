@@ -2017,6 +2017,55 @@ function subjectsOf(sheet: StyleSheet): Subjects {
   return found;
 }
 
+/**
+ * A box a rule asks `:has()` of that is not the node it styles, `.card:has(.x) .title`, by the
+ * classes the rule asks of that box, with what the rule is for: the nodes under such a box to
+ * match again when what is in it changes.
+ */
+export interface HasAbove {
+  readonly classes: readonly string[];
+  readonly subjects: Subjects;
+}
+
+const HAS_ABOVE = new WeakMap<StyleSheet, readonly HasAbove[]>();
+
+/** Whether a compound, or one it asks of the same node, uses `:has()`. */
+const asksBeneath = (compound: Compound): boolean =>
+  compound.has !== undefined ||
+  [...(compound.not ?? []), ...(compound.is ?? []).flat()].some(asksBeneath);
+
+/**
+ * The boxes above the styled node that a compound asks `:has()` of: the compound's own node,
+ * where that is not the styled one, and each box it is asked to be inside,
+ * `.body:is(.card:has(.x) *) .title`.
+ */
+function* boxesAsked(compound: Compound, styled: boolean): Generator<Compound> {
+  if (!styled && asksBeneath(compound)) yield compound;
+  for (const key of ['ancestors', 'parents', 'hostContext'] as const) {
+    for (const outer of compound[key] ?? []) yield* boxesAsked(outer, false);
+  }
+}
+
+/** Each box a sheet's rules ask `:has()` of above the node they style. */
+export function hasAbove(sheet: StyleSheet): readonly HasAbove[] {
+  let known = HAS_ABOVE.get(sheet);
+  if (known === undefined) {
+    const found: HasAbove[] = [];
+    for (const rule of sheet.rules) {
+      const last = rule.compounds.length - 1;
+      for (const [at, compound] of rule.compounds.entries()) {
+        for (const box of boxesAsked(compound, at === last)) {
+          const subjects = noSubjects();
+          noteSubject(subjects, rule);
+          found.push({ classes: box.classes, subjects });
+        }
+      }
+    }
+    HAS_ABOVE.set(sheet, (known = found));
+  }
+  return known;
+}
+
 /** Note in `into` what a rule is for. */
 function noteSubject(into: Subjects, rule: StyleRule): void {
   const subject = rule.compounds.at(-1);

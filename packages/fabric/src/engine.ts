@@ -17,9 +17,11 @@ import {
   StyleResolver,
   usesActive,
   elementsAtEnd,
+  hasAbove,
   placeReadElsewhere,
   siblingReach,
   type Compound,
+  type HasAbove,
   type PlaceReader,
   type Conditions,
   type DeferredDeclaration,
@@ -3610,7 +3612,9 @@ export class Engine implements HostEngine {
 
   /** Start matching ancestors again on a change, once a sheet that uses `:has()` is in play. */
   private watchHas(sheet: StyleSheet | null | undefined): void {
-    if (!sheet?.has || this.hasSheets) return;
+    if (!sheet?.has) return;
+    if (!this.hasReaders.has(sheet)) this.hasReaders.set(sheet, hasAbove(sheet));
+    if (this.hasSheets) return;
     this.hasSheets = true;
     this.styles.tracksHas = true;
     // What is already resolved kept no record of the rules it matched: resolve it again. Nothing
@@ -3626,7 +3630,35 @@ export class Engine implements HostEngine {
    * which would restyle everything under them. Only sheets that use `:has()` pay.
    */
   private markBeneath(from: EngineNode | null): void {
-    for (let node = from; node; node = node.parent) node.hasDirty = true;
+    for (let node = from; node; node = node.parent) {
+      node.hasDirty = true;
+      if (this.hasReaders.size) this.changedBeneath.add(node);
+    }
+  }
+
+  /**
+   * The boxes rules ask `:has()` of above the node they style, `.card:has(.x) .title`, by the
+   * sheet that asks: a sheet replaced or taken away asks no more.
+   */
+  private readonly hasReaders = new Map<StyleSheet, readonly HasAbove[]>();
+  /** The nodes something changed beneath since the last commit, where any sheet has such a rule. */
+  private readonly changedBeneath = new Set<EngineNode>();
+
+  /**
+   * Have matched again what is under each box that changed beneath and that such a rule could
+   * be asking: the nodes the rule is for, and no other. Once for a commit, however many changes
+   * there were beneath the box: a table gains its rows one at a time.
+   */
+  private markUnderHas(): void {
+    if (!this.changedBeneath.size) return;
+    for (const node of this.changedBeneath) {
+      for (const readers of this.hasReaders.values()) {
+        for (const { classes, subjects } of readers) {
+          if (classes.every((name) => node.classes?.has(name))) this.markUnder(node, subjects);
+        }
+      }
+    }
+    this.changedBeneath.clear();
   }
 
   private markLaterSiblings(node: EngineNode): void {
@@ -3763,6 +3795,7 @@ export class Engine implements HostEngine {
     // completeRoot that changes nothing: during a fling that is one wasted native commit per
     // frame, since any listener firing marks the view for refresh.
     this.settleCreated();
+    this.markUnderHas();
     if (!this.root.structureDirty && !this.root.subtreeDirty) return false;
 
     const started = now();
@@ -4168,6 +4201,8 @@ export class Engine implements HostEngine {
    */
   sheetReplaced(sheet: StyleSheet, next: StyleSheet | null): void {
     if (sheet === next && this.knownSheets.has(sheet)) return;
+    this.hasReaders.delete(sheet);
+    this.watchHas(next);
     this.unwatchActive(sheet);
     this.watchActive(next);
     const at = this.sheetOrder.indexOf(sheet);
