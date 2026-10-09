@@ -121,6 +121,7 @@ const ENGINE_EVENTS = new Set([
   'topScroll',
   'topEndReached',
   'topSelectionChange',
+  'topKeyPress',
   'topMomentumScrollBegin',
   'topMomentumScrollEnd',
   'topTouchStart',
@@ -428,6 +429,9 @@ export class BrowserEngine extends HostEngine {
     });
   }
 
+  /** Each field's last reported selection, kept across a swap, which keeps the selection too. */
+  private readonly selections = new WeakMap<BrowserNode, string>();
+
   private wireTextInput(node: BrowserNode): void {
     const el = node.el as HTMLTextAreaElement;
     const nextCount = () => {
@@ -438,6 +442,30 @@ export class BrowserEngine extends HostEngine {
     el.addEventListener('input', () => {
       this.dispatchEvent(node, 'topChange', { text: el.value, eventCount: nextCount(), target: 0 });
     });
+    // `(keyPress)` names a key as a device does: `Backspace`, `Enter`, or the character typed.
+    // A device reports only keys that edit the field, so arrows, modifiers and shortcuts send
+    // nothing, nor does a key inside an IME composition or one pressed on a read-only field.
+    el.addEventListener('keydown', (event) => {
+      if (event.isComposing || event.ctrlKey || event.metaKey || el.readOnly) return;
+      const { key } = event;
+      if (key !== 'Backspace' && key !== 'Enter' && [...key].length !== 1) return;
+      this.dispatchEvent(node, 'topKeyPress', {
+        key,
+        eventCount: this.eventCounts.get(node) ?? 0,
+        target: 0,
+      });
+    });
+    // A caret moved by a click, an arrow or typing, and a range selected, each report once.
+    const reportSelection = () => {
+      const start = el.selectionStart ?? 0;
+      const end = el.selectionEnd ?? start;
+      if (this.selections.get(node) === `${start}:${end}`) return;
+      this.selections.set(node, `${start}:${end}`);
+      this.dispatchEvent(node, 'topSelectionChange', { selection: { start, end }, target: 0 });
+    };
+    for (const type of ['selectionchange', 'select', 'input']) {
+      el.addEventListener(type, reportSelection);
+    }
     el.addEventListener('focus', () => {
       if (el.hasAttribute('data-select-on-focus')) el.select();
     });

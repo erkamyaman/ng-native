@@ -87,6 +87,48 @@ describe('a text field, on Enter', () => {
   });
 });
 
+describe("a text field's keyPress and selectionChange", () => {
+  it("hands (keyPress) React Native's { nativeEvent: { key } }, Backspace included", async () => {
+    const { byId, app } = await scene();
+    byId('code').focus();
+    await userEvent.keyboard('a b{Backspace}');
+    await settle();
+    expect(app.keys).toEqual(['a', ' ', 'b', 'Backspace']);
+  });
+
+  it('reports no key for an arrow, a modifier or a shortcut, which do not edit the field', async () => {
+    const { byId, app } = await scene();
+    byId('code').focus();
+    await userEvent.keyboard('x{ArrowLeft}{Shift}{Control>}a{/Control}');
+    await settle();
+    expect(app.keys).toEqual(['x']);
+  });
+
+  it('reports Enter from a multiline field', async () => {
+    const { byId, app } = await scene();
+    await userEvent.click(byId('notes'));
+    await userEvent.keyboard('a{Enter}');
+    await settle();
+    expect(app.keys).toEqual(['a', 'Enter']);
+  });
+
+  it('reports where the caret moves and what is selected, once each', async () => {
+    const { byId, app } = await scene();
+    const field = byId('code') as HTMLInputElement;
+    field.focus();
+    await userEvent.keyboard('abc');
+    await settle();
+    expect(app.selections.at(-1)).toEqual({ start: 3, end: 3 });
+    await userEvent.keyboard('{ArrowLeft}');
+    await settle();
+    expect(app.selections.at(-1)).toEqual({ start: 2, end: 2 });
+    app.selections.length = 0;
+    field.setSelectionRange(0, 2);
+    await settle();
+    expect(app.selections).toEqual([{ start: 0, end: 2 }]);
+  });
+});
+
 describe('a horizontal scroll view', () => {
   it('lays its content out in a row as wide as the content, and reports that size', async () => {
     const { byId, app } = await scene();

@@ -95,7 +95,10 @@ height: `rows="3"` is three lines, with the field's padding and border, as a bro
 `isFocused()` as methods, reachable through a template reference or `nativeRef`. `(changeText)`
 carries just the new string, matching React Native's `onChangeText`; `(change)`, `(focus)`,
 `(blur)`, `(submitEditing)`, `(endEditing)`, `(selectionChange)`, `(keyPress)` and
-`(contentSizeChange)` are the raw element events.
+`(contentSizeChange)` are the raw element events. `(keyPress)` names the key in
+`$event.nativeEvent.key`: `Backspace`, `Enter`, or the character typed (`' '` for a space), on a
+device and in a browser alike. `(selectionChange)` carries `$event.nativeEvent.selection`, a
+`{ start, end }` that changes as the caret moves or a range is selected.
 
 <!-- api: TextInput -->
 

@@ -39,7 +39,18 @@ import { Pressable, ScrollView, Text, TextInput, View } from '@ng-native/compone
       [(value)]="chat"
       (submitEditing)="log('submitEditing')"
     />
-    <text-input id="notes" [multiline]="true" [(value)]="notes" />
+    <text-input
+      id="notes"
+      [multiline]="true"
+      [(value)]="notes"
+      (keyPress)="keys.push($event.nativeEvent.key)"
+    />
+    <text-input
+      id="code"
+      [(value)]="code"
+      (keyPress)="keys.push($event.nativeEvent.key)"
+      (selectionChange)="selections.push($event.nativeEvent.selection)"
+    />
     <scroll-view
       id="strip"
       [horizontal]="true"
@@ -59,6 +70,9 @@ export class EventsApp {
   readonly events = signal<readonly string[]>([]);
   readonly chat = signal('');
   readonly notes = signal('');
+  readonly code = signal('');
+  readonly keys: string[] = [];
+  readonly selections: { start: number; end: number }[] = [];
   readonly contentSize = signal<{ width: number; height: number } | null>(null);
   readonly restedAt = signal<number | null>(null);
 
