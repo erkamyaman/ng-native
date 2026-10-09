@@ -532,6 +532,67 @@ describe('the Metro preset', () => {
     }
   });
 
+  describe('for an app below the config root', () => {
+    // The app's own node_modules is where its files resolve Angular and Babel's worklets plugin
+    // from, and a walk up from the config root above it never looks there.
+    const below = (fn: (app: string, key: () => string) => void) => {
+      const parent = mkdtempSync(path.join(tmpdir(), 'ng-native-app-below-'));
+      const app = path.join(parent, 'app');
+      mkdirSync(app);
+      try {
+        fn(
+          app,
+          () =>
+            (
+              withAngularNative({ ...base(), projectRoot: parent }, { projectRoot: app }) as {
+                transformer: { cacheVersion?: string };
+              }
+            ).transformer.cacheVersion!,
+        );
+      } finally {
+        rmSync(parent, { recursive: true, force: true });
+      }
+    };
+    const publish = (app: string, name: string, version: string) => {
+      mkdirSync(path.join(app, 'node_modules', name), { recursive: true });
+      writeFileSync(
+        path.join(app, 'node_modules', name, 'package.json'),
+        JSON.stringify({ name, version }),
+      );
+    };
+
+    it("puts the app's own Angular in the key, so upgrading or removing it starts afresh", () => {
+      below((app, key) => {
+        publish(app, '@angular/core', '99.0.0');
+        const before = key();
+        assert.match(before, /angular-99\.0\.0/);
+
+        publish(app, '@angular/core', '99.1.0');
+        const upgraded = key();
+        assert.match(upgraded, /angular-99\.1\.0/);
+
+        rmSync(path.join(app, 'node_modules', '@angular'), { recursive: true });
+        assert.notEqual(key(), upgraded);
+      });
+    });
+
+    it("puts the app's own worklets in the key, so installing, upgrading or removing it starts afresh", () => {
+      below((app, key) => {
+        const before = key();
+        publish(app, 'react-native-worklets', '0.6.1');
+        const installed = key();
+        assert.match(installed, /react-native-worklets-0\.6\.1/);
+        assert.notEqual(installed, before);
+
+        publish(app, 'react-native-worklets', '0.7.0');
+        assert.match(key(), /react-native-worklets-0\.7\.0/);
+
+        rmSync(path.join(app, 'node_modules', 'react-native-worklets'), { recursive: true });
+        assert.doesNotMatch(key(), /react-native-worklets/);
+      });
+    });
+  });
+
   it("resolves with the app's tsconfig customConditions, as tsc does", () => {
     // Nx's TypeScript preset exports a library's source only under a custom condition named in
     // tsconfig; without it Metro took the dist entry, which is not built, and failed.

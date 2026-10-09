@@ -105,7 +105,7 @@ function angularVersion(projectRoot) {
     const manifest = require.resolve('@angular/core/package.json', {
       paths: [projectRoot ?? process.cwd(), __dirname],
     });
-    return `angular-${require(manifest).version}`;
+    return `angular-${JSON.parse(readFileSync(manifest, 'utf8')).version}`;
   } catch {
     return undefined;
   }
@@ -664,8 +664,8 @@ function withAngularNative(config, options = {}) {
   config.transformer.cacheVersion = [
     config.transformer.cacheVersion,
     fingerprint,
-    angularVersion(config.projectRoot),
-    ...babelPluginVersions(config.projectRoot),
+    angularVersion(projectRoot),
+    ...babelPluginVersions(projectRoot),
     iconSetVersions(projectRoot),
   ]
     .filter(Boolean)
