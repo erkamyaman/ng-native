@@ -634,6 +634,32 @@ describe('a deep link opened beneath its parent screen', () => {
     assert.deepEqual(stack(fabric), ['user 7'], 'no screen under it to go back to');
   });
 
+  it('pushes a link that arrives while running over the screen showing, without withLinkParent', async () => {
+    await launch(null, false);
+    await nav.push('/user/1');
+    await nav.push('/user/2');
+    await idle();
+
+    arrive('/user/1');
+    await idle();
+    assert.equal(router.url, '/user/1');
+    assert.deepEqual(stack(fabric), ['home', 'user 1', 'user 2', 'user 1']);
+
+    nav.back();
+    await idle();
+    assert.equal(router.url, '/user/2', 'back returns to the screen the link was pushed over');
+  });
+
+  it('does nothing for a link to the screen already showing, without withLinkParent', async () => {
+    await launch(null, false);
+    await nav.push('/user/1');
+    await idle();
+
+    arrive('/user/1');
+    await idle();
+    assert.deepEqual(stack(fabric), ['home', 'user 1']);
+  });
+
   it('launches on a link alone when withLinkParent names no parent for it', async () => {
     await launch('/modal');
     assert.equal(router.url, '/modal');

@@ -49,9 +49,10 @@ export class NativePlatformLocation implements PlatformLocation {
   private readonly hashChangeListeners = new Set<LocationChangeListener>();
 
   /**
-   * A deep link is history, not a navigation of its own: the launch url *is* the first entry,
-   * and one that arrives later is pushed and announced as a popstate, which is the only thing
-   * the router listens to. `links` is null in a test that has no interest in either.
+   * A deep link is history, not a navigation of its own: the launch url *is* the first entry.
+   * One that arrives later is pushed and announced as a popstate when `links` hands it here;
+   * `provideNativeRouter` hands those to `NativeNavigation` instead, so a link is pushed over
+   * the screen showing. `links` is null in a test that has no interest in either.
    */
   constructor(links: LinkSource | null = null) {
     const initial = links?.initialUrl();
