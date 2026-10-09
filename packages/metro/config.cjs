@@ -123,19 +123,22 @@ function angularVersion(projectRoot) {
  */
 const BABEL_PLUGIN_PACKAGES = ['react-native-worklets', 'react-native-reanimated'];
 
-function babelPluginVersions(projectRoot) {
-  return BABEL_PLUGIN_PACKAGES.map((name) => {
-    // Up the app's own node_modules folders, as a require from the project would look, and not
-    // through NODE_PATH, which a package manager's script runner may point anywhere.
-    for (let dir = path.resolve(projectRoot ?? process.cwd()); ; dir = path.dirname(dir)) {
-      try {
-        const manifest = path.join(dir, 'node_modules', name, 'package.json');
-        return `${name}-${JSON.parse(readFileSync(manifest, 'utf8')).version}`;
-      } catch {
-        if (path.dirname(dir) === dir) return undefined;
+function babelPluginVersions(...roots) {
+  const from = [...new Set(roots.map((root) => path.resolve(root ?? process.cwd())))];
+  return from.flatMap((root) =>
+    BABEL_PLUGIN_PACKAGES.map((name) => {
+      // Up the app's own node_modules folders, as a require from the project would look, and not
+      // through NODE_PATH, which a package manager's script runner may point anywhere.
+      for (let dir = root; ; dir = path.dirname(dir)) {
+        try {
+          const manifest = path.join(dir, 'node_modules', name, 'package.json');
+          return `${name}-${JSON.parse(readFileSync(manifest, 'utf8')).version}`;
+        } catch {
+          if (path.dirname(dir) === dir) return undefined;
+        }
       }
-    }
-  });
+    }),
+  );
 }
 
 const SINGLETON = /^(@angular\/core|@ng-native\/[^/]+)(\/|$)/;
@@ -665,7 +668,7 @@ function withAngularNative(config, options = {}) {
     config.transformer.cacheVersion,
     fingerprint,
     angularVersion(projectRoot),
-    ...babelPluginVersions(projectRoot),
+    ...babelPluginVersions(projectRoot, config.projectRoot),
     iconSetVersions(projectRoot),
   ]
     .filter(Boolean)

@@ -535,7 +535,7 @@ describe('the Metro preset', () => {
   describe('for an app below the config root', () => {
     // The app's own node_modules is where its files resolve Angular and Babel's worklets plugin
     // from, and a walk up from the config root above it never looks there.
-    const below = (fn: (app: string, key: () => string) => void) => {
+    const below = (fn: (app: string, key: () => string, parent: string) => void) => {
       const parent = mkdtempSync(path.join(tmpdir(), 'ng-native-app-below-'));
       const app = path.join(parent, 'app');
       mkdirSync(app);
@@ -548,6 +548,7 @@ describe('the Metro preset', () => {
                 transformer: { cacheVersion?: string };
               }
             ).transformer.cacheVersion!,
+          parent,
         );
       } finally {
         rmSync(parent, { recursive: true, force: true });
@@ -589,6 +590,21 @@ describe('the Metro preset', () => {
 
         rmSync(path.join(app, 'node_modules', 'react-native-worklets'), { recursive: true });
         assert.doesNotMatch(key(), /react-native-worklets/);
+      });
+    });
+
+    it("keeps the config root's worklets in the key beside the app's, so upgrading either starts afresh", () => {
+      below((app, key, parent) => {
+        publish(app, 'react-native-worklets', '0.6.1');
+        publish(parent, 'react-native-worklets', '0.6.1');
+        const before = key();
+
+        publish(parent, 'react-native-worklets', '0.7.0');
+        const parentUpgraded = key();
+        assert.notEqual(parentUpgraded, before);
+
+        publish(app, 'react-native-worklets', '0.7.0');
+        assert.notEqual(key(), parentUpgraded);
       });
     });
   });
