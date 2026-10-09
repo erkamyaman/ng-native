@@ -77,9 +77,10 @@ so the first frame is not painted in the fallback face.
 ## Truncation, selection and font scaling
 
 `numberOfLines` truncates after that many lines, with `ellipsizeMode` choosing where the ellipsis
-goes (`clip` is iOS only, and in a browser `head` and `middle` put it at the end). `selectable`
-lets the user copy the text. `allowFontScaling` (on by default) and `maxFontSizeMultiplier` control
-how far the system's text-size setting is allowed to grow it. `adjustsFontSizeToFit` and
+goes. On a device `clip` is iOS only; in a browser it cuts the text with no ellipsis, and `head`
+and `middle` put the ellipsis at the end. `selectable` lets the user copy the text.
+`allowFontScaling` (on by default) and `maxFontSizeMultiplier` control how far the system's
+text-size setting is allowed to grow it. `adjustsFontSizeToFit` and
 `minimumFontScale` (iOS) shrink the font instead of truncating, down to a floor. `dynamicTypeRamp`
 (iOS) follows a Dynamic Type style rather than a fixed size, and `dataDetectorType` (Android) turns
 phone numbers, links, addresses and emails into tappable text.
