@@ -177,10 +177,7 @@ describe('responder negotiation', () => {
 describe('nested pressables', () => {
   it('presses only the innermost one', async () => {
     const { compileFixture } = await import('./compile.ts');
-    const { fileURLToPath } = await import('node:url');
-    const mod = await compileFixture(
-      fileURLToPath(new URL('./fixtures/nested-press.ts', import.meta.url)),
-    );
+    const mod = await compileFixture('fixtures/nested-press.ts');
 
     const { instance } = await render<{ log: string[] }>(mod['Nested'] as never);
 
@@ -225,10 +222,7 @@ describe('event opt-in props', () => {
 describe('press cancels when the touch turns into a drag', () => {
   async function mountPressable() {
     const { compileFixture } = await import('./compile.ts');
-    const { fileURLToPath } = await import('node:url');
-    const mod = await compileFixture(
-      fileURLToPath(new URL('./fixtures/nested-press.ts', import.meta.url)),
-    );
+    const mod = await compileFixture('fixtures/nested-press.ts');
     const { instance } = await render<{ log: string[] }>(mod['Nested'] as never);
     return { instance, label: screen.getByText('inner') };
   }
