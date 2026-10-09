@@ -104,6 +104,34 @@ describe("a text field's keyPress and selectionChange", () => {
     expect(app.keys).toEqual(['x']);
   });
 
+  it('reports no key for the keydown that confirms an IME candidate after compositionend', async () => {
+    const { byId, app } = await scene();
+    const field = byId('code');
+    field.focus();
+    const confirm = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+    Object.defineProperty(confirm, 'keyCode', { value: 229 });
+    field.dispatchEvent(confirm);
+    await settle();
+    expect(app.keys).toEqual([]);
+  });
+
+  it('reports a character typed with AltGraph, which some systems send with Control held', async () => {
+    const { byId, app } = await scene();
+    const field = byId('code');
+    field.focus();
+    field.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: '@',
+        ctrlKey: true,
+        altKey: true,
+        modifierAltGraph: true,
+        bubbles: true,
+      } as KeyboardEventInit),
+    );
+    await settle();
+    expect(app.keys).toEqual(['@']);
+  });
+
   it('reports Enter from a multiline field', async () => {
     const { byId, app } = await scene();
     await userEvent.click(byId('notes'));

@@ -446,7 +446,8 @@ export class BrowserEngine extends HostEngine {
     // A device reports only keys that edit the field, so arrows, modifiers and shortcuts send
     // nothing, nor does a key inside an IME composition or one pressed on a read-only field.
     el.addEventListener('keydown', (event) => {
-      if (event.isComposing || event.ctrlKey || event.metaKey || el.readOnly) return;
+      if (event.isComposing || event.keyCode === 229 || event.metaKey || el.readOnly) return;
+      if (event.ctrlKey && !event.getModifierState('AltGraph')) return;
       const { key } = event;
       if (key !== 'Backspace' && key !== 'Enter' && [...key].length !== 1) return;
       this.dispatchEvent(node, 'topKeyPress', {
