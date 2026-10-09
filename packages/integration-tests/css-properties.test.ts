@@ -18,6 +18,14 @@ import { StyleResolver, type StyleTarget } from '@ng-native/fabric';
 import { cleanup, render, type FakeFabricNode } from '@ng-native/testing';
 import { compileFixture } from './compile.ts';
 
+/** What the `background` shorthand says of an image where it writes none. */
+const NO_IMAGE = {
+  experimental_backgroundImage: [],
+  experimental_backgroundPosition: [{ left: '0%', top: '0%' }],
+  experimental_backgroundSize: [{ x: 'auto', y: 'auto' }],
+  experimental_backgroundRepeat: [{ x: 'repeat', y: 'repeat' }],
+};
+
 const require = createRequire(import.meta.url);
 const { compileCss } = require('@ng-native/metro/css/compile.cjs');
 
@@ -45,8 +53,11 @@ const declarationsOf = (css: string): Record<string, unknown> =>
   );
 
 describe('shorthands that every stylesheet uses', () => {
-  it('background, taking the colour and ignoring the initial layers', () => {
-    assert.deepEqual(declarationsOf('background: red'), { backgroundColor: 'rgb(255, 0, 0)' });
+  it('background, taking the colour, and saying there is no image where it writes none', () => {
+    assert.deepEqual(declarationsOf('background: red'), {
+      backgroundColor: 'rgb(255, 0, 0)',
+      ...NO_IMAGE,
+    });
   });
 
   it('border, which sets width, style and colour on every side at once', () => {
@@ -1139,6 +1150,20 @@ describe('values the build settles on its own', () => {
   it('takes the colour of a layered background from its last layer, where CSS puts it', () => {
     assert.deepEqual(declarationsOf('background: none, blue'), {
       backgroundColor: 'rgb(0, 0, 255)',
+      // Two layers, and so where each would be placed.
+      experimental_backgroundImage: [],
+      experimental_backgroundPosition: [
+        { left: '0%', top: '0%' },
+        { left: '0%', top: '0%' },
+      ],
+      experimental_backgroundSize: [
+        { x: 'auto', y: 'auto' },
+        { x: 'auto', y: 'auto' },
+      ],
+      experimental_backgroundRepeat: [
+        { x: 'repeat', y: 'repeat' },
+        { x: 'repeat', y: 'repeat' },
+      ],
     });
   });
 

@@ -176,8 +176,94 @@ describe('what a gradient cannot be', () => {
     assert.throws(() => gradientsOf('background-image: url(cat.png)'), /url/);
   });
 
-  it('still refuses a background shorthand carrying an image', () => {
-    assert.throws(() => compileCss('view { background: url(cat.png) }'), /background images/);
+  it('still refuses a background shorthand carrying a url', () => {
+    assert.throws(() => compileCss('view { background: url(cat.png) }'), /url/);
+  });
+});
+
+describe('a gradient in the background shorthand', () => {
+  // The shorthand says all of a background at once: what it does not write is back at its
+  // initial value, the colour among it. Each case is the longhands that say the same.
+  const styleOf = (declarations: string): Record<string, unknown> => {
+    const style = compileCss(`.a { ${declarations} }`).rules[0].declarations;
+    assert.ok(style['backgroundColor'] !== undefined, declarations);
+    return style;
+  };
+  const INITIAL =
+    'background-position: 0% 0%; background-size: auto; background-repeat: repeat; ' +
+    'background-color: transparent';
+
+  it('is the image, with the rest as it starts', () => {
+    const one = 'linear-gradient(to right, red, blue)';
+    assert.deepEqual(
+      styleOf(`background: ${one}`),
+      styleOf(`background-image: ${one}; ${INITIAL}`),
+    );
+  });
+
+  it('is each layer of several, in order', () => {
+    const two =
+      'linear-gradient(to top, #000 0%, rgba(0,0,0,0) 100%), ' +
+      'linear-gradient(to right, #fff 0%, rgba(255,255,255,0) 100%)';
+    const long =
+      `background-image: ${two}; background-position: 0% 0%, 0% 0%; ` +
+      'background-size: auto, auto; background-repeat: repeat, repeat; ' +
+      'background-color: transparent';
+    assert.deepEqual(styleOf(`background: ${two}`), styleOf(long));
+    assert.equal(
+      (styleOf(`background: ${two}`)['experimental_backgroundImage'] as unknown[]).length,
+      2,
+    );
+  });
+
+  it('takes the position, size, repeat and colour written beside it', () => {
+    const short = 'background: linear-gradient(red, blue) center / cover no-repeat #fff';
+    const long =
+      'background-image: linear-gradient(red, blue); background-position: center; ' +
+      'background-size: cover; background-repeat: no-repeat; background-color: #fff';
+    assert.deepEqual(styleOf(short), styleOf(long));
+  });
+
+  it('takes an image away where it writes none, and the rest back to where it starts', () => {
+    const none =
+      'background-image: none; background-position: 0% 0%; background-size: auto; ' +
+      'background-repeat: repeat';
+    assert.deepEqual(styleOf('background: red'), styleOf(`${none}; background-color: red`));
+    assert.deepEqual(
+      styleOf('background: none'),
+      styleOf(`${none}; background-color: transparent`),
+    );
+    // Over the rules before it: a flat button of a kind that has a gradient has none, and a
+    // gradient a later rule gives it is placed as a gradient starts, not as the first rule said.
+    const sheet = compileCss(
+      '.a { background-image: linear-gradient(red, blue); background-position: right bottom; ' +
+        'background-size: cover; background-repeat: no-repeat } .flat { background: red } ' +
+        '.lit { background-image: linear-gradient(red, blue) }',
+    );
+    const [first, flat, lit] = sheet.rules.map(
+      (rule: { declarations: Record<string, unknown> }) => rule.declarations,
+    );
+    const merged = { ...first, ...flat, ...lit };
+    assert.deepEqual({ ...first, ...flat }['experimental_backgroundImage'], []);
+    const initial = styleOf(`background-image: linear-gradient(red, blue); ${INITIAL}`);
+    for (const key of ['Position', 'Size', 'Repeat'].map(
+      (part) => `experimental_background${part}`,
+    )) {
+      assert.deepEqual(merged[key], initial[key], key);
+    }
+  });
+
+  it('passes over a layer that writes none beside one that paints', () => {
+    // A layer of no image draws nothing, and where it would be placed places nothing.
+    const one = styleOf('background: linear-gradient(red, blue) center / cover no-repeat');
+    assert.deepEqual(
+      styleOf('background: none, linear-gradient(red, blue) center / cover no-repeat'),
+      one,
+    );
+    assert.deepEqual(
+      styleOf('background: linear-gradient(red, blue) center / cover no-repeat, none'),
+      one,
+    );
   });
 });
 

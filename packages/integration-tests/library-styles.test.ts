@@ -14,6 +14,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+/** What the `background` shorthand says of an image where it writes none. */
+const NO_IMAGE = {
+  experimental_backgroundImage: [],
+  experimental_backgroundPosition: [{ left: '0%', top: '0%' }],
+  experimental_backgroundSize: [{ x: 'auto', y: 'auto' }],
+  experimental_backgroundRepeat: [{ x: 'repeat', y: 'repeat' }],
+};
+
 const require = createRequire(import.meta.url);
 const { transformAngular } = require('@ng-native/metro/angular-transform.cjs') as {
   transformAngular: (
@@ -107,7 +115,12 @@ describe("a library's component CSS, opted in", () => {
       sheet.rules.map((rule) => rule.declarations),
       [
         { display: 'flex', paddingTop: 4, paddingRight: 8, paddingBottom: 4, paddingLeft: 8 },
-        { backgroundColor: 'rgb(250, 115, 25)', color: 'rgb(255, 255, 255)' },
+        // `background: <colour>` as the library wrote it, which says there is no image too.
+        {
+          backgroundColor: 'rgb(250, 115, 25)',
+          ...NO_IMAGE,
+          color: 'rgb(255, 255, 255)',
+        },
       ],
     );
     assert.deepEqual(
