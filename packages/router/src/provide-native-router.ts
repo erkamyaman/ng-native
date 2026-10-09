@@ -17,7 +17,6 @@ import {
   NavigationCancel,
   NavigationEnd,
   NavigationError,
-  NavigationStart,
   RouteReuseStrategy,
   Router,
   provideRouter,
@@ -156,21 +155,10 @@ function nativeProviders(parentOf: LinkParent | undefined): (Provider | Environm
         },
       },
       provideEnvironmentInitializer(() => {
-        const router = inject(Router);
         const navigation = inject(NativeNavigation);
         const errors = inject(ErrorHandler);
-        let launching = true;
-        const moved = router.events.subscribe((event) => {
-          if (!(event instanceof NavigationStart) || !router.navigated) return;
-          launching = false;
-          moved.unsubscribe();
-        });
-        inject(DestroyRef).onDestroy(() => moved.unsubscribe());
         inject(DeepLinks).subscribe((url) => {
-          if (url === router.url) return;
-          const opened = launching ? navigation.reset(url) : navigation.push(url);
-          launching = false;
-          opened.catch((error: unknown) => errors.handleError(error));
+          navigation.push(url).catch((error: unknown) => errors.handleError(error));
         });
       }),
       ...shared,
