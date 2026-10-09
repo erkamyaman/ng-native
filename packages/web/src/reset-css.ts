@@ -200,6 +200,19 @@ body {
   color: rgb(0, 0, 0);
 }
 
+[data-rn='text']:where([numberoflines]:not([data-rn='text'] *)) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--rn-number-of-lines);
+  overflow: hidden;
+}
+
+[data-rn='text']:where([numberoflines][ellipsizemode='clip']:not([data-rn='text'] *)) {
+  display: block;
+  -webkit-line-clamp: none;
+  max-height: calc(var(--rn-number-of-lines) * 1lh);
+}
+
 [data-rn='scroll-view'],
 [data-rn='virtual-list'] {
   flex-grow: 1;

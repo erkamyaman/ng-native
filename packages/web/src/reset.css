@@ -285,6 +285,31 @@ body {
 }
 
 /*
+ * `text.ts`'s `numberOfLines`, which `props.ts` writes as an attribute and a custom property only
+ * while it is above zero. A device cuts the text to that many lines and ends the last in an
+ * ellipsis, and a line clamp is the browser's way to say the same. Only on the outermost text, as
+ * on a device, where a nested text is a run of its parent's paragraph and has no lines of its own:
+ * a nested one clamped would leave the paragraph's flow.
+ *
+ * `ellipsizeMode` reaches the element as a plain attribute. A line clamp always ends in an
+ * ellipsis, so `clip` cuts the box to that many lines' height instead, which a nested run in a
+ * larger font can make a little short. `head` and `middle` have nothing in CSS to say them with,
+ * and end in an ellipsis at the tail.
+ */
+[data-rn='text']:where([numberoflines]:not([data-rn='text'] *)) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--rn-number-of-lines);
+  overflow: hidden;
+}
+
+[data-rn='text']:where([numberoflines][ellipsizemode='clip']:not([data-rn='text'] *)) {
+  display: block;
+  -webkit-line-clamp: none;
+  max-height: calc(var(--rn-number-of-lines) * 1lh);
+}
+
+/*
  * `ScrollView.js`'s own base style (`engine.ts`'s `DEFAULT_PROPS.ScrollView`): a native scroll
  * view does not clip its content on its own, so without this the content spills straight out of
  * the scroll view's bounds instead of scrolling. `virtual-list` commits as the same Fabric

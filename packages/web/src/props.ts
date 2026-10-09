@@ -775,7 +775,20 @@ const ACTIVITY_INDICATOR_HANDLERS: Record<string, Handler> = {
   color: (n, v, c) => setStyleProp(n, 'color', v, c || typeof v !== 'string'),
 };
 
+/**
+ * `text.ts`'s `numberOfLines`, as the attribute and the line count `reset.css` clamps the text
+ * with. Neither is written for `0`, which is no limit on a device, as it is when the prop is unset.
+ */
+const TEXT_HANDLERS: Record<string, Handler> = {
+  numberOfLines: (n, v, c) => {
+    const lines = typeof v === 'number' && v > 0 ? v : undefined;
+    setOrRemove(n, 'numberoflines', lines, c || lines === undefined);
+    setStyleProp(n, '--rn-number-of-lines', lines, c || lines === undefined);
+  },
+};
+
 const BY_ELEMENT: Record<string, Record<string, Handler>> = {
+  text: TEXT_HANDLERS,
   'activity-indicator': ACTIVITY_INDICATOR_HANDLERS,
   'text-input': TEXT_INPUT_HANDLERS,
   switch: SWITCH_HANDLERS,
