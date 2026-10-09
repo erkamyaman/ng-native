@@ -200,6 +200,23 @@ describe('a native stack driven by the router', () => {
       assert.deepEqual(stack(fabric), ['home', 'user 2']);
       assert.equal(live['User'], 1);
     });
+
+    it('resets to a screen kept further down, leaving it alone on the stack', async () => {
+      await nav.push('/user/1');
+      await nav.push('/user/2');
+      await idle();
+
+      await nav.reset('/user/1');
+      await idle();
+      assert.equal(router.url, '/user/1');
+      assert.deepEqual(stack(fabric), ['user 1'], 'a reset leaves nothing to go back to');
+      assert.equal(created['User'], 2, 'the kept screen is the one shown, not a new one');
+      assert.equal(live['User'], 1, 'only the kept screen is still alive');
+
+      nav.back();
+      await idle();
+      assert.equal(router.url, '/user/1', 'back has nowhere to go');
+    });
   });
 
   /**

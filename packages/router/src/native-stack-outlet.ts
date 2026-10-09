@@ -522,6 +522,9 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       this.applicationRef.attachView(ref.hostView);
     } else {
       for (const above of this.entries.splice(index + 1)) this.drop(above);
+      if (this.currentIntent()?.stack === 'reset') {
+        this.supersede(this.entries.slice(0, index), this.navigationId());
+      }
       const entry = this.entries[index]!;
       entry.detached = false;
       entry.inFront.set(true);
