@@ -634,6 +634,14 @@ describe('a deep link opened beneath its parent screen', () => {
     assert.deepEqual(stack(fabric), ['user 7'], 'no screen under it to go back to');
   });
 
+  it('opens a launch link that arrives late on its own, without withLinkParent', async () => {
+    await launch(null, false);
+    arrive('/user/7');
+    await idle();
+    assert.equal(router.url, '/user/7');
+    assert.deepEqual(stack(fabric), ['user 7'], 'no fallback screen under it to go back to');
+  });
+
   it('pushes a link that arrives while running over the screen showing, without withLinkParent', async () => {
     await launch(null, false);
     await nav.push('/user/1');
