@@ -280,6 +280,65 @@ describe('updates', () => {
     assert.equal(updates.state(), 'error');
     assert.match(String(updates.error()), /no network/);
   });
+
+  describe('once one is downloaded', () => {
+    const later = () => {
+      const native = {
+        enabled: true,
+        reloaded: false,
+        online: true,
+        available: true,
+        check: async () => {
+          if (!native.online) throw new Error('Network request failed');
+          return { isAvailable: native.available };
+        },
+        fetch: async () => ({ isNew: true }),
+        reload: async () => {
+          native.reloaded = true;
+        },
+      };
+      return native;
+    };
+
+    it('stays ready when a later check fails, and apply() restarts into it', async () => {
+      const native = later();
+      const updates = serviceWith(Updates.SOURCE, native, () => new Updates());
+      assert.equal(await updates.check(), true);
+
+      native.online = false;
+      assert.equal(await updates.check(), true, 'an update is still waiting');
+      assert.equal(updates.ready(), true);
+      assert.equal(updates.state(), 'ready');
+      assert.match(String(updates.error()), /Network request failed/);
+
+      await updates.apply();
+      assert.equal(native.reloaded, true);
+    });
+
+    it('stays ready when a later check finds nothing new', async () => {
+      const native = later();
+      const updates = serviceWith(Updates.SOURCE, native, () => new Updates());
+      await updates.check();
+
+      native.available = false;
+      assert.equal(await updates.check(), true);
+      assert.equal(updates.ready(), true);
+      assert.equal(updates.state(), 'ready');
+    });
+
+    it('clears error() on the next check that succeeds', async () => {
+      const native = later();
+      const updates = serviceWith(Updates.SOURCE, native, () => new Updates());
+      await updates.check();
+      native.online = false;
+      await updates.check();
+
+      native.online = true;
+      assert.equal(await updates.check(), true);
+      assert.equal(updates.error(), null);
+      assert.equal(updates.ready(), true);
+    });
+  });
 });
 
 /**

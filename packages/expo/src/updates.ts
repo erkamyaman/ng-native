@@ -14,7 +14,7 @@
  * one *restarts the app*. So the shape that matters is: know one is ready, and let the app choose
  * a moment the user will not lose anything at. Nothing here does it on its own.
  */
-import { InjectionToken, Service, computed, inject, signal, type Signal } from '@angular/core';
+import { InjectionToken, Service, inject, signal, type Signal } from '@angular/core';
 import { expoModule } from './native.ts';
 
 export interface NativeUpdates {
@@ -53,12 +53,16 @@ export class Updates {
   private readonly native = inject(Updates.SOURCE);
   private readonly current = signal<UpdateState>('idle');
   private readonly failure = signal<unknown>(null);
+  private readonly downloaded = signal(false);
 
   readonly state: Signal<UpdateState> = this.current.asReadonly();
   readonly error: Signal<unknown> = this.failure.asReadonly();
 
-  /** Downloaded and waiting. The only state in which `apply()` does anything. */
-  readonly ready: Signal<boolean> = computed(() => this.current() === 'ready');
+  /**
+   * Downloaded and waiting, including while a later check runs and after one fails. The only time
+   * `apply()` does anything.
+   */
+  readonly ready: Signal<boolean> = this.downloaded.asReadonly();
 
   /**
    * Disabled in development and in Expo Go, where the bundle comes from Metro. An app that shows
@@ -80,20 +84,18 @@ export class Updates {
     try {
       this.current.set('checking');
       const { isAvailable } = await this.native.check();
-      if (!isAvailable) {
-        this.current.set('idle');
-        return false;
+      if (isAvailable) {
+        this.current.set('downloading');
+        const { isNew } = await this.native.fetch();
+        if (isNew) this.downloaded.set(true);
       }
-
-      this.current.set('downloading');
-      const { isNew } = await this.native.fetch();
-      this.current.set(isNew ? 'ready' : 'idle');
-      return isNew;
+      this.failure.set(null);
+      this.current.set(this.downloaded() ? 'ready' : 'idle');
     } catch (error) {
       this.failure.set(error);
-      this.current.set('error');
-      return false;
+      this.current.set(this.downloaded() ? 'ready' : 'error');
     }
+    return this.downloaded();
   }
 
   /**
@@ -103,6 +105,6 @@ export class Updates {
    * app knows and this does not - not mid-form, not mid-upload, usually on next foreground.
    */
   async apply(): Promise<void> {
-    if (this.current() === 'ready') await this.native?.reload();
+    if (this.downloaded()) await this.native?.reload();
   }
 }
