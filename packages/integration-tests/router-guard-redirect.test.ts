@@ -1,7 +1,8 @@
 /**
  * A reset or a replace to a page whose guard sends the user somewhere else: signing out to a home
  * page that sends a signed-out user to the sign-in page. The router starts a new navigation for
- * the redirect, and the stack does to it what the first one asked for.
+ * the redirect, and the stack does to it what the first one asked for. A page that sends the user
+ * on from its own `ngOnInit` is on the stack by then, and stays: what it superseded goes under it.
  */
 import assert from 'node:assert/strict';
 import { afterEach, before, beforeEach, it } from 'node:test';
@@ -91,6 +92,42 @@ it('resets and replaces as before where the guard lets the navigation through', 
   await turns();
   assert.equal(reset.router.url, '/home');
   assert.deepEqual(pages(reset.app), ['Home']);
+});
+
+it('resets the stack under a page that navigates elsewhere as it is created', async () => {
+  const { app, nav, router } = await twoDeep();
+  await nav.reset('/bounce');
+  await turns();
+  assert.equal(router.url, '/login');
+  assert.deepEqual(pages(app), ['Bounce', 'Login']);
+});
+
+it('replaces the top screen with a page that navigates elsewhere as it is created', async () => {
+  const { app, nav, router } = await twoDeep();
+  await nav.replace('/bounce');
+  await turns();
+  assert.equal(router.url, '/login');
+  assert.deepEqual(pages(app), ['A', 'Bounce', 'Login']);
+});
+
+it('leaves only the page a reset page replaces itself with as it is created', async () => {
+  const { app, nav, router } = await twoDeep();
+  await nav.reset('/swap');
+  await turns();
+  assert.equal(router.url, '/login');
+  assert.deepEqual(pages(app), ['Login']);
+
+  nav.back();
+  await turns();
+  assert.equal(router.url, '/login', 'back has nowhere to go');
+});
+
+it('leaves the page a replacing page replaces itself with over the screens below', async () => {
+  const { app, nav, router } = await twoDeep();
+  await nav.replace('/swap');
+  await turns();
+  assert.equal(router.url, '/login');
+  assert.deepEqual(pages(app), ['A', 'Login']);
 });
 
 it('presents the page a guard redirects a presentation to, the way it was asked for', async () => {

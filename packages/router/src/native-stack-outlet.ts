@@ -407,8 +407,9 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     this.fillScreen(screen);
 
     this.back.stacked(navigation);
-    if (intent?.stack === 'reset') this.supersede(this.entries.slice(), navigation);
-    else if (intent?.stack === 'replace' && this.top) this.supersede([this.top], navigation);
+    const pending = this.navigationId() === navigation ? navigation : undefined;
+    if (intent?.stack === 'reset') this.supersede(this.entries.slice(), pending);
+    else if (intent?.stack === 'replace' && this.top) this.supersede([this.top], pending);
     this.entries.push({
       route,
       ref,
@@ -632,6 +633,10 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * at once when there is no navigation to wait for. A replaced screen has already been detached
    * by the router, and with `replaceUrl` its history entry is gone too, so nothing will attach it
    * again; the reuse strategy notices the ref is destroyed and drops its handle.
+   *
+   * A page that navigates as it is created, a sign-in check in `ngOnInit`, cancels the navigation
+   * creating it before this is reached, so that one never ends: the page stays, and what it
+   * superseded goes at once.
    */
   private supersede(entries: StackEntry[], navigation: number | undefined): void {
     if (navigation === undefined) {
