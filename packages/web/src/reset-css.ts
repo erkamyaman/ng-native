@@ -217,6 +217,19 @@ body {
   overflow: hidden;
 }
 
+[data-rn='scroll-view'][pagingenabled='true'] {
+  scroll-snap-type: y mandatory;
+}
+
+[data-rn='scroll-view'][pagingenabled='true'][horizontal='true'] {
+  scroll-snap-type: x mandatory;
+}
+
+[data-rn='scroll-view'][pagingenabled='true'] > [data-rn='view'] > * {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
 [data-rn='image'] {
   background-size: cover;
   background-repeat: no-repeat;

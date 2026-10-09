@@ -319,6 +319,27 @@ body {
 }
 
 /*
+ * `pagingEnabled`, read the same way, along the axis `horizontal` names. A device settles on a
+ * whole page of the scroll view's own size when the user lets go, and moves at most one page per
+ * swipe. CSS snaps to boxes rather than to multiples of a size, so each child of the content view
+ * is a page here: the same thing for the usual carousel of page-sized children, and a stop at
+ * every child for children of another size. `scrollTo` lands on a page too, where a device goes
+ * to the exact offset it was given.
+ */
+[data-rn='scroll-view'][pagingenabled='true'] {
+  scroll-snap-type: y mandatory;
+}
+
+[data-rn='scroll-view'][pagingenabled='true'][horizontal='true'] {
+  scroll-snap-type: x mandatory;
+}
+
+[data-rn='scroll-view'][pagingenabled='true'] > [data-rn='view'] > * {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+/*
  * `Image`'s default `resizeMode`, which is `cover`. `props.ts` paints an image with
  * `background-image` and writes a fit only when `resizeMode` is bound, and `Image` binds it only
  * when the caller set one - so without this an image with just a `source` took the browser's own
