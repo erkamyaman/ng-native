@@ -135,8 +135,13 @@ button, for example - and it becomes an accessibility element with `accessibilit
 
 ## Sizing
 
-`size` is a single number: icons are square, drawn from their `viewBox`, and `size` sets both
-width and height in points. It defaults to 24, matching the box most icon sets are drawn for.
+Icons are square and drawn from their `viewBox`, so `size` sets both width and height in points.
+It takes a number, a number as a string (`size="32"`), or the units a web app writes, `18px` or
+`1.5rem`.
+
+With no `size`, an icon is `1em`, as on the web: as big as the text around it. A `font-size` on the
+icon or above it sizes it, and so does a width and height. With no font size in scope that is 16
+points.
 
 ## API
 
