@@ -18,6 +18,10 @@ async function scene(paging: boolean | undefined = true): Promise<Booted> {
 
 const PAGE = 200;
 
+// The free scrolls below are set rather than wheeled: a wheel is answered off the main thread,
+// which may still hold the snap points of the frame before, and mandatory snapping moves a set
+// offset to a page just the same.
+
 describe('pagingEnabled', () => {
   it('settles a horizontal scroll view on a whole page', async () => {
     const { byId } = await scene();
@@ -45,8 +49,9 @@ describe('pagingEnabled', () => {
     const { byId } = await scene(false);
     const row = byId('row');
     expect(getComputedStyle(row).scrollSnapType).toBe('none');
-    await userEvent.wheel(row, { delta: { x: 130 } });
-    await waitFor(() => row.scrollLeft === 130, 'the wheel distance', 1500);
+    row.scrollLeft = 130;
+    await settle();
+    expect(row.scrollLeft).toBe(130);
   });
 
   it('scrolls freely again once pagingEnabled goes away', async () => {
@@ -56,7 +61,8 @@ describe('pagingEnabled', () => {
     await settle();
     const column = byId('column');
     expect(getComputedStyle(column).scrollSnapType).toBe('none');
-    await userEvent.wheel(column, { delta: { y: 130 } });
-    await waitFor(() => column.scrollTop === 130, 'the wheel distance', 1500);
+    column.scrollTop = 130;
+    await settle();
+    expect(column.scrollTop).toBe(130);
   });
 });
