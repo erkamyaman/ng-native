@@ -146,8 +146,21 @@ function nativeProviders(parentOf: LinkParent | undefined): (Provider | Environm
     return [
       {
         provide: PlatformLocation,
-        useFactory: () => new NativePlatformLocation(inject(DeepLinks)),
+        useFactory: () => {
+          const links = inject(DeepLinks);
+          return new NativePlatformLocation({
+            initialUrl: () => links.initialUrl(),
+            subscribe: () => () => {},
+          });
+        },
       },
+      provideEnvironmentInitializer(() => {
+        const navigation = inject(NativeNavigation);
+        const errors = inject(ErrorHandler);
+        inject(DeepLinks).subscribe((url) => {
+          navigation.push(url).catch((error: unknown) => errors.handleError(error));
+        });
+      }),
       ...shared,
     ];
   }

@@ -604,12 +604,15 @@ describe('a deep link opened beneath its parent screen', () => {
   let nav: NativeNavigation;
   let fabric: FakeFabric;
   let arrive: (url: string) => void;
+  /** What reached the app's ErrorHandler. */
+  let reported: unknown[];
 
   before(async () => {
     mod = await compileFixture(fileURLToPath(new URL('./fixtures/stack-app.ts', import.meta.url)));
   });
 
   async function launch(initial: string | null, parented = true) {
+    reported = [];
     const links = {
       initialUrl: () => initial,
       subscribe: (listener: (url: string) => void) => ((arrive = listener), () => {}),
@@ -622,6 +625,10 @@ describe('a deep link opened beneath its parent screen', () => {
           ...(parented ? [withLinkParent((url) => (url.startsWith('/user/') ? '/' : null))] : []),
         ),
         { provide: DeepLinks, useValue: links },
+        {
+          provide: ErrorHandler,
+          useValue: { handleError: (error: unknown) => reported.push(error) },
+        },
       ],
     });
     fabric = app.fabric;
@@ -649,6 +656,44 @@ describe('a deep link opened beneath its parent screen', () => {
     await launch('/user/7', false);
     assert.equal(router.url, '/user/7');
     assert.deepEqual(stack(fabric), ['user 7'], 'no screen under it to go back to');
+  });
+
+  it('pushes a link over the first screen while the app sits on it, without withLinkParent', async () => {
+    await launch(null, false);
+    arrive('/user/7');
+    await idle();
+    assert.equal(router.url, '/user/7');
+    assert.deepEqual(stack(fabric), ['home', 'user 7']);
+
+    nav.back();
+    await idle();
+    assert.equal(router.url, '/', 'back returns to the first screen');
+    assert.deepEqual(stack(fabric), ['home']);
+  });
+
+  it('pushes a link that arrives while running over the screen showing, without withLinkParent', async () => {
+    await launch(null, false);
+    await nav.push('/user/1');
+    await nav.push('/user/2');
+    await idle();
+
+    arrive('/user/1');
+    await idle();
+    assert.equal(router.url, '/user/1');
+    assert.deepEqual(stack(fabric), ['home', 'user 1', 'user 2', 'user 1']);
+
+    nav.back();
+    await idle();
+    assert.equal(router.url, '/user/2', 'back returns to the screen the link was pushed over');
+  });
+
+  it('reports a link to a page that fails to load, without withLinkParent', async () => {
+    await launch(null, false);
+    arrive('/nowhere');
+    await idle();
+    assert.equal(router.url, '/');
+    assert.deepEqual(stack(fabric), ['home']);
+    assert.match(String(reported[0]), /nowhere/, 'the error reaches the ErrorHandler');
   });
 
   it('launches on a link alone when withLinkParent names no parent for it', async () => {
