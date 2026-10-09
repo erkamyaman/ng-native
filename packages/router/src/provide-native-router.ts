@@ -15,8 +15,10 @@
 import { PlatformLocation } from '@angular/common';
 import {
   NavigationCancel,
+  NavigationCancellationCode,
   NavigationEnd,
   NavigationError,
+  NavigationSkipped,
   RouteReuseStrategy,
   Router,
   provideRouter,
@@ -188,10 +190,12 @@ function nativeProviders(parentOf: LinkParent | undefined): (Provider | Environm
         followLink(router, url, parentOf).catch((error: unknown) => errors.handleError(error));
       const initial = links.initialUrl();
       if (initial && parentOf(initial)) {
+        // Followed over the first page to show, or not at all: one that failed to load leaves
+        // the link nothing to go over, and the next page to show is not the one it waited for.
         const first = router.events.subscribe((event) => {
-          if (!(event instanceof NavigationEnd)) return;
+          if (!isEnd(event) || carriesOn(event)) return;
           first.unsubscribe();
-          void follow(initial);
+          if (event instanceof NavigationEnd) void follow(initial);
         });
       }
       // A launch link arrives the way any other does, once `getInitialURL()` settles, which is
@@ -293,10 +297,21 @@ function keepHistoryAcrossReloads(): void {
 }
 
 /** A navigation's last event, whichever way it went. */
+/** Whether a navigation ended only for another to take its place: a guard's redirect does. */
+function carriesOn(event: unknown): boolean {
+  return (
+    event instanceof NavigationCancel &&
+    (event.code === NavigationCancellationCode.Redirect ||
+      event.code === NavigationCancellationCode.SupersededByNewNavigation)
+  );
+}
+
 function isEnd(event: unknown): boolean {
   return (
     event instanceof NavigationEnd ||
     event instanceof NavigationCancel ||
-    event instanceof NavigationError
+    event instanceof NavigationError ||
+    // A url the app's `UrlHandlingStrategy` leaves to something else: it ends with no page.
+    event instanceof NavigationSkipped
   );
 }
