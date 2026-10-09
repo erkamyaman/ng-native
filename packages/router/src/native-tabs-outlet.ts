@@ -384,18 +384,19 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
   }
 
   /**
-   * Take the bar from the `<native-tab>` elements in the content, once.
+   * Take the bar from the `<native-tab>` elements in the content, adding any that appeared since
+   * the last read, as one an `@if` shows once a feature flag turns on.
    *
    * On demand rather than in a lifecycle hook, because the router activates a child route during
    * this component's creation, before any hook has run - but after the content nodes themselves
    * exist, which is all this needs.
    */
   private readTabs(): TabEntry[] {
-    if (this.entries.length > 0) return this.entries;
-
+    const first = this.entries.length === 0;
     const children = this.route.routeConfig?.children ?? [];
     for (const tab of this.declared()) {
       const key = tab.path();
+      if (this.entries.some((entry) => entry.key === key)) continue;
       this.entries.push({
         tab,
         key,
@@ -423,7 +424,7 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
       );
     }
     // Before the first navigation nothing is selected, which is not a state a tab bar has.
-    this.request(this.entries[0]!);
+    if (first) this.request(this.entries[0]!);
     return this.entries;
   }
 
