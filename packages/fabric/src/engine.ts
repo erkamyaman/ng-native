@@ -1385,6 +1385,38 @@ function alignMultiline(viewName: string, props: Record<string, unknown>): void 
 }
 
 /**
+ * Keep a paragraph as tall as one of its lines, as a browser's line box is whatever holds it.
+ * Yoga measures an item no taller than the room inside its container, and the text view cuts
+ * its letters off there: a 24 point line in a row with 16 points between its paddings. The
+ * line is the paragraph's own or a taller one of a run in it, `run`. With it goes what is
+ * around the text and inside the height Yoga gives a view, its padding and border above and
+ * below, but for a content box. Only where a line height is a length, and nothing gives the
+ * paragraph a height of its own.
+ */
+function lineTall(props: Record<string, unknown>, run: number): void {
+  const own = props['lineHeight'];
+  const line = Math.max(typeof own === 'number' ? own : 0, run);
+  if (line <= 0) return;
+  const unset = (value: unknown): boolean => value == null || value === 'auto';
+  if (!unset(props['height']) || !unset(props['minHeight'])) return;
+  props['minHeight'] = line + (props['boxSizing'] === 'content-box' ? 0 : aroundALine(props));
+}
+
+/** The points of padding and border above and below a view's content, where each is a length. */
+function aroundALine(props: Record<string, unknown>): number {
+  const edge = (...keys: string[]): number => {
+    const found = keys.map((key) => props[key]).find((value) => value != null);
+    return typeof found === 'number' ? found : 0;
+  };
+  return (
+    edge('paddingTop', 'paddingVertical', 'padding') +
+    edge('paddingBottom', 'paddingVertical', 'padding') +
+    edge('borderTopWidth', 'borderWidth') +
+    edge('borderBottomWidth', 'borderWidth')
+  );
+}
+
+/**
  * Where a line may break: at a space, after a hyphen, and anywhere in a script written without
  * spaces. A soft hyphen and a zero-width space are places to break that draw nothing.
  */
@@ -3387,7 +3419,7 @@ export class Engine implements HostEngine {
   private markTextContent(parent: EngineNode, child: EngineNode): void {
     if (child.kind === 'anchor') return;
     if (takesTextAsProp(parent)) this.markProps(parent);
-    else if (isTextElement(parent)) this.markWords(parent);
+    else if (isTextElement(parent)) this.markWords(parent, child.kind === 'element');
   }
 
   /**
@@ -3395,10 +3427,13 @@ export class Engine implements HostEngine {
    * one, the paragraph is merged again, since that is one line or as many as it takes. Asked
    * of the paragraph's outermost element, which is the view; any other change leaves it be.
    */
-  private markWords(within: EngineNode): void {
+  private markWords(within: EngineNode, run = false): void {
     let root = within;
     while (isTextElement(root.parent)) root = root.parent!;
-    if (root.oneWord !== undefined && unbroken(root) !== root.oneWord) this.markProps(root, false);
+    // A run that came or went can be the tallest line of the paragraph: see `lineTall`.
+    // ponytail: one restyled to another line height is not; mark its paragraph if seen cut.
+    const words = root.oneWord !== undefined && unbroken(root) !== root.oneWord;
+    if (run || words) this.markProps(root, false);
   }
 
   /** A subtree that went out of the tree is back in: its hoisted nodes commit again. */
@@ -4161,6 +4196,7 @@ export class Engine implements HostEngine {
     if (viewName === PARAGRAPH) {
       alignText(style, this.directionOf(node, style));
       this.wholeWords(node, style);
+      lineTall(style, this.tallestRun(node, 0));
     }
     if (this.fontsRefreshed) this.capForFonts(node, style);
     alignMultiline(viewName, style);
@@ -4236,6 +4272,21 @@ export class Engine implements HostEngine {
       if (text == null) return;
       props[side.color] = text;
     }
+  }
+
+  /** The tallest line height, in points, of the runs of text in a paragraph: none is 0. */
+  private tallestRun(node: EngineNode, tallest: number): number {
+    for (const child of node.children) {
+      if (!isTextElement(child)) continue;
+      const line =
+        inlineOf(child)['lineHeight'] ??
+        this.styles.resolve(child, this.styleEpoch).style['lineHeight'];
+      tallest = this.tallestRun(
+        child,
+        typeof line === 'number' ? Math.max(tallest, line) : tallest,
+      );
+    }
+    return tallest;
   }
 
   /**
