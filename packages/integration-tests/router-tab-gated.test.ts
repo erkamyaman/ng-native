@@ -34,13 +34,21 @@ async function start(routes: string) {
   const host = () =>
     flatten(app.fabric.committed).find((node) => node.viewName === 'RNSTabsHostIOS')!;
   let provenance = 0;
-  const tap = async (key: string) => {
-    await fireEvent(host(), 'tabSelected', { selectedScreenKey: key, provenance: ++provenance });
+  const report = async (key: string, actionOrigin: string) => {
+    await fireEvent(host(), 'tabSelected', {
+      selectedScreenKey: key,
+      provenance: ++provenance,
+      actionOrigin,
+    });
     await idle();
   };
+  /** The user tapping a tab. */
+  const tap = (key: string) => report(key, 'user');
+  /** Native reporting a selection the outlet asked for, as it reports every change. */
+  const echo = (key: string) => report(key, 'programmatic-js');
   const selected = () =>
     (host().props['navStateRequest'] as { selectedScreenKey: string }).selectedScreenKey;
-  return { router, tap, selected };
+  return { router, tap, echo, selected };
 }
 
 it('stays on the tab tapped last when the tap before it is still loading', async () => {
@@ -56,4 +64,19 @@ it('stays on the tab tapped last when the tap before it is still loading', async
 
   assert.equal(router.url, '/home');
   assert.equal(selected(), 'home');
+});
+
+it('lets a navigation from code finish when native reports the tab in front meanwhile', async () => {
+  const gate = mod['gate'] as { open: (() => void) | null };
+  const { router, echo, selected } = await start('gatedRoutes');
+  const arrived = router.navigateByUrl('/search');
+  await idle();
+  assert.ok(gate.open, 'the navigation is still waiting on its guard');
+  await echo('home');
+  gate.open?.();
+  await idle();
+
+  assert.equal(await arrived, true);
+  assert.equal(router.url, '/search');
+  assert.equal(selected(), 'search');
 });
