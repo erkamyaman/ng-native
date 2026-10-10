@@ -1306,6 +1306,34 @@ function ratioForAutoSize(props: Record<string, unknown>): void {
 
 const OUTLINE_KEYS = ['outlineWidth', 'outlineStyle', 'outlineColor', 'outlineOffset'];
 
+/** Whether a side of a border has a width and nothing that gives it a colour. */
+function colourless(
+  props: Record<string, unknown>,
+  side: (typeof BORDER_SIDES)[number],
+  flipped: boolean,
+): boolean {
+  const width = props[side.width] ?? props['borderWidth'];
+  if (typeof width !== 'number' || width <= 0) return false;
+  const given = [side.color, flipped ? side.flipped : side.logical, 'borderColor'];
+  return given.every((key) => props[key] == null);
+}
+
+/**
+ * Each side a border has: its width, its colour, and the logical colour React Native takes for
+ * it too, read left to right and, `flipped`, right to left.
+ */
+const BORDER_SIDES = [
+  ['Top', 'BlockStart', 'BlockStart'],
+  ['Right', 'End', 'Start'],
+  ['Bottom', 'BlockEnd', 'BlockEnd'],
+  ['Left', 'Start', 'End'],
+].map(([side, logical, flipped]) => ({
+  width: `border${side}Width`,
+  color: `border${side}Color`,
+  logical: `border${logical}Color`,
+  flipped: `border${flipped}Color`,
+}));
+
 /**
  * Send nothing for an outline of no width, which is what `outline: none` is: it draws nothing,
  * and a view with no outline is the same view. Sent, it is an update that is not one, and on
@@ -4109,6 +4137,7 @@ export class Engine implements HostEngine {
     // After the basis, which is a size given where it is committed as one.
     ratioForAutoSize(merged);
     noOutline(merged);
+    this.borderInText(node, merged);
     // Last, on what is committed: an override or an animation can hide a box, or place it.
     hiddenOutOfFlow(merged);
     delete merged['touchAction'];
@@ -4148,6 +4177,26 @@ export class Engine implements HostEngine {
     if (raised === node.raised) return;
     node.raised = raised;
     node.propsDirty = true;
+  }
+
+  /**
+   * Draw a border that has a width and no colour in the colour of the text, as a browser does:
+   * `border-color` starts as `currentColor`, and native starts it as black. Each side with a
+   * width, where nothing gave that side a colour. Left to native where there is no text colour
+   * to take, which is black in a browser too.
+   */
+  private borderInText(node: EngineNode, props: Record<string, unknown>): void {
+    let text: unknown;
+    // The side a logical colour is for is the other one where text is read right to left.
+    const flipped =
+      (props['borderStartColor'] != null || props['borderEndColor'] != null) &&
+      this.styles.readsRightToLeft(props);
+    for (const side of BORDER_SIDES) {
+      if (!colourless(props, side, flipped)) continue;
+      text ??= props['color'] ?? this.styles.resolve(node, this.styleEpoch).inherited['color'];
+      if (text == null) return;
+      props[side.color] = text;
+    }
   }
 
   /**
