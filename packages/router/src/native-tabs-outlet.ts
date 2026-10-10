@@ -589,7 +589,7 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
     const entry = this.readTabs().find(
       (tab) => screenKeyOf(tab.key) === selection.selectedScreenKey,
     );
-    if (!entry || entry === this.selected) return;
+    if (!entry || (entry === this.selected && !this.router?.getCurrentNavigation())) return;
 
     // Returning to a tab returns to the url it was last on, which is the whole point of keeping
     // it mounted. A tab never visited starts at its own path.
