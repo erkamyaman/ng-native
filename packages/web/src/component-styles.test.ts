@@ -209,4 +209,24 @@ describe("a component's own styles, on the web", () => {
     document.body.appendChild(outside);
     assert.equal(colour(outside), 'rgb(9, 9, 9)');
   });
+
+  it("takes a ScrollView's own bindings without reporting them as unknown properties", () => {
+    const Screen = Component({
+      selector: 'app-scrolling',
+      imports: [ScrollView, Text],
+      template: `<scroll-view><text>Row</text></scroll-view>`,
+    })(class {});
+    const reports: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => reports.push(args.map(String).join(' '));
+    try {
+      mount(root(), Screen);
+    } finally {
+      console.error = original;
+    }
+    assert.deepEqual(
+      reports.filter((report) => report.includes('NG0303')),
+      [],
+    );
+  });
 });

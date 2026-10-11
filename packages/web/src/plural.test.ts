@@ -98,7 +98,7 @@ describe('an ICU plural, on the web, in a development build', () => {
 describe('an ICU plural, on the web, in a release build', () => {
   const scope = globalThis as { ngDevMode?: unknown };
 
-  it('renders without changing what instanceof Node answers', async () => {
+  it('renders, and its nodes still answer instanceof Node as on iOS and Android', async () => {
     const before = scope.ngDevMode;
     const { document } = installJsdomEnvironment();
     scope.ngDevMode = false;
@@ -114,7 +114,7 @@ describe('an ICU plural, on the web, in a release build', () => {
         (componentRef.instance as InstanceType<typeof PluralApp>).count.set(2);
         await settle();
         assert.equal(text(root), '2 results');
-        assert.ok(!((componentRef.location.nativeElement as object) instanceof Node));
+        assert.ok((componentRef.location.nativeElement as object) instanceof Node);
       } finally {
         componentRef.destroy();
       }

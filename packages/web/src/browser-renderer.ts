@@ -293,7 +293,7 @@ export class BrowserRendererFactory implements RendererFactory2 {
     this.engine = engine;
     this.document = document;
     this.renderer = new BrowserRenderer(engine, document);
-    if (typeof ngDevMode === 'undefined' || ngDevMode) letBrowserNodesPassAsNodes();
+    letBrowserNodesPassAsNodes();
   }
 
   /**

@@ -76,6 +76,13 @@ export function letBrowserNodesPassAsNodes(): void {
 }
 
 /**
+ * The prototype of every element node. Angular's development build reports a binding as an unknown
+ * property (NG0303) unless `name in element` is true, and every binding on an element here goes to
+ * `setProperty`, whatever its name.
+ */
+const anyProperty = new Proxy({}, { has: (_, name) => typeof name === 'string' });
+
+/**
  * The SVG names whose `fill`/`stroke` need a seeded `props` entry from the moment they are
  * created - see the block below for why. `svg-line` is left out: a `<line>` has no fill of its
  * own to paint (react-native-svg's `Line` never reads `fill` either), so there is nothing an
@@ -132,6 +139,7 @@ export function makeElementNode(name: string, el: Element): BrowserNode {
     listeners: null,
     optedIn: null,
   };
+  Object.setPrototypeOf(node, anyProperty);
   registry.set(el, node);
   made.add(node);
   return node;
