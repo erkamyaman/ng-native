@@ -89,7 +89,7 @@ describe('an ICU plural, on the web, in a release build', () => {
       document.body.appendChild(root);
       const { componentRef } = mount(root, PluralApp);
       try {
-        componentRef.instance.count.set(2);
+        (componentRef.instance as InstanceType<typeof PluralApp>).count.set(2);
         await settle();
         assert.equal(text(root), '2 results');
         assert.ok(!((componentRef.location.nativeElement as object) instanceof Node));
