@@ -57,6 +57,24 @@ export interface BrowserNode extends HostNode {
 /** `event.target`, and anything else holding a real DOM node, back to the `BrowserNode` for it. */
 const registry = new WeakMap<Element | Text | Comment, BrowserNode>();
 
+const made = new WeakSet<object>();
+const answered = new WeakSet<object>();
+
+type Constructor = abstract new (...args: never[]) => object;
+
+export function letBrowserNodesPassAsNodes(): void {
+  const node = (globalThis as { Node?: Constructor }).Node;
+  if (typeof node !== 'function' || answered.has(node)) return;
+  answered.add(node);
+  const own = node[Symbol.hasInstance];
+  Object.defineProperty(node, Symbol.hasInstance, {
+    configurable: true,
+    value(this: Constructor, value: unknown): boolean {
+      return (this === node && made.has(value as object)) || own.call(this, value);
+    },
+  });
+}
+
 /**
  * The SVG names whose `fill`/`stroke` need a seeded `props` entry from the moment they are
  * created - see the block below for why. `svg-line` is left out: a `<line>` has no fill of its
@@ -115,6 +133,7 @@ export function makeElementNode(name: string, el: Element): BrowserNode {
     optedIn: null,
   };
   registry.set(el, node);
+  made.add(node);
   return node;
 }
 
@@ -131,6 +150,7 @@ export function makeTextNode(text: Text): BrowserNode {
     optedIn: null,
   };
   registry.set(text, node);
+  made.add(node);
   return node;
 }
 
@@ -148,6 +168,7 @@ export function makeAnchorNode(comment: Comment): BrowserNode {
     optedIn: null,
   };
   registry.set(comment, node);
+  made.add(node);
   return node;
 }
 
