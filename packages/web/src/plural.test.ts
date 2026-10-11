@@ -71,6 +71,28 @@ describe('an ICU plural, on the web, in a development build', () => {
     assert.ok(!(document.createTextNode('') instanceof Element));
     assert.ok(!({} instanceof Node));
   });
+
+  it('picks the case by the rules of LOCALE_ID, not of en-US', async () => {
+    const [{ registerLocaleData }, { default: localeFr }, core] = await Promise.all([
+      import('@angular/common'),
+      import('@angular/common/locales/fr'),
+      import('@angular/core'),
+    ]);
+    registerLocaleData(localeFr);
+    try {
+      const root = document.createElement('app-root');
+      document.body.appendChild(root);
+      const { componentRef } = mount(root, fixtures.PluralApp, {
+        providers: [{ provide: core.LOCALE_ID, useValue: 'fr' }],
+      });
+      mounted.push(componentRef);
+      (componentRef.instance as InstanceType<Fixtures['PluralApp']>).count.set(0);
+      await settle();
+      assert.equal(text(root), '0 result');
+    } finally {
+      core.ɵsetLocaleId(core.ɵDEFAULT_LOCALE_ID);
+    }
+  });
 });
 
 describe('an ICU plural, on the web, in a release build', () => {

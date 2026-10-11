@@ -48,8 +48,7 @@ an app reload. Metro has no build-time translation (`localize-translate`), and `
 cannot build native apps.
 
 Plurals and selects work on iOS and Android. On the [web host](/packages/web) one throws in a
-development build, and picks its case by the rules of `en-US` whatever the `LOCALE_ID`; use the
-`i18nPlural` pipe and `@switch` there.
+development build; use the `i18nPlural` pipe and `@switch` there.
 
 A case of a plural or select holds text and interpolations. Angular keeps an element inside a case
 only when it is on its HTML allowlist, which no native element is, so `<text>` inside a case is
