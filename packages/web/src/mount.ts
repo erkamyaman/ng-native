@@ -40,6 +40,7 @@ import {
   PLATFORM_ID,
   EnvironmentInjector,
   ErrorHandler,
+  LOCALE_ID,
   RendererFactory2,
   createComponent,
   effect,
@@ -52,6 +53,7 @@ import {
   ɵcreateOrReusePlatformInjector as createOrReusePlatformInjector,
   ɵINJECTOR_SCOPE as INJECTOR_SCOPE,
   ɵprovideZonelessChangeDetectionInternal as provideZonelessChangeDetectionInternal,
+  ɵsetLocaleId as setLocaleId,
 } from '@angular/core';
 import { HostEngine } from '@ng-native/fabric';
 import { ColorScheme, Direction, HardwareBack, Screen, StatusBar } from '@ng-native/device';
@@ -279,6 +281,7 @@ function mountAlone(
     ],
     platformInjector as EnvironmentInjector,
   );
+  setLocaleId(injector.get(LOCALE_ID) || 'en-US');
 
   const componentRef = createComponent(component, {
     environmentInjector: injector,
