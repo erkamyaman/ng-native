@@ -717,3 +717,46 @@ describe('a deep link opened beneath its parent screen', () => {
     assert.deepEqual(stack(fabric), ['home', 'user 9']);
   });
 });
+
+describe('a tab bar kept as one screen while its account changes', () => {
+  let mod: Record<string, unknown>;
+
+  before(async () => {
+    mod = await compileFixture('fixtures/tab-accounts.ts');
+  });
+
+  afterEach(() => cleanup());
+
+  it('opens a tab in the account in front, not the one it was last opened in', async () => {
+    const app = await render(mod['Shell'] as Type<unknown>, {
+      providers: [provideNativeRouter(mod['routes'] as Routes)],
+    });
+    const router = app.componentRef.injector.get(Router);
+    const nav = app.componentRef.injector.get(NativeNavigation);
+    await idle();
+    const bars = () =>
+      flatten(app.fabric.committed).filter((node) => node.viewName === 'RNSTabsHostIOS');
+    let provenance = 0;
+    const tap = async (key: string) => {
+      await fireEvent(bars()[0]!, 'tabSelected', {
+        selectedScreenKey: key,
+        provenance: ++provenance,
+      });
+      await idle();
+    };
+
+    assert.equal(router.url, '/org/1/home');
+    await tap('search');
+    await nav.push('/org/1/search/x');
+    await idle();
+    assert.equal(router.url, '/org/1/search/x');
+    await tap('home');
+
+    await router.navigateByUrl('/org/2/home');
+    await idle();
+    assert.equal(bars().length, 1, 'one bar, reused');
+
+    await tap('search');
+    assert.equal(router.url, '/org/2/search');
+  });
+});

@@ -518,7 +518,7 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
     const selected = this.selected;
     if (!first || !selected || selected === first || !this.router) return false;
     if (!this.isActivated || !isShowing(this.router, selected.route)) return false;
-    void this.router.navigateByUrl(first.url || this.pathOf(first));
+    void this.router.navigateByUrl(this.urlOf(first));
     return true;
   }
 
@@ -599,7 +599,7 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
     // it mounted. A tab never visited starts at its own path.
     // A navigation that fails is reported, unless activation reported it already: a page that
     // does not load, caught here, would otherwise leave nothing but a tab that will not open.
-    void this.router?.navigateByUrl(entry.url || this.pathOf(entry)).then(
+    void this.router?.navigateByUrl(this.urlOf(entry)).then(
       (arrived) => this.revertUnless(arrived),
       (error: unknown) => {
         if (error === null || typeof error !== 'object' || !this.reported.has(error)) {
@@ -638,6 +638,10 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
     // prop reaches native only with the commit at the end of a pass. Without one the bar stayed
     // on the tab that failed until something else happened to render.
     this.changeDetector.markForCheck();
+  }
+
+  private urlOf(entry: TabEntry): string {
+    return entry.url && this.tabOf(entry.url) === entry ? entry.url : this.pathOf(entry);
   }
 
   /** A tab's own url, from the outlet's route down. */
