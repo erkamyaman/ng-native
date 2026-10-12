@@ -4423,6 +4423,24 @@ export function boundDeclaration(
   };
 }
 
+/** A length in `em`, the whole value: `2em`, `-0.5em`. */
+const EM = /^\s*(-?\d*\.?\d+)em\s*$/i;
+
+/**
+ * A bound declaration of a length in `em`, `[style.width]="'2em'"`, as the deferred declaration
+ * the compiler writes for the same value in a rule: measured where it is used, against the font
+ * size in scope. Null for any other value, and for a property that takes no length.
+ */
+export function boundEm(prop: string, text: string, on?: string): DeferredDeclaration | null {
+  const match = EM.exec(text);
+  if (!match || boundKind(prop) !== 'length') return null;
+  return {
+    props: [prop],
+    ...(on === undefined ? {} : { on }),
+    compute: { unit: 'em', factor: Number(match[1]) },
+  };
+}
+
 /** The names a `var()` tries in turn: its own, then each `var()` nested as its fallback. */
 function aliasesOf(token: TokenValue | undefined): string[] {
   const names: string[] = [];
