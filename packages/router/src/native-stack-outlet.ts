@@ -284,6 +284,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       stackPresentation: 'modal',
     };
     const screen = this.createScreen(presentation, () => this.dismissPresentedPage());
+    this.top?.inFront.set(false);
     const inFront = signal(true);
     const { ref, unbind } = this.createPage(
       component,
@@ -318,6 +319,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     this.presentedPage = null;
     page.stopBack();
     this.drop(page);
+    if (this.top && !this.top.detached) this.top.inFront.set(true);
   }
 
   /**
