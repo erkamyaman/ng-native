@@ -7,8 +7,8 @@
  */
 import assert from 'node:assert/strict';
 import { afterEach, before, it } from 'node:test';
-import type { Type } from '@angular/core';
-import { Router, type Routes } from '@angular/router';
+import { inject, type Type } from '@angular/core';
+import { NavigationEnd, Router, type Routes } from '@angular/router';
 import { cleanup, render, settle, type FakeFabricNode } from '@ng-native/testing';
 import { NativeNavigation } from '../router/src/native-navigation.ts';
 import { provideNativeRouter } from '../router/src/provide-native-router.ts';
@@ -51,3 +51,39 @@ for (const [how, go] of [
     assert.match(texts, /"text":"home"/, 'the first screen is the root');
   });
 }
+
+it('keeps a guard redirect on the first navigation when a screen is pushed before it lands', async () => {
+  // A root guard that sends the app elsewhere - to sign in, say - cancels the first navigation
+  // with a redirect and starts another. A push waiting for the first navigation that went on
+  // that cancel superseded the redirect, and the pushed screen opened alone, past the guard.
+  const routes: Routes = [
+    {
+      path: '',
+      component: mod['GuardHome'] as Type<unknown>,
+      canActivate: [
+        () => {
+          const router = inject(Router);
+          return wait(30).then(() => router.parseUrl('/welcome'));
+        },
+      ],
+    },
+    { path: 'welcome', component: mod['GuardHome'] as Type<unknown> },
+    ...(mod['guardRoutes'] as Routes).filter((route) => route.path !== ''),
+  ];
+  const app = await render(mod['GuardShell'] as Type<unknown>, {
+    providers: [provideNativeRouter(routes)],
+  });
+  const injector = app.componentRef.injector;
+  const router = injector.get(Router);
+  const landed: string[] = [];
+  router.events.subscribe((event) => {
+    if (event instanceof NavigationEnd) landed.push(event.urlAfterRedirects);
+  });
+  assert.equal(router.navigated, false, 'the first navigation is still in its guard');
+  await injector.get(NativeNavigation).push('/editor');
+  for (let turn = 0; turn < 4; turn++) await settle();
+  assert.deepEqual(landed, ['/welcome', '/editor'], 'the redirect lands, then the push');
+  const screens = flatten(app.fabric.committed).filter((n) => n.viewName === 'RNSScreen');
+  assert.equal(screens.length, 2, 'the redirect target, and the screen pushed above it');
+  assert.match(JSON.stringify(screens[0]), /"text":"home"/);
+});
