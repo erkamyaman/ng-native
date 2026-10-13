@@ -16,6 +16,7 @@
 import { inject } from '@angular/core';
 import {
   NavigationCancel,
+  NavigationCancellationCode,
   NavigationEnd,
   NavigationError,
   Router,
@@ -187,15 +188,27 @@ export class NativeNavigation {
   private firstNavigation(): Promise<void> {
     return new Promise((resolve) => {
       const events = this.router.events.subscribe((event) => {
-        if (
-          event instanceof NavigationEnd ||
-          event instanceof NavigationCancel ||
-          event instanceof NavigationError
-        ) {
+        if (endsFirstNavigation(event)) {
           events.unsubscribe();
           resolve();
         }
       });
     });
   }
+}
+
+/**
+ * Whether the router's first navigation is over. A cancel for a redirect - a root guard that
+ * returns a `UrlTree`, sending the app to sign in - or for a newer navigation is not: the router
+ * goes on to the one that replaced it, and a navigation started now would supersede that, opening
+ * on a screen with nothing beneath it, past the guard.
+ */
+export function endsFirstNavigation(event: unknown): boolean {
+  return (
+    event instanceof NavigationEnd ||
+    event instanceof NavigationError ||
+    (event instanceof NavigationCancel &&
+      event.code !== NavigationCancellationCode.Redirect &&
+      event.code !== NavigationCancellationCode.SupersededByNewNavigation)
+  );
 }

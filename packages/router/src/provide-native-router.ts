@@ -14,9 +14,7 @@
  */
 import { PlatformLocation } from '@angular/common';
 import {
-  NavigationCancel,
   NavigationEnd,
-  NavigationError,
   RouteReuseStrategy,
   Router,
   provideRouter,
@@ -43,7 +41,7 @@ import {
   type TabDefaults,
 } from './native-bar-defaults.ts';
 import { followLink, linkAncestry, type LinkParent } from './native-links.ts';
-import { NativeNavigation } from './native-navigation.ts';
+import { NativeNavigation, endsFirstNavigation } from './native-navigation.ts';
 import { NativePlatformLocation } from './native-platform-location.ts';
 import { NativeStackReuseStrategy } from './native-stack-reuse-strategy.ts';
 import { registerScreenComponents } from './screens.ts';
@@ -178,7 +176,7 @@ function nativeProviders(parentOf: LinkParent | undefined): (Provider | Environm
       const settled = new Promise<void>((resolve) => {
         if (router.navigated) return resolve();
         const first = router.events.subscribe((event) => {
-          if (!isEnd(event)) return;
+          if (!endsFirstNavigation(event)) return;
           first.unsubscribe();
           resolve();
         });
@@ -187,13 +185,4 @@ function nativeProviders(parentOf: LinkParent | undefined): (Provider | Environm
     }),
     ...shared,
   ];
-}
-
-/** A navigation's last event, whichever way it went. */
-function isEnd(event: unknown): boolean {
-  return (
-    event instanceof NavigationEnd ||
-    event instanceof NavigationCancel ||
-    event instanceof NavigationError
-  );
 }
