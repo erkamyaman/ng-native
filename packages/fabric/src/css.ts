@@ -4423,21 +4423,29 @@ export function boundDeclaration(
   };
 }
 
-/** A length in `em`, the whole value: `2em`, `-0.5em`. */
-const EM = /^\s*(-?\d*\.?\d+)em\s*$/i;
+/** A length in `em` or a viewport unit, the whole value: `2em`, `-0.5em`, `50vw`. */
+const RELATIVE_LENGTH = /^\s*(-?\d*\.?\d+)(em|vw|vh|vmin|vmax)\s*$/i;
+
+type RelativeUnit = NonNullable<DeferredDeclaration['compute']>['unit'];
 
 /**
- * A bound declaration of a length in `em`, `[style.width]="'2em'"`, as the deferred declaration
- * the compiler writes for the same value in a rule: measured where it is used, against the font
- * size in scope. Null for any other value, and for a property that takes no length.
+ * A bound declaration of a length in `em` or a viewport unit, `[style.width]="'2em'"`, as the
+ * deferred declaration the compiler writes for the same value in a rule: measured where it is
+ * used, against the font size in scope. A viewport unit is measured against the viewport, and
+ * again when it changes. Null for any other value, and for a property that takes no length.
  */
-export function boundEm(prop: string, text: string, on?: string): DeferredDeclaration | null {
-  const match = EM.exec(text);
-  if (!match || boundKind(prop) !== 'length') return null;
+export function boundRelativeLength(
+  prop: string,
+  text: string,
+  on?: string,
+): DeferredDeclaration | null {
+  const match = RELATIVE_LENGTH.exec(text);
+  const kind = boundKind(prop);
+  if (!match || (kind !== 'length' && kind !== 'lineHeight')) return null;
   return {
     props: [prop],
     ...(on === undefined ? {} : { on }),
-    compute: { unit: 'em', factor: Number(match[1]) },
+    compute: { unit: match[2]!.toLowerCase() as RelativeUnit, factor: Number(match[1]) },
   };
 }
 
