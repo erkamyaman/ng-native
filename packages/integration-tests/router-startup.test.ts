@@ -56,6 +56,9 @@ it('keeps a guard redirect on the first navigation when a screen is pushed befor
   // A root guard that sends the app elsewhere - to sign in, say - cancels the first navigation
   // with a redirect and starts another. A push waiting for the first navigation that went on
   // that cancel superseded the redirect, and the pushed screen opened alone, past the guard.
+  // The guard redirects when the test lets it, so the push is sure to start while it holds.
+  let redirect!: () => void;
+  const guarded = new Promise<void>((resolve) => (redirect = resolve));
   const routes: Routes = [
     {
       path: '',
@@ -63,7 +66,7 @@ it('keeps a guard redirect on the first navigation when a screen is pushed befor
       canActivate: [
         () => {
           const router = inject(Router);
-          return wait(30).then(() => router.parseUrl('/welcome'));
+          return guarded.then(() => router.parseUrl('/welcome'));
         },
       ],
     },
@@ -80,7 +83,13 @@ it('keeps a guard redirect on the first navigation when a screen is pushed befor
     if (event instanceof NavigationEnd) landed.push(event.urlAfterRedirects);
   });
   assert.equal(router.navigated, false, 'the first navigation is still in its guard');
-  await injector.get(NativeNavigation).push('/editor');
+  let pushed = false;
+  const push = injector.get(NativeNavigation).push('/editor');
+  void push.then(() => (pushed = true));
+  await settle();
+  assert.equal(pushed, false, 'the push waits while the guard holds');
+  redirect();
+  await push;
   for (let turn = 0; turn < 4; turn++) await settle();
   assert.deepEqual(landed, ['/welcome', '/editor'], 'the redirect lands, then the push');
   const screens = flatten(app.fabric.committed).filter((n) => n.viewName === 'RNSScreen');
