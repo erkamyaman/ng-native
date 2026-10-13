@@ -9,9 +9,11 @@ import assert from 'node:assert/strict';
 import { afterEach, before, it } from 'node:test';
 import { inject, type Type } from '@angular/core';
 import { NavigationEnd, Router, type Routes } from '@angular/router';
+import { DeepLinks } from '@ng-native/device';
 import { cleanup, render, settle, type FakeFabricNode } from '@ng-native/testing';
 import { NativeNavigation } from '../router/src/native-navigation.ts';
-import { provideNativeRouter } from '../router/src/provide-native-router.ts';
+import { provideNativeRouter, withLinkParent } from '../router/src/provide-native-router.ts';
+import { ROUTE_PARKING } from '../router/src/route-parking.ts';
 import { compileFixture } from './compile.ts';
 
 afterEach(cleanup);
@@ -95,4 +97,86 @@ it('keeps a guard redirect on the first navigation when a screen is pushed befor
   const screens = flatten(app.fabric.committed).filter((n) => n.viewName === 'RNSScreen');
   assert.equal(screens.length, 2, 'the redirect target, and the screen pushed above it');
   assert.match(JSON.stringify(screens[0]), /"text":"home"/);
+});
+
+/** Routes whose root guard takes a moment, then sends the app to `/welcome`, as a sign-in does. */
+const redirecting = (): Routes => [
+  {
+    path: '',
+    component: mod['GuardHome'] as Type<unknown>,
+    canActivate: [
+      () => {
+        const router = inject(Router);
+        return wait(30).then(() => router.parseUrl('/welcome'));
+      },
+    ],
+  },
+  { path: 'welcome', component: mod['GuardHome'] as Type<unknown> },
+  ...(mod['guardRoutes'] as Routes).filter((route) => route.path !== ''),
+];
+
+/** The app with a link source to deliver through, and every url a navigation landed on. */
+async function launched(providers: unknown[]) {
+  let deliver: (url: string) => void = () => {};
+  const app = await render(mod['GuardShell'] as Type<unknown>, {
+    providers: [
+      ...(providers as never[]),
+      {
+        provide: DeepLinks.SOURCE,
+        useValue: {
+          launchUrl: () => Promise.resolve(null),
+          subscribe: (listener: (url: string) => void) => ((deliver = listener), () => {}),
+          open: () => {},
+        },
+      },
+    ],
+  });
+  const router = app.componentRef.injector.get(Router);
+  const landed: string[] = [];
+  router.events.subscribe((event) => {
+    if (event instanceof NavigationEnd) landed.push(event.urlAfterRedirects);
+  });
+  assert.equal(router.navigated, false, 'the first navigation is still in its guard');
+  const arrived = async () => {
+    await wait(100);
+    for (let turn = 0; turn < 4; turn++) await settle();
+    return landed;
+  };
+  return { deliver: (url: string) => deliver(url), arrived };
+}
+
+it('keeps a guard redirect when a link arrives before it lands', async () => {
+  // A link is a push, and waits as one does.
+  const app = await launched([provideNativeRouter(redirecting())]);
+  app.deliver('app://editor');
+  assert.deepEqual(await app.arrived(), ['/welcome', '/editor']);
+});
+
+it('keeps it when links have a parent page, which is another way in for a link', async () => {
+  // `withLinkParent` follows a link through the router itself, with a wait of its own.
+  const app = await launched([
+    provideNativeRouter(
+      redirecting(),
+      withLinkParent(() => null),
+    ),
+  ]);
+  app.deliver('app://editor');
+  assert.deepEqual(await app.arrived(), ['/welcome', '/editor']);
+});
+
+it('keeps it when a reload left a page to come back to', async () => {
+  // Development, as an app that reloads itself is: a release build has no history to leave.
+  (globalThis as { __DEV__?: boolean }).__DEV__ = true;
+  try {
+    const app = await launched([
+      provideNativeRouter(redirecting()),
+      {
+        provide: ROUTE_PARKING,
+        useValue: { park: async () => {}, collect: async () => [{ url: '/editor' }] },
+      },
+    ]);
+    assert.deepEqual(await app.arrived(), ['/welcome', '/editor']);
+  } finally {
+    delete (globalThis as { __DEV__?: boolean }).__DEV__;
+  }
 });

@@ -2,4 +2,4 @@
 __default__: patch
 ---
 
-A screen pushed while the app's first navigation is still running, such as a notification tapped at launch or a deep link, now waits for a root guard's redirect to land instead of cancelling it. Before, the redirect was dropped and the pushed screen opened alone, past the guard that would have sent the app to sign in.
+A root guard's redirect at launch, such as one that sends the app to sign in, now lands before anything that arrives while it is still running: a screen pushed or presented, a deep link (with or without `withLinkParent`), or a page restored after a reload in development. Before, each of these cancelled the redirect and opened alone, past the guard.
