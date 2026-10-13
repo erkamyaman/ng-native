@@ -354,12 +354,7 @@ export class NativeNavigation {
   private firstNavigation(): Promise<void> {
     return new Promise((resolve) => {
       const events = this.router.events.subscribe((event) => {
-        if (
-          (event instanceof NavigationEnd ||
-            event instanceof NavigationCancel ||
-            event instanceof NavigationError) &&
-          !carriesOn(event)
-        ) {
+        if (ended(event) && !carriesOn(event)) {
           events.unsubscribe();
           resolve();
         }
