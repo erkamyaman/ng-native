@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { afterEach, before, describe, it } from 'node:test';
-import type { Signal, Type } from '@angular/core';
+import { ErrorHandler, type Signal, type Type } from '@angular/core';
 import { Router, type Routes } from '@angular/router';
 import { cleanup, render, settle } from '@ng-native/testing';
 import { NativeNavigation } from '../router/src/native-navigation.ts';
@@ -21,7 +21,11 @@ before(async () => {
 
 async function boot() {
   const app = await render(mod['Shell'] as Type<unknown>, {
-    providers: [provideNativeRouter(mod['routes'] as Routes)],
+    providers: [
+      provideNativeRouter(mod['routes'] as Routes),
+      // A page that fails to render is reported here, and the navigation to it rejects.
+      { provide: ErrorHandler, useValue: { handleError: () => {} } },
+    ],
   });
   await settle();
   const router = app.componentRef.injector.get(Router);
@@ -53,5 +57,14 @@ describe('the tab under a presented screen', () => {
     await settle();
     assert.equal(router.url, '/home');
     assert.equal(home.inFront(), true, 'and in front again once the sheet is gone');
+  });
+
+  it('leaves home in front when the page presented over it fails to render', async () => {
+    // Nothing covers home then: the page is gone before it was ever shown.
+    const { router, navigation, home } = await boot();
+    await assert.rejects(navigation.present('/library/broken', { as: 'formSheet' }), /failed/);
+    await settle();
+    assert.equal(router.url, '/home');
+    assert.equal(home.inFront(), true);
   });
 });
