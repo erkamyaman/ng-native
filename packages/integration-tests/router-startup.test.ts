@@ -99,15 +99,22 @@ it('keeps a guard redirect on the first navigation when a screen is pushed befor
   assert.match(JSON.stringify(screens[0]), /"text":"home"/);
 });
 
-/** Routes whose root guard takes a moment, then sends the app to `/welcome`, as a sign-in does. */
-const redirecting = (): Routes => [
+/** A root guard's redirect that waits until the test releases it. */
+function held() {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  return { gate, release };
+}
+
+/** Routes whose root guard waits on `gate`, then sends the app to `/welcome`, as a sign-in does. */
+const redirecting = (gate: Promise<void>): Routes => [
   {
     path: '',
     component: mod['GuardHome'] as Type<unknown>,
     canActivate: [
       () => {
         const router = inject(Router);
-        return wait(30).then(() => router.parseUrl('/welcome'));
+        return gate.then(() => router.parseUrl('/welcome'));
       },
     ],
   },
@@ -147,20 +154,24 @@ async function launched(providers: unknown[]) {
 
 it('keeps a guard redirect when a link arrives before it lands', async () => {
   // A link is a push, and waits as one does.
-  const app = await launched([provideNativeRouter(redirecting())]);
+  const hold = held();
+  const app = await launched([provideNativeRouter(redirecting(hold.gate))]);
   app.deliver('app://editor');
+  hold.release();
   assert.deepEqual(await app.arrived(), ['/welcome', '/editor']);
 });
 
 it('keeps it when links have a parent page, which is another way in for a link', async () => {
   // `withLinkParent` follows a link through the router itself, with a wait of its own.
+  const hold = held();
   const app = await launched([
     provideNativeRouter(
-      redirecting(),
+      redirecting(hold.gate),
       withLinkParent(() => null),
     ),
   ]);
   app.deliver('app://editor');
+  hold.release();
   assert.deepEqual(await app.arrived(), ['/welcome', '/editor']);
 });
 
@@ -168,13 +179,15 @@ it('keeps it when a reload left a page to come back to', async () => {
   // Development, as an app that reloads itself is: a release build has no history to leave.
   (globalThis as { __DEV__?: boolean }).__DEV__ = true;
   try {
+    const hold = held();
     const app = await launched([
-      provideNativeRouter(redirecting()),
+      provideNativeRouter(redirecting(hold.gate)),
       {
         provide: ROUTE_PARKING,
         useValue: { park: async () => {}, collect: async () => [{ url: '/editor' }] },
       },
     ]);
+    hold.release();
     assert.deepEqual(await app.arrived(), ['/welcome', '/editor']);
   } finally {
     delete (globalThis as { __DEV__?: boolean }).__DEV__;
