@@ -195,7 +195,7 @@ describe('asking for a screen', () => {
 
 describe('nativeRouterLink', () => {
   let mod: Record<string, unknown>;
-  let navigated: { commands: unknown[]; extras: Record<string, unknown> }[];
+  let navigated: { method: string; commands: unknown; extras: Record<string, unknown> }[];
   let fabric: FakeFabric;
 
   /** The pressable around a label: the label is a raw text inside a text inside it. */
@@ -207,6 +207,12 @@ describe('nativeRouterLink', () => {
   /** The route the links sit on, which a relative link resolves against. */
   const here = { snapshot: {} } as unknown as ActivatedRoute;
 
+  /** A stand-in that records which of its methods a link asked for, and with what. */
+  const recorded = (method: string) => (commands: unknown, extras: Record<string, unknown>) => {
+    navigated.push({ method, commands, extras });
+    return Promise.resolve(true);
+  };
+
   before(async () => {
     mod = await compileFixture('fixtures/router-link.ts');
   });
@@ -216,13 +222,8 @@ describe('nativeRouterLink', () => {
     const app = await render(mod['Links'] as Type<unknown>, {
       providers: [
         {
-          provide: Router,
-          useValue: {
-            navigate: (commands: unknown[], extras: Record<string, unknown>) => {
-              navigated.push({ commands, extras });
-              return Promise.resolve(true);
-            },
-          },
+          provide: NativeNavigation,
+          useValue: { push: recorded('push'), replace: recorded('replace') },
         },
         { provide: ActivatedRoute, useValue: here },
       ],
@@ -236,31 +237,27 @@ describe('nativeRouterLink', () => {
     // `replaceUrl` alone swaps the history entry and pushes a screen anyway: the one it meant to
     // replace stays mounted underneath, and a swipe back lands on it.
     await fireEvent.press(labelled('replace'));
-    assert.equal(navigated[0]!.extras['replaceUrl'], true);
-    const state = navigated[0]!.extras['state'] as Record<string, unknown> | undefined;
-    assert.deepEqual(state?.[NATIVE_INTENT], { stack: 'replace' });
+    assert.equal(navigated[0]!.method, 'replace');
+    assert.equal(navigated[0]!.commands, '/replaced');
   });
 
   it('reads a bare replace attribute as replace, as a boolean attribute is read', async () => {
     await fireEvent.press(labelled('bare replace'));
-    assert.equal(navigated[0]!.extras['replaceUrl'], true);
-    const state = navigated[0]!.extras['state'] as Record<string, unknown> | undefined;
-    assert.deepEqual(state?.[NATIVE_INTENT], { stack: 'replace' });
+    assert.equal(navigated[0]!.method, 'replace');
   });
 
   it('resolves a relative link against the route it is on, keeping the extras it was given', async () => {
     await fireEvent.press(labelled('relative'));
-    assert.deepEqual(navigated[0]!.commands, ['detail']);
+    assert.equal(navigated[0]!.commands, 'detail');
     assert.equal(navigated[0]!.extras['relativeTo'], here);
-    assert.equal(navigated[0]!.extras['replaceUrl'], true, 'its own extras win over the default');
+    assert.equal(navigated[0]!.method, 'replace', 'its own extras win over the default');
   });
 
-  it('marks a plain press as a push', async () => {
+  it('pushes on a plain press, the url as written and resolved against no route', async () => {
     await fireEvent.press(labelled('push'));
-    assert.deepEqual(navigated[0]!.commands, ['/pushed']);
-    assert.notEqual(navigated[0]!.extras['replaceUrl'], true);
-    const state = navigated[0]!.extras['state'] as Record<string, unknown> | undefined;
-    assert.deepEqual(state?.[NATIVE_INTENT], { stack: 'push' });
+    assert.equal(navigated[0]!.method, 'push');
+    assert.equal(navigated[0]!.commands, '/pushed');
+    assert.equal(navigated[0]!.extras['relativeTo'], null);
   });
 });
 

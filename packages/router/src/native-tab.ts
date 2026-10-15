@@ -41,6 +41,7 @@ import {
 import { nativePlatform, type EngineNode, HostEngine } from '@ng-native/fabric';
 import { NATIVE_TAB_DEFAULTS } from './native-bar-defaults.ts';
 import { ownHost } from './own-host.ts';
+import { optionalBoolean } from './transforms.ts';
 import { SVG_ICON_HOST, SVG_ICON_RENDERER } from './svg-icons.ts';
 
 /**
@@ -82,6 +83,12 @@ export type TabSystemItem =
   | 'recents'
   | 'search'
   | 'topRated';
+
+/**
+ * iOS: what a tab is for, beyond its bar item. `search` makes it a `UISearchTab`, which iOS 26
+ * draws apart from the others: a circular button at the trailing end of the bar.
+ */
+export type TabRole = 'none' | 'search';
 
 export type TabBarBlurEffect =
   | 'none'
@@ -252,6 +259,8 @@ export function screenKeyOf(path: string): string {
     '[badgeValue]': 'badge()',
     '[tabBarItemAccessibilityLabel]': 'accessibilityLabel()',
     '[systemItem]': 'systemItem()',
+    '[tabRole]': 'role()',
+    '[automaticallyActivatesSearch]': 'automaticallyActivatesSearch()',
     // `isTitleUndefined` is what `TabsScreen.ios.tsx` derives from the title, and it is not a
     // synonym for "no title": with a title set and this left at its default, the item renders as
     // an icon with a gap where the label belongs.
@@ -312,6 +321,25 @@ export class NativeTab implements OnInit {
 
   /** One of Apple's standard items, which supplies its own icon and title. */
   readonly systemItem = input<TabSystemItem>();
+
+  /**
+   * iOS 26.1 and later: `search` makes this the bar's search tab, a `UISearchTab`, set apart at the
+   * trailing end. Needs react-native-screens 4.29 or later; an older one ignores it.
+   *
+   * Native reads it once, when the tab is created, and asserts in a debug build if it changes
+   * afterwards, so bind a value that does not. A bar has at most one search tab. Built with the
+   * iOS 26 SDK, as Expo Go is, `systemItem="search"` already gets the detached button; an app
+   * built with the iOS 27 SDK needs this, and on iOS 27 `automaticallyActivatesSearch` as well.
+   */
+  readonly role = input<TabRole>();
+
+  /**
+   * iOS 26.1 and later, for a `role="search"` tab: selecting the tab focuses the search field of
+   * the `<native-search-bar>` in the header of the stack inside it, which that stack has to have.
+   * On iOS 27 the tab is detached only while this is on, and the tab's first visit does not focus
+   * the field. Expo Go's react-native-screens is older and ignores it.
+   */
+  readonly automaticallyActivatesSearch = input(undefined, { transform: optionalBoolean });
 
   /** The badge on the item: a count, or a single character for a dot. */
   readonly badge = input<string>();

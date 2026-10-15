@@ -9,6 +9,7 @@ import { after, afterEach, before, describe, it } from 'node:test';
 import type { Type } from '@angular/core';
 import { registerPlatformComponents } from '@ng-native/fabric';
 import { cleanup, fireEvent, render, type FakeFabricNode } from '@ng-native/testing';
+import { provideNativeRouter } from '../router/src/provide-native-router.ts';
 import { registerScreenComponents } from '../router/src/screens.ts';
 import { compileFixture } from './compile.ts';
 
@@ -18,6 +19,8 @@ interface Host {
   filtered: number;
   composed: number;
 }
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const HOST = 'ViewManagerAdapter_ExpoRouterToolbarModule_RouterToolbarHostView';
 const ITEM = 'ViewManagerAdapter_ExpoRouterToolbarModule_RouterToolbarItemView';
@@ -36,8 +39,6 @@ describe('native toolbar', () => {
     registerPlatformComponents('ios');
     registerScreenComponents();
   });
-
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   async function boot() {
     const { fabric, instance, fixture } = await render(Toolbar);
@@ -163,5 +164,37 @@ describe('native toolbar', () => {
     } finally {
       registerPlatformComponents('ios');
     }
+  });
+});
+
+/**
+ * A large title collapses into the bar only when the page's scroll view is the screen's first
+ * subview: UIKit, and RNSScreen after it, look for the scroll view down the first subviews. The
+ * toolbar host is a view of its own, so written ahead of the scroll view, as the header guide's
+ * Inbox writes it, it would take that place.
+ */
+describe('native toolbar on a screen with a large title', () => {
+  let mod: Record<string, unknown>;
+
+  before(async () => {
+    registerScreenComponents();
+    mod = await compileFixture('fixtures/toolbar.ts');
+  });
+
+  afterEach(() => cleanup());
+
+  it('commits after the scroll view, which stays the screen first subview', async () => {
+    const app = await render(mod['ToolbarShell'] as Type<unknown>, {
+      providers: [
+        provideNativeRouter([{ path: '', component: mod['ToolbarInbox'] as Type<unknown> }]),
+      ],
+    });
+    await settle();
+
+    const screen = app.fabric.find('RNSScreen')!;
+    assert.deepEqual(
+      screen.children.map((node) => node.viewName),
+      ['ScrollView', 'RNSScreenStackHeaderConfig', HOST],
+    );
   });
 });

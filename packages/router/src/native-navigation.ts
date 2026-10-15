@@ -317,22 +317,26 @@ export class NativeNavigation {
       // The tab is open once the bar is back, so the page goes straight onto it, unless it is the
       // page the tab was left on and nothing more, a query or a fragment, is asked of it.
       const asked = pathOf(left) !== path || asksMore(commands, extras);
-      return this.router
-        .navigateByUrl(left)
-        .then((arrived) => (arrived && asked ? navigate() : arrived));
+      // A guard that redirects elsewhere still resolves true, so the tab must be in front now.
+      return this.router.navigateByUrl(left).then((arrived) => {
+        const there =
+          arrived && !this.outlets.coveredTabAt(path) && !this.outlets.inTabBehind(path);
+        return there && asked ? navigate() : there;
+      });
     }
     const tab = this.outlets.unopenedTabOf(path);
     if (!tab) return navigate();
-    return this.router.navigateByUrl(tab).then((arrived) => (arrived ? navigate() : false));
+    return this.router
+      .navigateByUrl(tab)
+      .then((arrived) => (arrived && !this.outlets.unopenedTabOf(path) ? navigate() : false));
   }
 
   /** The path the commands lead to, without its query and fragment. */
   private pathFor(commands: NavigationCommands, extras: NavigationExtras): string {
-    const url =
-      typeof commands === 'string'
-        ? commands
-        : this.router.serializeUrl(this.router.createUrlTree([...commands], extras));
-    return pathOf(url);
+    if (typeof commands === 'string' && commands.startsWith('/')) return pathOf(commands);
+    // Resolved as `go` navigates them: a relative string against `relativeTo`, as a command.
+    const list = typeof commands === 'string' ? [pathOf(commands)] : [...commands];
+    return pathOf(this.router.serializeUrl(this.router.createUrlTree(list, extras)));
   }
 
   /**

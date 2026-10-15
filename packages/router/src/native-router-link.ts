@@ -9,9 +9,8 @@
  * depend on the components package.
  */
 import { Directive, booleanAttribute, inject, input } from '@angular/core';
-import { ActivatedRoute, Router, type NavigationExtras } from '@angular/router';
-import { NATIVE_INTENT } from './native-navigation.ts';
-import { leavingPresented } from './presented-route.ts';
+import { ActivatedRoute, type NavigationExtras } from '@angular/router';
+import { NativeNavigation } from './native-navigation.ts';
 
 @Directive({
   selector: '[nativeRouterLink]',
@@ -25,30 +24,28 @@ export class NativeRouterLink {
   /** Replace the current screen rather than pushing a new one. */
   readonly replace = input(false, { transform: booleanAttribute });
 
-  private readonly router = inject(Router);
+  private readonly navigation = inject(NativeNavigation);
   private readonly route = inject(ActivatedRoute, { optional: true });
 
   protected navigate(): void {
     const target = this.nativeRouterLink();
-    const own = this.extras();
+    const first: unknown = Array.isArray(target) ? target[0] : target;
+    // An absolute link leads to the same place from anywhere. Resolved against a route inside a
+    // presented page, it would keep that page's outlet in the url, and the page on screen.
+    const absolute = typeof first === 'string' && first.startsWith('/');
     const extras: NavigationExtras = {
-      relativeTo: this.route,
+      relativeTo: absolute ? null : this.route,
       replaceUrl: this.replace(),
-      ...own,
+      ...this.extras(),
     };
-    // The stack reads the intent, as `NativeNavigation` sets it. `replaceUrl` only swaps the
-    // history entry: without `replace` the replaced screen stays mounted underneath, and a swipe
-    // back lands on a page the history no longer has. So the intent follows `replaceUrl` as the
-    // navigation has it, `[extras]` included, not the `replace` input alone. Without `push` a
-    // link to a url already on the stack goes back to that screen rather than putting a new one
-    // over it.
-    const stack = extras.replaceUrl ? 'replace' : 'push';
-    extras.state = { ...own?.state, [NATIVE_INTENT]: { stack } };
-
-    const commands = Array.isArray(target) ? [...target] : [target];
-    const leaving = leavingPresented(this.router, commands, extras);
-    void (leaving
-      ? this.router.navigateByUrl(leaving, extras)
-      : this.router.navigate(commands, extras));
+    // `replaceUrl` only swaps the history entry: without a replace the replaced screen stays
+    // mounted underneath, and a swipe back lands on a page the history no longer has. So the link
+    // replaces when the navigation has `replaceUrl`, `[extras]` included, not the `replace` input
+    // alone. Everything else is a push, the same one `NativeNavigation.push()` makes: into a tab
+    // nobody has opened, over the tab's first screen, and out of a presented page.
+    const commands = Array.isArray(target) ? [...target] : target;
+    void (extras.replaceUrl
+      ? this.navigation.replace(commands, extras)
+      : this.navigation.push(commands, extras));
   }
 }
