@@ -155,4 +155,8 @@ export function registerScreenComponents(): void {
   // Nothing in `RNSScreen.mm` updates the bar when its config is unmounted, so a header an `@if`
   // takes away leaves a config behind that hides the bar, and one that comes back adopts it.
   registerHoist('native-header', 'screen', { standIn: { hidden: true } });
+  // The toolbar host is a view of its own, absolute and out of the layout, that finds its screen
+  // through its superviews. Written ahead of a page's scroll view it would be the screen's first
+  // subview, where UIKit looks for the scroll view a large title collapses against.
+  registerHoist('native-toolbar', 'screen');
 }
