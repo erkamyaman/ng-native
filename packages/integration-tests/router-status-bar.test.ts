@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { afterEach, before, beforeEach, describe, it } from 'node:test';
-import type { Type } from '@angular/core';
+import type { Type, WritableSignal } from '@angular/core';
 import { Router, type Routes } from '@angular/router';
 import { ColorScheme, StatusBar, type Scheme, type StatusBarSource } from '@ng-native/device';
 import { cleanup, render, settle, type FakeFabric, type FakeFabricNode } from '@ng-native/testing';
@@ -168,6 +168,19 @@ describe("the app's status bar claim on each screen", () => {
         { style: 'dark', hidden: false },
         { style: 'light', hidden: true },
       ]);
+    });
+
+    it('puts the claim back on a screen whose page lets go of its own style', async () => {
+      const own = mod['ownStyle'] as WritableSignal<string | undefined>;
+      own.set('light');
+      bar.set({ style: 'auto' });
+      await nav.push('/own');
+      await idle();
+      assert.equal(screens().at(-1)!.style, 'light');
+
+      own.set(undefined);
+      await idle();
+      assert.equal(screens().at(-1)!.style, 'dark', 'the claim, not the light fallback');
     });
 
     it("keeps a page's own style that matches the claim when the claim changes", async () => {

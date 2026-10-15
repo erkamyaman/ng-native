@@ -213,13 +213,16 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       else if (event instanceof NavigationError) this.rollBack(event.id);
     });
 
+    const carryAll = (claim: ReturnType<StatusBar['forScreens']>) => {
+      for (const entry of this.entries) this.carryStatusBar(entry.screen, claim);
+      if (this.presentedPage) this.carryStatusBar(this.presentedPage.screen, claim);
+    };
     effect(() => {
       const claim = this.statusBar.forScreens();
-      untracked(() => {
-        for (const entry of this.entries) this.carryStatusBar(entry.screen, claim);
-        if (this.presentedPage) this.carryStatusBar(this.presentedPage.screen, claim);
-      });
+      untracked(() => carryAll(claim));
     });
+    // A page's host binding that lets go of its own value, back to undefined, changes no claim.
+    afterEveryRender(() => carryAll(untracked(this.statusBar.forScreens)));
 
     const unhold = this.holder ? this.holdRefusals(this.holder) : undefined;
     const unpresent = this.takePresentedPages(back);

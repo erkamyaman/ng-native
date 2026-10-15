@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, signal } from '@angular/core';
 import type { Routes } from '@angular/router';
 import { Text } from '../../components/src/text.ts';
 import { NativeStackOutlet } from '../../router/src/native-stack-outlet.ts';
@@ -34,10 +34,25 @@ export class Video {}
 })
 export class Reader {}
 
+/** What the `x-own` page binds as its own style, set from the test. */
+export const ownStyle = signal<string | undefined>('light');
+
+/** A page whose own style can come and go. */
+@Component({
+  selector: 'x-own',
+  imports: [Text],
+  host: { '[statusBarStyle]': 'style()' },
+  template: `<text>own</text>`,
+})
+export class Own {
+  protected readonly style = ownStyle;
+}
+
 export const routes: Routes = [
   { path: '', component: Home },
   { path: 'photo', component: List },
   { path: 'list', component: List },
   { path: 'video', component: Video },
   { path: 'reader', component: Reader },
+  { path: 'own', component: Own },
 ];
