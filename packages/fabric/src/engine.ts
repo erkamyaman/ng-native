@@ -1790,6 +1790,7 @@ export function registerHoist(
   HOIST_TARGETS.add(ancestorName);
   if (options.standIn) STAND_INS[elementName] = options.standIn;
   if (options.stopAt) HOIST_STOPS[elementName] = new Set(options.stopAt);
+  else delete HOIST_STOPS[elementName];
 }
 
 export interface HoistOptions {
