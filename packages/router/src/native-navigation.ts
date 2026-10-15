@@ -323,7 +323,9 @@ export class NativeNavigation {
     }
     const tab = this.outlets.unopenedTabOf(path);
     if (!tab) return navigate();
-    return this.router.navigateByUrl(tab).then((arrived) => (arrived ? navigate() : false));
+    return this.router
+      .navigateByUrl(tab)
+      .then((arrived) => (arrived && !this.outlets.unopenedTabOf(path) ? navigate() : false));
   }
 
   /** The path the commands lead to, without its query and fragment. */
