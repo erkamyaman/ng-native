@@ -1765,6 +1765,8 @@ const SCROLL_VIEWS = new Set(['ScrollView', 'AndroidHorizontalScrollView']);
 const HOISTS: Record<string, string> = {};
 /** The `ancestorName`s, so a commit asks only those nodes what to hoist into them. */
 const HOIST_TARGETS = new Set<string>();
+/** The `ancestorName`s that commit only what is hoisted into them. See `HoistOptions.only`. */
+const HOIST_ONLY = new Set<string>();
 
 /**
  * Commit every `elementName` as a direct child of its nearest `ancestorName`, wherever the
@@ -1787,6 +1789,7 @@ export function registerHoist(
   HOISTS[elementName] = ancestorName;
   HOIST_TARGETS.add(ancestorName);
   if (options.standIn) STAND_INS[elementName] = options.standIn;
+  if (options.only) HOIST_ONLY.add(ancestorName);
 }
 
 export interface HoistOptions {
@@ -1801,6 +1804,16 @@ export interface HoistOptions {
    * another, so what the native side sees is one config that is updated, never one that goes.
    */
   standIn?: Record<string, unknown>;
+  /**
+   * Have the ancestor commit the elements hoisted into it and nothing else, in the order they
+   * were written.
+   *
+   * For a native component that takes children of one type only. `RNSScreenStackHeaderConfig`
+   * takes `RNSScreenStackHeaderSubview`s: iOS logs an error and drops any other child, and Android
+   * throws. A header item written inside a component of the header reached it inside that
+   * component's host view.
+   */
+  only?: boolean;
 }
 
 /** Element name -> the props it leaves behind in its ancestor. See `HoistOptions.standIn`. */
@@ -5970,6 +5983,7 @@ export class Engine implements HostEngine {
     style: StyleCache | null,
   ): FabricNode[] {
     const context = style?.context;
+    if (HOIST_ONLY.has(node.tag)) return this.reconcileOnlyHoisted(node);
     if (HOIST_TARGETS.has(node.tag)) return this.reconcileHoistTarget(node, context);
     const handles: FabricNode[] = [];
     for (const child of node.children) {
@@ -6129,6 +6143,32 @@ export class Engine implements HostEngine {
       }
     }
     for (const child of direct) handles.push(this.land(node, child, landed));
+    if (node.kept) this.standIn(node, landed, handles);
+    return handles;
+  }
+
+  /**
+   * `reconcileHoistTarget` for a node that commits only what is hoisted into it
+   * (`HoistOptions.only`): those nodes, in the order they were written, and none of its own.
+   */
+  private reconcileOnlyHoisted(node: EngineNode): FabricNode[] {
+    const handles: FabricNode[] = [];
+    const hoisted = this.hoistedInto(node);
+    const landed = new Set<string>();
+    for (const child of node.children) {
+      if (child.kind === 'anchor' || this.committedElsewhere(child) || this.withheld(child)) {
+        continue;
+      }
+      if (this.hoisted.has(child)) {
+        handles.push(this.land(node, child, landed));
+        continue;
+      }
+      for (const written of hoisted?.get(child) ?? []) {
+        if (!this.undisplayedUnder(node, written)) handles.push(this.land(node, written, landed));
+      }
+      // Not committed, so the marks a change left on the way down to it are cleared here.
+      settlePaths(child);
+    }
     if (node.kept) this.standIn(node, landed, handles);
     return handles;
   }

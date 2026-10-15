@@ -155,4 +155,7 @@ export function registerScreenComponents(): void {
   // Nothing in `RNSScreen.mm` updates the bar when its config is unmounted, so a header an `@if`
   // takes away leaves a config behind that hides the bar, and one that comes back adopts it.
   registerHoist('native-header', 'screen', { standIn: { hidden: true } });
+  // The header config takes header items and nothing else, so one written inside a component of
+  // the header commits as the config's child, not inside the component's view.
+  registerHoist('native-header-item', 'native-header', { only: true });
 }

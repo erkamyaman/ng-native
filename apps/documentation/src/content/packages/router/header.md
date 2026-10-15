@@ -31,6 +31,10 @@ direct children, so that is where it is committed: just after the part of the pa
 in, or after the rest of the page when it was written at the top level. Everything else about it,
 its bindings and its `@if` included, behaves where you wrote it. Write one header per screen.
 
+Header items work the same way inside the header. A `<native-header-item>` can sit in a component
+you put in the header, such as a set of actions several pages share, and is still committed as a
+child of the header, in the order it was written. The header takes nothing but its items.
+
 ## Large titles
 
 A large title collapses into the bar as the page scrolls when the page's scroll view comes first
