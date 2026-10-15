@@ -112,7 +112,7 @@ export function statusBarSource(): StatusBarSource {
     get height() {
       return StatusBar.currentHeight;
     },
-    screensSetBar: native.Platform?.OS === 'android',
+    screensSetBar: android,
   };
 }
 
