@@ -361,6 +361,22 @@ describe('the status bar source', () => {
     assert.deepEqual(calls, [['setBarStyle', 'light-content', undefined]]);
   });
 
+  it('reads a stand-in with no Platform as neither platform, without throwing', () => {
+    const calls: unknown[][] = [];
+    const native = {
+      StatusBar: {
+        setBackgroundColor: (...args: unknown[]) => calls.push(['setBackgroundColor', ...args]),
+        setTranslucent: (...args: unknown[]) => calls.push(['setTranslucent', ...args]),
+      },
+    };
+    withNative(native, () => {
+      const source = statusBarSource();
+      source.setBackgroundColor('#000000', false);
+      source.setTranslucent(true);
+    });
+    assert.deepEqual(calls, []);
+  });
+
   it('says once on Android that the background and translucency do nothing edge-to-edge', () => {
     const warnings: unknown[] = [];
     const warn = console.warn;

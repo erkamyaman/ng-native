@@ -8,7 +8,9 @@ summary: What changes on Android now that every app draws under the status bar a
 An Android app built with Expo SDK 57 targets Android SDK 35 or later (36 by default), so it always
 draws edge-to-edge: the app's window runs under the status bar at the top and the navigation bar at
 the bottom, as an iOS app runs under the notch and the home indicator. React Native turns it on for
-any app that targets SDK 35 or later, and Expo's `app.json` has no option to turn it off.
+any app that targets SDK 35 or later, and Expo's `app.json` has no option to turn it off. The one
+way out is a theme that sets `android:windowOptOutEdgeToEdgeEnforcement`, which Android 16 ignores
+and earlier versions honor; this page assumes no such theme.
 
 ## Options that do nothing
 

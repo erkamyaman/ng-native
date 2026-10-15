@@ -81,7 +81,7 @@ export function statusBarSource(): StatusBarSource {
   }
 
   const { StatusBar } = native;
-  const android = native.Platform.OS === 'android';
+  const android = native.Platform?.OS === 'android';
   const warned = new Set<string>();
   return {
     setStyle: (style, animated) => StatusBar.setBarStyle(BAR_STYLES[style], animated),
