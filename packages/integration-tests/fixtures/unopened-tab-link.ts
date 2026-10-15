@@ -17,6 +17,7 @@ export { Shell } from './tab-stacks.ts';
     <pressable testID="query" nativeRouterLink="/library/7?from=home"
       ><text>with query</text></pressable
     >
+    <pressable testID="relative" nativeRouterLink="../library/7"><text>relative</text></pressable>
   `,
 })
 export class Home {}

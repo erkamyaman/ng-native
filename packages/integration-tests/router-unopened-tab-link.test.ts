@@ -47,6 +47,17 @@ describe('a link into a tab nobody has opened', () => {
     assert.equal(router.url, '/library');
   });
 
+  it("puts the tab's first screen under a page a relative link leads to", async () => {
+    await fireEvent.press(screen.getByTestId('relative'));
+    await idle();
+    assert.equal(router.url, '/library/7');
+    assert.ok(screen.queryByText('library'), 'the Library screen is under the album');
+
+    navigation.back();
+    await idle();
+    assert.equal(router.url, '/library');
+  });
+
   it('reads a query written into the link as a query, not as part of the path', async () => {
     await fireEvent.press(screen.getByTestId('query'));
     await idle();

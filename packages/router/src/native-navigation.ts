@@ -328,11 +328,10 @@ export class NativeNavigation {
 
   /** The path the commands lead to, without its query and fragment. */
   private pathFor(commands: NavigationCommands, extras: NavigationExtras): string {
-    const url =
-      typeof commands === 'string'
-        ? commands
-        : this.router.serializeUrl(this.router.createUrlTree([...commands], extras));
-    return pathOf(url);
+    if (typeof commands === 'string' && commands.startsWith('/')) return pathOf(commands);
+    // Resolved as `go` navigates them: a relative string against `relativeTo`, as a command.
+    const list = typeof commands === 'string' ? [pathOf(commands)] : [...commands];
+    return pathOf(this.router.serializeUrl(this.router.createUrlTree(list, extras)));
   }
 
   /**
