@@ -309,6 +309,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       inFront,
       PRESENTED,
     );
+    this.carryStatusBar(screen, untracked(this.statusBar.forScreens));
     // Once the page is there to cover it: one that throws on its first render never is, and
     // nothing would put the screen under it back in front.
     this.top?.inFront.set(false);
@@ -423,6 +424,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     const screen = this.createScreen(presentation);
     const inFront = signal(true);
     const { ref, unbind } = this.createPage(component, route, environmentInjector, screen, inFront);
+    this.carryStatusBar(screen, untracked(this.statusBar.forScreens));
     // The page's own host style, including any `position` or inset it declared, has now landed
     // on the screen: put the stack's fill back over it. Per-key, through `setStyle`, so whatever
     // else the page's style set - a background colour, say - still merges and stays.
@@ -742,7 +744,6 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     for (const [prop, value] of Object.entries(presentation ?? {})) {
       if (value !== undefined) this.renderer.setProperty(screen, prop, value);
     }
-    this.carryStatusBar(screen, untracked(this.statusBar.forScreens));
     // Except this one, which is a struct with no default: an edge left out is 0 natively, and
     // `RNSScreenStack` refuses a swipe-back that starts beyond 0 points. -1 is no limit, which is
     // what `Screen.tsx` sends for every edge not given.
@@ -760,6 +761,9 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * its presentation or its page's host bindings. On Android, react-native-screens sets the bar
    * from the screen in front each time one appears, and falls back to light text and shown for a
    * screen without these props, which would undo the claim on every push and pop.
+   *
+   * First called once the page has rendered, so a prop its host bindings set is already there and
+   * counts as the screen's own, even one equal to the claim.
    */
   private carryStatusBar(
     screen: unknown,

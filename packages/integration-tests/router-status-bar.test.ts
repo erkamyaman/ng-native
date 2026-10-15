@@ -41,13 +41,13 @@ describe("the app's status bar claim on each screen", () => {
         hidden: node.props['statusBarHidden'] ?? undefined,
       }));
 
-  const boot = async (screensSetBar: boolean) => {
+  const boot = async (screensSetBar: boolean, fixture = mod) => {
     let scheme: Scheme = 'light';
     const listeners = new Set<(scheme: Scheme) => void>();
     const source: StatusBarSource = { ...quiet, height: undefined, screensSetBar };
-    const app = await render(mod['Shell'] as Type<unknown>, {
+    const app = await render(fixture['Shell'] as Type<unknown>, {
       providers: [
-        provideNativeRouter(mod['routes'] as Routes),
+        provideNativeRouter(fixture['routes'] as Routes),
         { provide: StatusBar.SOURCE, useValue: source },
         {
           provide: ColorScheme.SOURCE,
@@ -169,6 +169,33 @@ describe("the app's status bar claim on each screen", () => {
         { style: 'light', hidden: true },
       ]);
     });
+
+    it("keeps a page's own style that matches the claim when the claim changes", async () => {
+      bar.set({ style: 'auto' });
+      await nav.push('/reader');
+      await idle();
+      assert.equal(screens().at(-1)!.style, 'dark');
+
+      bar.set({ style: 'light' });
+      await idle();
+      assert.deepEqual(
+        screens().map((one) => one.style),
+        ['light', 'dark'],
+        'the claim moves, the page keeps its own',
+      );
+    });
+  });
+
+  it("follows the claim on another tab's page presented over the tab bar", async () => {
+    await boot(true, await compileFixture('fixtures/presented-front.ts'));
+    bar.set({ style: 'auto' });
+    await nav.present('/library/7', { as: 'formSheet' });
+    await idle();
+    assert.equal(screens().at(-1)!.style, 'dark');
+
+    bar.set({ style: 'light' });
+    await idle();
+    assert.equal(screens().at(-1)!.style, 'light', 'the presented page follows the claim');
   });
 
   it('puts nothing on a screen where screens leave the bar alone', async () => {

@@ -25,9 +25,19 @@ export class List {}
 })
 export class Video {}
 
+/** A page whose own style is the one the app's claim resolves to when it opens. */
+@Component({
+  selector: 'x-reader',
+  imports: [Text],
+  host: { '[statusBarStyle]': "'dark'" },
+  template: `<text>reader</text>`,
+})
+export class Reader {}
+
 export const routes: Routes = [
   { path: '', component: Home },
   { path: 'photo', component: List },
   { path: 'list', component: List },
   { path: 'video', component: Video },
+  { path: 'reader', component: Reader },
 ];

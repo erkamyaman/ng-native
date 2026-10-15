@@ -75,8 +75,9 @@ claim applies on every screen. The same goes for `hidden` and `statusBarHidden`.
 `statusBarStyle` and `statusBarHidden`, or, for a screen without them, to light content and shown.
 So the stack outlet from `@ng-native/router` puts the app's claim on every screen that has no style
 or visibility of its own, and keeps it there as the claim changes or goes away. A screen with its
-own `statusBarStyle` or `statusBarHidden`, from its presentation or its page's host bindings, keeps
-it while it is in front, and the claim is back when a screen without one is.
+own `statusBarStyle` or `statusBarHidden`, from its presentation or its page's host bindings, has
+it each time it comes in front, and the claim is back when a screen without one is. A claim that
+changes while such a screen is in front shows at once, until the next screen appears.
 
 ## Off a device and on the web
 
