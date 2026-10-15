@@ -52,6 +52,11 @@ export interface StatusBarSource {
   setTranslucent(translucent: boolean): void;
   /** Android reports one; iOS does not, where the safe-area inset is the number that matters. */
   readonly height: number | undefined;
+  /**
+   * Android: react-native-screens sets the bar again each time a screen appears, from that screen's
+   * own props or, with none, to light text and shown. So a claim has to ride on every screen too.
+   */
+  readonly screensSetBar?: boolean;
 }
 
 /** RN spells the styles for its own platforms; `light` means light *content*, as CSS would. */
@@ -78,6 +83,7 @@ export function statusBarSource(): StatusBarSource {
     get height() {
       return StatusBar.currentHeight;
     },
+    screensSetBar: native.Platform?.OS === 'android',
   };
 }
 
@@ -109,6 +115,20 @@ export class StatusBar {
    * wants is the safe-area top inset, which `SafeArea` has.
    */
   readonly height: Signal<number> = signal(this.source.height ?? 0).asReadonly();
+
+  /**
+   * What a screen with no style or visibility of its own carries, so the claim is still what shows
+   * when it appears. Empty but on Android, where a screen appearing sets the bar from its own props
+   * and falls back to light text otherwise. The router passes it on.
+   */
+  readonly forScreens: Signal<{
+    readonly style?: PlatformStatusBarStyle;
+    readonly hidden?: boolean;
+  }> = computed(() => {
+    if (!this.source.screensSetBar) return {};
+    const { style, hidden } = this.state();
+    return { style: style && resolve(style, this.scheme.current()), hidden };
+  });
 
   constructor() {
     // Straight from the source rather than through an effect, so an `auto` bar changes in the same

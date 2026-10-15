@@ -69,6 +69,15 @@ instead: the window's root, and a screen or modal presented full screen. The sam
 Until the app claims a style, a screen's own `statusBarStyle` presentation applies; once it has, the
 claim applies on every screen. The same goes for `hidden` and `statusBarHidden`.
 
+## On Android
+
+`react-native-screens` sets the bar again each time a screen appears: from that screen's own
+`statusBarStyle` and `statusBarHidden`, or, for a screen without them, to light content and shown.
+So the stack outlet from `@ng-native/router` puts the app's claim on every screen that has no style
+or visibility of its own, and keeps it there as the claim changes or goes away. A screen with its
+own `statusBarStyle` or `statusBarHidden`, from its presentation or its page's host bindings, keeps
+it while it is in front, and the claim is back when a screen without one is.
+
 ## Off a device and on the web
 
 Off a device every setter is a no-op and `height` stays zero, because there is no `StatusBar` module

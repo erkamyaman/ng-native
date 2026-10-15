@@ -29,8 +29,10 @@ import {
   afterEveryRender,
   computed,
   createComponent,
+  effect,
   inject,
   signal,
+  untracked,
   type ComponentRef,
   type EnvironmentInjector,
   type OnInit,
@@ -50,7 +52,7 @@ import {
   type RouterOutletContract,
 } from '@angular/router';
 import { Location, PlatformLocation } from '@angular/common';
-import { SCREEN_IN_FRONT } from '@ng-native/device';
+import { SCREEN_IN_FRONT, StatusBar } from '@ng-native/device';
 import { bindRouteInputs } from './bind-route-inputs.ts';
 import { NativeBack, isShowing } from './native-back.ts';
 import { navigationIntent, type NativeIntent } from './native-navigation.ts';
@@ -119,6 +121,9 @@ interface HoldingScreen {
 const refuses = (screen: unknown): boolean =>
   (screen as Partial<EngineNode> | undefined)?.props?.['preventNativeDismiss'] === true;
 
+/** The screen props a status bar claim rides on, by what the claim names. */
+const STATUS_BAR_PROPS = { style: 'statusBarStyle', hidden: 'statusBarHidden' } as const;
+
 /** The native engine's `dispatchEvent`, as Fabric calls it. */
 type NativeDispatch = (node: unknown, topLevelType: string, nativeEvent: unknown) => void;
 
@@ -158,6 +163,9 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
   private readonly holder = inject(HOLDING_SCREEN, { optional: true });
   /** What the holder's own `preventNativeDismiss` was, while this stack's top screen refuses. */
   private held: { own: unknown } | null = null;
+  private readonly statusBar = inject(StatusBar);
+  /** The status bar props each screen carries for the app's claim, not set by the screen itself. */
+  private readonly carried = new WeakMap<object, Record<string, unknown>>();
 
   private readonly entries: StackEntry[] = [];
   /**
@@ -203,6 +211,14 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     const navigations = this.router?.events?.subscribe((event) => {
       if (event instanceof NavigationEnd) this.settle(event.id);
       else if (event instanceof NavigationError) this.rollBack(event.id);
+    });
+
+    effect(() => {
+      const claim = this.statusBar.forScreens();
+      untracked(() => {
+        for (const entry of this.entries) this.carryStatusBar(entry.screen, claim);
+        if (this.presentedPage) this.carryStatusBar(this.presentedPage.screen, claim);
+      });
     });
 
     const unhold = this.holder ? this.holdRefusals(this.holder) : undefined;
@@ -726,6 +742,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     for (const [prop, value] of Object.entries(presentation ?? {})) {
       if (value !== undefined) this.renderer.setProperty(screen, prop, value);
     }
+    this.carryStatusBar(screen, untracked(this.statusBar.forScreens));
     // Except this one, which is a struct with no default: an edge left out is 0 natively, and
     // `RNSScreenStack` refuses a swipe-back that starts beyond 0 points. -1 is no limit, which is
     // what `Screen.tsx` sends for every edge not given.
@@ -736,6 +753,28 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
 
     this.renderer.appendChild(this.host.nativeElement, screen);
     return screen;
+  }
+
+  /**
+   * Puts the app's status bar claim on a screen that has no style or visibility of its own, from
+   * its presentation or its page's host bindings. On Android, react-native-screens sets the bar
+   * from the screen in front each time one appears, and falls back to light text and shown for a
+   * screen without these props, which would undo the claim on every push and pop.
+   */
+  private carryStatusBar(
+    screen: unknown,
+    claim: { readonly style?: string; readonly hidden?: boolean },
+  ): void {
+    const props = (screen as Partial<EngineNode>).props ?? {};
+    const before = this.carried.get(screen as object) ?? {};
+    const now: Record<string, unknown> = {};
+    for (const [key, prop] of Object.entries(STATUS_BAR_PROPS)) {
+      if (props[prop] !== undefined && props[prop] !== before[prop]) continue;
+      const value = claim[key as keyof typeof claim];
+      now[prop] = value;
+      if (props[prop] !== value) this.renderer.setProperty(screen, prop, value);
+    }
+    this.carried.set(screen as object, now);
   }
 
   /**

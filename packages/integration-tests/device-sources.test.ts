@@ -320,6 +320,18 @@ describe('the status bar source', () => {
       ['setTranslucent', true],
     ]);
   });
+
+  it('says screens set the bar on Android only', () => {
+    const bar = { StatusBar: {} };
+    const on = (OS: string) =>
+      withNative({ ...bar, Platform: { OS } }, () => statusBarSource().screensSetBar);
+    assert.equal(on('android'), true);
+    assert.equal(on('ios'), false);
+    assert.equal(
+      withNative(bar, () => statusBarSource().screensSetBar),
+      false,
+    );
+  });
 });
 
 describe('the screen source', () => {
