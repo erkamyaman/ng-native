@@ -34,7 +34,8 @@ _content_ for a dark bar, as CSS would), `hidden` and `animated`.
 It also takes `backgroundColor` and `translucent`, which are deprecated and do nothing. They were
 Android-only, and under [Android edge-to-edge](/guide/android-edge-to-edge) the app always draws
 under the bar, which has no background of its own: React Native's Android module ignores both. In
-development the first use of each logs a warning on Android. On iOS neither is sent, so React
+development the first use of each logs a warning on Android, unless the app has opted out of
+edge-to-edge, where both still work. On iOS neither is sent, so React
 Native's "only available on Android" warning no longer shows. To color the area behind the bar,
 color the view under it.
 

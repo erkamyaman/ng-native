@@ -17,8 +17,9 @@ and earlier versions honor; this page assumes no such theme.
 These options date from before edge-to-edge. They still compile, and are marked deprecated:
 
 - `StatusBar`'s `backgroundColor` and `translucent`, from `@ng-native/device`. React Native's
-  Android module ignores both. In development the first use of each logs a warning on Android, and
-  on iOS neither is sent at all. See [Status bar](/packages/device/status-bar).
+  Android module ignores both. In development the first use of each logs a warning on Android
+  under edge-to-edge, and on iOS neither is sent at all. See
+  [Status bar](/packages/device/status-bar).
 - `statusBarColor`, `statusBarTranslucent`, `navigationBarColor` and `navigationBarTranslucent` in
   a screen's presentation. `react-native-screens` ignores them on Android, and iOS has none of
   them.

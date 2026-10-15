@@ -74,7 +74,7 @@ export class Modal extends ViewBase {
   readonly statusBarTranslucent = input(undefined, { transform: optionalBoolean });
   /**
    * Android: draw under the navigation bar. Always on under Android edge-to-edge (Expo SDK 57),
-   * where React Native ignores `false`.
+   * where React Native ignores `false`. In an app that opts out, it needs `statusBarTranslucent`.
    */
   readonly navigationBarTranslucent = input(undefined, { transform: optionalBoolean });
   /** Android: give the modal's window a hardware-accelerated surface. */

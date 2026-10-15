@@ -82,18 +82,26 @@ export function statusBarSource(): StatusBarSource {
 
   const { StatusBar } = native;
   const android = native.Platform?.OS === 'android';
+  // Android 16 draws an app targeting SDK 35 or later edge-to-edge whatever its theme says. Before
+  // it, a theme can opt out, and React Native's own answer is the flag its status bar module
+  // checks. That answer is not enough on its own: Expo Go on Android 16 reports false.
+  const info = native.TurboModuleRegistry?.get('DeviceInfo') as
+    { getConstants?(): { isEdgeToEdge?: boolean } } | null | undefined;
+  const edgeToEdge =
+    android &&
+    (Number(native.Platform.Version) >= 36 || info?.getConstants?.().isEdgeToEdge === true);
   const warned = new Set<string>();
   return {
     setStyle: (style, animated) => StatusBar.setBarStyle(BAR_STYLES[style], animated),
     setHidden: (hidden, animation) => StatusBar.setHidden(hidden, animation),
     setBackgroundColor: (color, animated) => {
       if (!android) return;
-      warnNoEffect('backgroundColor', warned);
+      if (edgeToEdge) warnNoEffect('backgroundColor', warned);
       StatusBar.setBackgroundColor(color, animated);
     },
     setTranslucent: (translucent) => {
       if (!android) return;
-      warnNoEffect('translucent', warned);
+      if (edgeToEdge) warnNoEffect('translucent', warned);
       StatusBar.setTranslucent(translucent);
     },
     get height() {

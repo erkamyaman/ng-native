@@ -50,6 +50,8 @@ portrait), and `allowSwipeDismissal` lets a downward swipe dismiss it there, rep
 `(requestClose)`. On Android, `statusBarTranslucent` draws under the status bar and
 `navigationBarTranslucent` under the navigation bar, but under
 [Android edge-to-edge](/guide/android-edge-to-edge) React Native turns both on whatever you set.
+In an app that opts out of edge-to-edge, `navigationBarTranslucent` has an effect only with
+`statusBarTranslucent`.
 `hardwareAccelerated` gives the modal's window a hardware-accelerated surface.
 
 ## Safe area in a modal

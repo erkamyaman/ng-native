@@ -361,6 +361,54 @@ describe('the status bar source', () => {
     assert.deepEqual(calls, [['setBarStyle', 'light-content', undefined]]);
   });
 
+  it('says nothing on Android 15 without edge-to-edge, where both still work', () => {
+    // A theme that sets windowOptOutEdgeToEdgeEnforcement, on Android 15 and earlier.
+    const warnings: unknown[] = [];
+    const calls: unknown[][] = [];
+    const warn = console.warn;
+    console.warn = (message: unknown) => warnings.push(message);
+    try {
+      const native = {
+        Platform: { OS: 'android', Version: 35 },
+        TurboModuleRegistry: { get: () => ({ getConstants: () => ({ isEdgeToEdge: false }) }) },
+        StatusBar: {
+          setBackgroundColor: (...args: unknown[]) => calls.push(['setBackgroundColor', ...args]),
+          setTranslucent: (...args: unknown[]) => calls.push(['setTranslucent', ...args]),
+        },
+      };
+      withNative(native, () => {
+        const source = statusBarSource();
+        source.setBackgroundColor('#000000', false);
+        source.setTranslucent(true);
+      });
+    } finally {
+      console.warn = warn;
+    }
+    assert.deepEqual(warnings, []);
+    assert.deepEqual(calls, [
+      ['setBackgroundColor', '#000000', false],
+      ['setTranslucent', true],
+    ]);
+  });
+
+  it('warns on Android 16, which ignores the opt-out, whatever React Native reports', () => {
+    // Expo Go on Android 16 reports isEdgeToEdge false, and the bar's color still does not change.
+    const warnings: unknown[] = [];
+    const warn = console.warn;
+    console.warn = (message: unknown) => warnings.push(message);
+    try {
+      const native = {
+        Platform: { OS: 'android', Version: 36 },
+        TurboModuleRegistry: { get: () => ({ getConstants: () => ({ isEdgeToEdge: false }) }) },
+        StatusBar: { setBackgroundColor: () => {}, setTranslucent: () => {} },
+      };
+      withNative(native, () => statusBarSource().setBackgroundColor('#000000', false));
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(warnings.length, 1);
+  });
+
   it('reads a stand-in with no Platform as neither platform, without throwing', () => {
     const calls: unknown[][] = [];
     const native = {
@@ -384,6 +432,7 @@ describe('the status bar source', () => {
     try {
       const native = {
         Platform: { OS: 'android' },
+        TurboModuleRegistry: { get: () => ({ getConstants: () => ({ isEdgeToEdge: true }) }) },
         StatusBar: {
           setBarStyle: () => {},
           setHidden: () => {},
