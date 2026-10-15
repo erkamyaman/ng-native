@@ -2,4 +2,4 @@
 '__default__': patch
 ---
 
-A push into a tab nobody has opened now resolves `false` and shows nothing when a guard on the tab's first screen redirects to another tab. Before, it resolved `true` and showed the page anyway, with nothing under it.
+A push into another tab now resolves `false` and shows nothing when a guard on the way redirects elsewhere: on the first screen of a tab nobody has opened, or on the page a tab covered by another screen was left on. Before, it resolved `true` and showed the page anyway.
