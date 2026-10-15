@@ -157,4 +157,8 @@ export function registerScreenComponents(): void {
   // A tab's page with no stack has no screen of its own: past its tab is the screen holding the
   // whole tab bar, so its header stops at the tab.
   registerHoist('native-header', 'screen', { standIn: { hidden: true }, stopAt: ['native-tab'] });
+  // The toolbar host is a view of its own, absolute and out of the layout, that finds its screen
+  // through its superviews. Written ahead of a page's scroll view it would be the screen's first
+  // subview, where UIKit looks for the scroll view a large title collapses against.
+  registerHoist('native-toolbar', 'screen');
 }

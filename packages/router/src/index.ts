@@ -45,6 +45,7 @@ export {
   type TabIcon,
   type TabIconProps,
   type TabItemAppearance,
+  type TabRole,
   type TabStateAppearance,
   type TabSystemItem,
 } from './native-tab.ts';

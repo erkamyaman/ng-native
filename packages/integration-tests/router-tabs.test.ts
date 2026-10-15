@@ -675,6 +675,15 @@ describe('tabs and a header written the less usual ways', () => {
     assert.equal(shared!.props['iconResourceName'], 'person.2');
   });
 
+  it('makes a role="search" tab the search tab, sending the role as the tabRole native reads', async () => {
+    const tabs = tabScreens(await show('TabVariants'));
+    const search = tabs.at(-1)!;
+    assert.equal(search.props['tabRole'], 'search');
+    assert.equal(search.props['automaticallyActivatesSearch'], true);
+    assert.equal(search.props['systemItem'], 'search');
+    assert.equal(tabs[0]!.props['tabRole'], undefined, 'and leaves an ordinary tab at the default');
+  });
+
   describe('a tab with an icon for one platform only', () => {
     const warnings = async (run: () => Promise<unknown>) => {
       const seen: string[] = [];
