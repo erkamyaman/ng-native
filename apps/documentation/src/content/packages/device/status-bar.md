@@ -29,9 +29,14 @@ order, later ones winning per property. Anything a claim leaves unset falls thro
 underneath it.
 
 `StatusBarState` takes `style` (`'default' | 'light' | 'dark' | 'auto'`, `'light'` meaning light
-_content_ for a dark bar, as CSS would), `hidden`, `animated`, and two Android-only properties:
-`backgroundColor` (iOS has no such thing) and `translucent` (whether content draws underneath the
-bar).
+_content_ for a dark bar, as CSS would), `hidden` and `animated`.
+
+It also takes `backgroundColor` and `translucent`, which are deprecated and do nothing. They were
+Android-only, and under [Android edge-to-edge](/guide/android-edge-to-edge) the app always draws
+under the bar, which has no background of its own: React Native's Android module ignores both. In
+development the first use of each logs a warning on Android. On iOS neither is sent, so React
+Native's "only available on Android" warning no longer shows. To color the area behind the bar,
+color the view under it.
 
 ## Following the color scheme
 

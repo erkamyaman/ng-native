@@ -47,10 +47,30 @@ chooses `'fullScreen'`, `'pageSheet'` or `'formSheet'` on iOS.
 `animationType` (`'none'`, `'slide'`, `'fade'`) controls how the modal appears and leaves.
 `supportedOrientations` lists which orientations the modal may rotate to on iOS (defaults to
 portrait), and `allowSwipeDismissal` lets a downward swipe dismiss it there, reported through
-`(requestClose)`. On Android, `statusBarTranslucent` draws under the status bar,
-`navigationBarTranslucent` draws under the navigation bar too (and needs `statusBarTranslucent` to
-have any effect), and `hardwareAccelerated` gives the modal's window a hardware-accelerated
-surface.
+`(requestClose)`. On Android, `statusBarTranslucent` draws under the status bar and
+`navigationBarTranslucent` under the navigation bar, but under
+[Android edge-to-edge](/guide/android-edge-to-edge) React Native turns both on whatever you set.
+`hardwareAccelerated` gives the modal's window a hardware-accelerated surface.
+
+## Safe area in a modal
+
+On Android a modal is a window of its own, drawn under both the status bar and the navigation bar.
+On iOS a full-screen modal reaches the notch and the home indicator. Either way it is outside the
+app's view tree, so the root `<safe-area-provider>` does not reach it. Give its content a provider
+of its own, with `[reportInsets]="false"` so the app-wide [`SafeArea`](/packages/device/safe-area)
+keeps the app's insets, and a `<safe-area-view>` inside it:
+
+```html
+<modal (requestClose)="showSettings.set(false)">
+  <safe-area-provider [reportInsets]="false" class="fill">
+    <safe-area-view class="fill" [edges]="['top', 'bottom']">
+      <text>Settings</text>
+    </safe-area-view>
+  </safe-area-provider>
+</modal>
+```
+
+`.fill` is `flex: 1`. `SafeAreaProvider` and `SafeAreaView` come from `@ng-native/components`.
 
 ## Events
 

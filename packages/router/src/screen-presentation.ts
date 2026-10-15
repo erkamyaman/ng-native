@@ -92,11 +92,27 @@ export interface ScreenPresentation {
 
   readonly statusBarHidden?: boolean;
   readonly statusBarStyle?: string;
+  /**
+   * @deprecated Has no effect. iOS has no such option, and react-native-screens ignores it on
+   * Android, where apps on Expo SDK 57 draw edge-to-edge. Still passed through.
+   */
   readonly statusBarColor?: string | number;
   readonly statusBarAnimation?: string;
+  /**
+   * @deprecated Has no effect. iOS has no such option, and react-native-screens ignores it on
+   * Android, where apps on Expo SDK 57 always draw under the status bar. Still passed through.
+   */
   readonly statusBarTranslucent?: boolean;
+  /**
+   * @deprecated Has no effect. iOS has no such option, and react-native-screens ignores it on
+   * Android, where apps on Expo SDK 57 draw edge-to-edge. Still passed through.
+   */
   readonly navigationBarColor?: string | number;
   readonly navigationBarHidden?: boolean;
+  /**
+   * @deprecated Has no effect. iOS has no such option, and react-native-screens ignores it on
+   * Android, where apps on Expo SDK 57 always draw under the navigation bar. Still passed through.
+   */
   readonly navigationBarTranslucent?: boolean;
   readonly homeIndicatorHidden?: boolean;
   readonly screenOrientation?: string;

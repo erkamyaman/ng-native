@@ -165,6 +165,7 @@ export class Images {}
   template: `
     <modal nativeID="clear" transparent><text>a</text></modal>
     <modal nativeID="sheet" presentationStyle="pageSheet"><text>b</text></modal>
+    <modal nativeID="bars" navigationBarTranslucent><text>c</text></modal>
   `,
 })
 export class Modals {}

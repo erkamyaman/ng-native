@@ -17,7 +17,14 @@
  */
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
-import { androidPermission, hardwareBackSource, statusBarSource } from '@ng-native/device';
+import { Injector } from '@angular/core';
+import {
+  ColorScheme,
+  StatusBar,
+  androidPermission,
+  hardwareBackSource,
+  statusBarSource,
+} from '@ng-native/device';
 import { accessibilitySource } from '../device/src/accessibility.ts';
 import { appStateSource } from '../device/src/app-state.ts';
 import { colorSchemeSource } from '../device/src/color-scheme.ts';
@@ -293,6 +300,7 @@ describe('the status bar source', () => {
   it("maps this package's style names onto React Native's", () => {
     const calls: unknown[][] = [];
     const native = {
+      Platform: { OS: 'android' },
       StatusBar: {
         currentHeight: 51.8,
         setBarStyle: (...args: unknown[]) => calls.push(['setBarStyle', ...args]),
@@ -319,6 +327,68 @@ describe('the status bar source', () => {
       ['setBackgroundColor', '#000000', false],
       ['setTranslucent', true],
     ]);
+  });
+
+  it('leaves the background and translucency alone on iOS, where React Native only warns', () => {
+    // `StatusBar.setBackgroundColor` and `setTranslucent` print "only available on Android" on
+    // iOS, so a shared claim naming either warned every time it was applied.
+    const calls: unknown[][] = [];
+    const native = {
+      Platform: { OS: 'ios' },
+      StatusBar: {
+        setBarStyle: (...args: unknown[]) => calls.push(['setBarStyle', ...args]),
+        setHidden: (...args: unknown[]) => calls.push(['setHidden', ...args]),
+        setBackgroundColor: (...args: unknown[]) => calls.push(['setBackgroundColor', ...args]),
+        setTranslucent: (...args: unknown[]) => calls.push(['setTranslucent', ...args]),
+      },
+    };
+
+    withNative(native, () => {
+      const bar = Injector.create({
+        providers: [
+          { provide: StatusBar.SOURCE, useFactory: statusBarSource },
+          {
+            provide: ColorScheme.SOURCE,
+            useValue: { current: () => 'light', subscribe: () => () => {} },
+          },
+          { provide: ColorScheme, useClass: ColorScheme },
+          { provide: StatusBar, useClass: StatusBar },
+        ],
+      }).get(StatusBar);
+      bar.set({ style: 'light', backgroundColor: '#000000', translucent: true });
+    });
+
+    assert.deepEqual(calls, [['setBarStyle', 'light-content', undefined]]);
+  });
+
+  it('says once on Android that the background and translucency do nothing edge-to-edge', () => {
+    const warnings: unknown[] = [];
+    const warn = console.warn;
+    console.warn = (message: unknown) => warnings.push(message);
+    try {
+      const native = {
+        Platform: { OS: 'android' },
+        StatusBar: {
+          setBarStyle: () => {},
+          setHidden: () => {},
+          setBackgroundColor: () => {},
+          setTranslucent: () => {},
+        },
+      };
+      withNative(native, () => {
+        const source = statusBarSource();
+        source.setBackgroundColor('#000000', false);
+        source.setBackgroundColor('#ffffff', false);
+        source.setTranslucent(true);
+        source.setTranslucent(false);
+      });
+    } finally {
+      console.warn = warn;
+    }
+
+    assert.equal(warnings.length, 2);
+    assert.match(String(warnings[0]), /backgroundColor has no effect/);
+    assert.match(String(warnings[1]), /translucent has no effect/);
   });
 });
 

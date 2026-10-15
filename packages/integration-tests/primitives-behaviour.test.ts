@@ -369,6 +369,24 @@ describe('modal', () => {
     assert.equal(byID(fabric, 'clear').props['presentationStyle'], 'overFullScreen');
     assert.equal(byID(fabric, 'sheet').props['presentationStyle'], 'pageSheet');
   });
+
+  it('passes navigationBarTranslucent on alone, which Android edge-to-edge makes always on', async () => {
+    // React Native forces both translucency props on under edge-to-edge, so asking for the
+    // navigation bar without the status bar is not a mistake worth a warning.
+    const warnings: unknown[] = [];
+    const warn = console.warn;
+    console.warn = (message: unknown) => warnings.push(message);
+    try {
+      const { fabric } = await boot('Modals');
+      assert.equal(byID(fabric, 'bars').props['navigationBarTranslucent'], true);
+    } finally {
+      console.warn = warn;
+    }
+    assert.deepEqual(
+      warnings.filter((message) => String(message).includes('navigationBarTranslucent')),
+      [],
+    );
+  });
 });
 
 describe('keyboard avoiding view', () => {

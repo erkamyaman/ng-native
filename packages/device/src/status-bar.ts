@@ -38,9 +38,20 @@ export interface StatusBarState {
   readonly style?: StatusBarStyle;
   readonly hidden?: boolean;
   readonly animated?: boolean;
-  /** Android only: the bar's own background. iOS has no such thing. */
+  /**
+   * Android only: the bar's own background. iOS has no such thing.
+   *
+   * @deprecated Has no effect. Android apps on Expo SDK 57 draw edge-to-edge, where the status bar
+   * has no background of its own and React Native ignores the change. Draw a view behind the bar
+   * instead. Never sent on iOS.
+   */
   readonly backgroundColor?: string;
-  /** Android only: whether content draws underneath the bar. */
+  /**
+   * Android only: whether content draws underneath the bar.
+   *
+   * @deprecated Has no effect. Android apps on Expo SDK 57 draw edge-to-edge, so content is always
+   * underneath the bar and React Native ignores the change. Never sent on iOS.
+   */
   readonly translucent?: boolean;
 }
 
@@ -70,15 +81,41 @@ export function statusBarSource(): StatusBarSource {
   }
 
   const { StatusBar } = native;
+  const android = native.Platform.OS === 'android';
+  const warned = new Set<string>();
   return {
     setStyle: (style, animated) => StatusBar.setBarStyle(BAR_STYLES[style], animated),
     setHidden: (hidden, animation) => StatusBar.setHidden(hidden, animation),
-    setBackgroundColor: (color, animated) => StatusBar.setBackgroundColor(color, animated),
-    setTranslucent: (translucent) => StatusBar.setTranslucent(translucent),
+    setBackgroundColor: (color, animated) => {
+      if (!android) return;
+      warnNoEffect('backgroundColor', warned);
+      StatusBar.setBackgroundColor(color, animated);
+    },
+    setTranslucent: (translucent) => {
+      if (!android) return;
+      warnNoEffect('translucent', warned);
+      StatusBar.setTranslucent(translucent);
+    },
     get height() {
       return StatusBar.currentHeight;
     },
   };
+}
+
+declare const ngDevMode: unknown;
+
+/**
+ * Says, once per option and in development only, that Android ignores it. React Native's own
+ * module returns early with "current activity is edge-to-edge", which only shows in logcat.
+ */
+function warnNoEffect(option: 'backgroundColor' | 'translucent', warned: Set<string>): void {
+  if (typeof ngDevMode !== 'undefined' && !ngDevMode) return;
+  if (warned.has(option)) return;
+  warned.add(option);
+  console.warn(
+    `[angular-native] StatusBar ${option} has no effect: Android draws the app edge-to-edge, ` +
+      'so content is always under the status bar. See https://ng-native.com/guide/android-edge-to-edge',
+  );
 }
 
 /**

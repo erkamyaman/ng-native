@@ -248,9 +248,12 @@ see [Presenting a page of another tab](/packages/router/tabs#presenting-a-page-o
 ## Presentation options
 
 `ScreenPresentation` is the full set of options a screen can be given - stack animation, the
-dismiss gesture, sheet detents, status bar and navigation bar overrides - all spelled exactly as
-`react-native-screens` spells its own props, so its documentation reads across directly. Anything
-that does not fit in a URL - `push` versus `replace` versus `reset`, and the full presentation a
+dismiss gesture, sheet detents, the status bar's style, which system bars show - all spelled exactly
+as `react-native-screens` spells its own props, so its documentation reads across directly.
+`statusBarColor`, `statusBarTranslucent`, `navigationBarColor` and `navigationBarTranslucent` are
+deprecated: `react-native-screens` ignores them under
+[Android edge-to-edge](/guide/android-edge-to-edge), and iOS has none of them. Anything that does
+not fit in a URL - `push` versus `replace` versus `reset`, and the full presentation a
 screen was opened with - travels as router navigation state, which Angular's own history already
 carries: going back to a screen restores the presentation it was originally given, with no extra
 bookkeeping on your part.

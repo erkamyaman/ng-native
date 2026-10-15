@@ -98,6 +98,7 @@ export const CONCEPTS: NavSection = {
   items: [
     { path: 'guide/architecture', title: 'Architecture' },
     { path: 'guide/native-and-web', title: 'Native and web' },
+    { path: 'guide/android-edge-to-edge', title: 'Android edge-to-edge' },
     { path: 'guide/inspector', title: 'Inspecting an app' },
     { path: 'guide/limitations', title: 'Known limitations' },
     { path: 'guide/ai-assistants', title: 'AI' },

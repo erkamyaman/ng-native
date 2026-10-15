@@ -67,9 +67,15 @@ export class Modal extends ViewBase {
   readonly supportedOrientations = input<readonly ModalOrientation[]>();
   /** iOS: let a downward swipe dismiss the modal, reported through `(requestClose)`. */
   readonly allowSwipeDismissal = input(undefined, { transform: optionalBoolean });
-  /** Android: draw under the status bar. */
+  /**
+   * Android: draw under the status bar. Always on under Android edge-to-edge (Expo SDK 57), where
+   * React Native ignores `false`.
+   */
   readonly statusBarTranslucent = input(undefined, { transform: optionalBoolean });
-  /** Android: draw under the navigation bar. Needs `statusBarTranslucent` too. */
+  /**
+   * Android: draw under the navigation bar. Always on under Android edge-to-edge (Expo SDK 57),
+   * where React Native ignores `false`.
+   */
   readonly navigationBarTranslucent = input(undefined, { transform: optionalBoolean });
   /** Android: give the modal's window a hardware-accelerated surface. */
   readonly hardwareAccelerated = input(undefined, { transform: optionalBoolean });
@@ -101,11 +107,6 @@ export class Modal extends ViewBase {
       if (this.transparent() && style && style !== 'overFullScreen') {
         console.warn(
           `[angular-native] <modal> is transparent, which needs presentationStyle="overFullScreen" on iOS; '${style}' will not be see-through.`,
-        );
-      }
-      if (this.navigationBarTranslucent() && !this.statusBarTranslucent()) {
-        console.warn(
-          '[angular-native] <modal> navigationBarTranslucent has no effect without statusBarTranslucent.',
         );
       }
     });
