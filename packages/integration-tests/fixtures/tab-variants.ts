@@ -21,6 +21,14 @@ import { NativeTabsOutlet } from '../../router/src/native-tabs-outlet.ts';
         [standardAppearance]="appearance"
       />
       <native-tab path="shared" title="Shared" sfSymbol="person.2" drawable="ic_people" />
+      <native-tab
+        path="search"
+        title="Search"
+        systemItem="search"
+        drawable="ic_search"
+        role="search"
+        automaticallyActivatesSearch
+      />
     </native-tabs-outlet>
   `,
 })

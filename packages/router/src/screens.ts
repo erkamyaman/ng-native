@@ -154,7 +154,13 @@ export function registerScreenComponents(): void {
   // a header a page wrote inside a `safe-area-view` or a component of its own commits beside it.
   // Nothing in `RNSScreen.mm` updates the bar when its config is unmounted, so a header an `@if`
   // takes away leaves a config behind that hides the bar, and one that comes back adopts it.
-  registerHoist('native-header', 'screen', { standIn: { hidden: true } });
+  // A tab's page with no stack has no screen of its own: past its tab is the screen holding the
+  // whole tab bar, so its header stops at the tab.
+  registerHoist('native-header', 'screen', { standIn: { hidden: true }, stopAt: ['native-tab'] });
+  // The toolbar host is a view of its own, absolute and out of the layout, that finds its screen
+  // through its superviews. Written ahead of a page's scroll view it would be the screen's first
+  // subview, where UIKit looks for the scroll view a large title collapses against.
+  registerHoist('native-toolbar', 'screen');
   // The header config takes header items and nothing else, so one written inside a component of
   // the header commits as the config's child, not inside the component's view.
   registerHoist('native-header-item', 'native-header', { only: true });

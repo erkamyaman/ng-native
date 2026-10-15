@@ -1767,6 +1767,8 @@ const HOISTS: Record<string, string> = {};
 const HOIST_TARGETS = new Set<string>();
 /** The `ancestorName`s that commit only what is hoisted into them. See `HoistOptions.only`. */
 const HOIST_ONLY = new Set<string>();
+/** Element name -> the ancestor names it never hoists past. See `HoistOptions.stopAt`. */
+const HOIST_STOPS: Record<string, ReadonlySet<string>> = {};
 
 /**
  * Commit every `elementName` as a direct child of its nearest `ancestorName`, wherever the
@@ -1790,6 +1792,8 @@ export function registerHoist(
   HOIST_TARGETS.add(ancestorName);
   if (options.standIn) STAND_INS[elementName] = options.standIn;
   if (options.only) HOIST_ONLY.add(ancestorName);
+  if (options.stopAt) HOIST_STOPS[elementName] = new Set(options.stopAt);
+  else delete HOIST_STOPS[elementName];
 }
 
 export interface HoistOptions {
@@ -1814,6 +1818,16 @@ export interface HoistOptions {
    * component's host view.
    */
   only?: boolean;
+
+  /**
+   * Ancestor names the element never hoists past: met before the ancestor it commits into, it
+   * commits where it is, as one with no such ancestor does.
+   *
+   * For an ancestor the target is not meant to reach through. A tab's page with no stack of its
+   * own has no screen of its own, and the screen above its tab is the one that holds the whole
+   * tab bar, so a header written in that page must not configure it.
+   */
+  stopAt?: readonly string[];
 }
 
 /** Element name -> the props it leaves behind in its ancestor. See `HoistOptions.standIn`. */
@@ -6294,6 +6308,7 @@ export class Engine implements HostEngine {
       let written: EngineNode = candidate;
       let above = candidate.parent;
       while (above && above !== node && above.tag !== node.tag) {
+        if (HOIST_STOPS[candidate.tag]?.has(above.tag)) break;
         written = above;
         above = above.parent;
       }
@@ -6310,8 +6325,9 @@ export class Engine implements HostEngine {
   private hoistsAbove(node: EngineNode): boolean {
     const target = HOISTS[node.tag];
     if (node.parent?.tag === target) return false;
-    for (let above = node.parent?.parent; above; above = above.parent) {
+    for (let above = node.parent; above; above = above.parent) {
       if (above.tag === target) return true;
+      if (HOIST_STOPS[node.tag]?.has(above.tag)) return false;
     }
     return false;
   }
