@@ -8,7 +8,7 @@
  * a press on an entry or on an empty stretch, as the minute under the finger.
  */
 import assert from 'node:assert/strict';
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, mock } from 'node:test';
 import type { Type } from '@angular/core';
 import { cleanup, fireEvent, render, type FakeFabricNode } from '@ng-native/testing';
 import {
@@ -116,6 +116,28 @@ describe('the entries on a day', () => {
     const toMidnight = { ...evening, end: at('2026-10-15', 0) };
     assert.equal(isOn(toMidnight, '2026-10-14'), true);
     assert.equal(isOn(toMidnight, '2026-10-15'), false);
+  });
+
+  it('places entries by the clock on a day the clocks change, as the hours are labelled', () => {
+    const zone = process.env['TZ'];
+    process.env['TZ'] = 'Europe/London';
+    try {
+      // The clocks go forward at 01:00 on 29 March 2026 and back at 02:00 on 25 October.
+      const [spring] = dayEntries([entry('spring', '2026-03-29', [10, 0], [11, 0])], '2026-03-29');
+      assert.deepEqual([spring!.from, spring!.to], [10 * 60, 11 * 60], 'not an hour early');
+      const [autumn] = dayEntries(
+        [entry('autumn', '2026-10-25', [23, 30], [23, 45])],
+        '2026-10-25',
+      );
+      assert.deepEqual(
+        [autumn!.from, autumn!.to],
+        [23 * 60 + 30, 23 * 60 + 45],
+        'not cut at 24:00',
+      );
+    } finally {
+      if (zone === undefined) delete process.env['TZ'];
+      else process.env['TZ'] = zone;
+    }
   });
 
   it('keeps all-day entries apart from the timed ones, on every day they cover', () => {
@@ -336,6 +358,21 @@ describe('<calendar-day>', () => {
     assert.equal(slot!.day, '2026-10-14');
     assert.equal(slot!.minute, 10 * 60 + 15, '200 points down from 07:00 is 10:20, so 10:15');
     assert.deepEqual(slot!.start, at('2026-10-14', 10, 15));
+  });
+
+  it('shows the line at the time now once the clock reaches the day shown', async () => {
+    // The day shown is the 14th, and it is a minute to midnight on the 13th.
+    mock.timers.enable({ apis: ['setInterval', 'Date'], now: at('2026-10-13', 23, 59) });
+    try {
+      const { app } = await show();
+      assert.equal(app.queryByLabelText('Now'), null);
+      // To 07:00 on the 14th, the first hour the fixture shows.
+      mock.timers.tick(7 * 60 * 60 * 1000 + 60 * 1000);
+      await app.detectChanges();
+      assert.ok(app.getByLabelText('Now'), 'the minute tick found that the 14th is today');
+    } finally {
+      mock.timers.reset();
+    }
   });
 
   it('labels the hours shown in the locale', async () => {

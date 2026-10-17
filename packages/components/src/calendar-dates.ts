@@ -116,15 +116,20 @@ export function colorsByDay(
  * sit side by side, each as wide as the most that overlap at once in its group.
  */
 export function dayEntries(entries: readonly CalendarEntry[], day: CalendarDate): DayEntry[] {
-  const midnight = dateOf(day).getTime();
-  const minutes = (date: Date) => Math.round((date.getTime() - midnight) / 60_000);
+  // By the clock, not the time since midnight: a day the clocks change is 23 or 25 hours long, and
+  // the hours it is drawn against are clock hours.
+  const minutes = (date: Date) => {
+    const on = dayOf(date);
+    if (on < day) return 0;
+    if (on > day) return MINUTES_IN_DAY;
+    return date.getHours() * 60 + date.getMinutes();
+  };
   const timed = entries
     .filter((entry) => !entry.allDay && isOn(entry, day))
-    .map((entry) => ({
-      entry,
-      from: Math.max(0, minutes(entry.start)),
-      to: Math.min(MINUTES_IN_DAY, Math.max(minutes(entry.end), minutes(entry.start) + 1)),
-    }))
+    .map((entry) => {
+      const from = minutes(entry.start);
+      return { entry, from, to: Math.min(MINUTES_IN_DAY, Math.max(minutes(entry.end), from + 1)) };
+    })
     .sort((a, b) => a.from - b.from || b.to - a.to || a.entry.id.localeCompare(b.entry.id));
 
   const placed: DayEntry[] = [];

@@ -155,12 +155,13 @@ export class CalendarDay implements OnInit {
         to: Math.min(placed.to, last),
       }));
   });
-  protected readonly nowShown = computed(
-    () =>
-      this.day() === dayOf(new Date()) &&
-      this.now() >= this.startHour() * 60 &&
-      this.now() <= this.endHour() * 60,
-  );
+  /** Reads `now()` first, so the minute tick checks again whether the day shown has become today. */
+  protected readonly nowShown = computed(() => {
+    const now = this.now();
+    return (
+      now >= this.startHour() * 60 && now <= this.endHour() * 60 && this.day() === dayOf(new Date())
+    );
+  });
 
   ngOnInit(): void {
     this.followTheClock();
