@@ -18,7 +18,9 @@
  * from code.
  *
  * ponytail: react-native-screens has no scope bar and no search tokens; a scope is a segmented
- * control under the header, and a token is text.
+ * control under the header, and a token is text. Nor has its search bar a font prop on iOS or
+ * Android, so the field and placeholder stay in the system font; `<search-field>` from
+ * `@ng-native/expo/search-field` takes the font its CSS resolves to.
  */
 import {
   Component,
@@ -78,7 +80,9 @@ export class NativeSearchBar {
   readonly obscureBackground = input(undefined, { transform: optionalBoolean });
   /** Hide the navigation bar while the field is being typed in. */
   readonly hideNavigationBar = input(undefined, { transform: optionalBoolean });
+  /** iOS: the cursor and the Cancel button. Android: the field's background. */
   readonly tintColor = input<string>();
+  /** The typed text. */
   readonly textColor = input<string>();
 
   /** The keyboard's search key was pressed, with the text in the field. */
