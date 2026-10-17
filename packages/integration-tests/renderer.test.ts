@@ -100,7 +100,7 @@ describe('the renderer', () => {
     assert.doesNotMatch(fabric.render(), /RawText "\[badge\]"/);
   });
 
-  it('calls destroyNode so listeners do not outlive their view', async () => {
+  it('lets no listener outlive its view', async () => {
     const pressable = findEngineNode(app.engine.root, 'pressable');
     assert.ok(pressable, 'pressable is in the retained tree');
     assert.ok(pressable.listeners?.size, 'listener registered while the view is alive');
@@ -108,7 +108,11 @@ describe('the renderer', () => {
     instance.showListener.set(false);
     await settle();
 
-    assert.equal(pressable.listeners, null, 'destroyNode cleared the listeners');
+    // Each is taken off by whoever added it: the template's through `listen()`'s teardown, and
+    // the pressable's own when it is destroyed. `destroyNode` leaves them, since Angular calls it
+    // for projected content it puts back too.
+    const left = [...pressable.listeners!].filter(([, set]) => set.size).map(([type]) => type);
+    assert.deepEqual(left, [], 'every listener went with the view');
     assert.equal(findEngineNode(app.engine.root, 'pressable'), undefined, 'node detached');
   });
 });

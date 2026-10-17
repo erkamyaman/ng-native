@@ -3965,12 +3965,13 @@ export class Engine implements HostEngine {
 
   /**
    * Angular calls this per node on view destroy, but only when `Renderer2.destroyNode` is
-   * non-null. Without it the listener sets on discarded nodes stay reachable from the
-   * closures Angular hands us, which is a slow leak on any screen that churns views.
+   * non-null. It is not always the end of the node: Angular calls it for the content an
+   * `<ng-content>` at the top of the view projects too, which belongs to the declaring view, and
+   * puts the same nodes back when the view is made again. So what is let go here comes back when
+   * the node does, and its listeners stay: each goes when the view or directive that added it
+   * tears it down, and Angular does not listen again for content it puts back.
    */
   destroyNode(node: EngineNode): void {
-    node.listeners?.clear();
-    node.listeners = null;
     // With what it holds: a node Angular destroys can be put back, as content projected into
     // an `@if` is, and its children's views would then be handed to the view it is made again
     // as. Native gives a view one parent for its life, and aborts on a second.
@@ -3987,7 +3988,12 @@ export class Engine implements HostEngine {
     }
     this.running.delete(node);
     this.playing.delete(node);
-    this.hoisted.delete(node);
+    // Held by the subtree it left, as `releaseDetached` holds it, and hoisted again if put back.
+    const top = this.hoisted.has(node) ? this.topOf(node) : this.root;
+    if (top !== this.root) {
+      this.hoisted.delete(node);
+      (top.dormantHoists ??= []).push(node);
+    }
     node.kept = undefined;
     // A field popped with the keyboard up never sends its blur.
     if (this.focusedNode === node) this.dropFocus();
