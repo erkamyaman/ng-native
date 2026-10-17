@@ -102,6 +102,7 @@ describe('the entry points Metro has to resolve', () => {
       'background-task',
       'battery',
       'brightness',
+      'calendar',
       'clipboard',
       'crypto',
       'database',
