@@ -800,6 +800,13 @@ export function registerPlatformComponents(platform: string): void {
  */
 const DEFAULT_PROPS: Record<string, Record<string, unknown>> = {
   ScrollView: { flexGrow: 1, flexShrink: 1, flexDirection: 'column', overflow: 'scroll' },
+  // Its `baseHorizontal`, for the view a horizontal scroll view is on Android.
+  AndroidHorizontalScrollView: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexDirection: 'row',
+    overflow: 'scroll',
+  },
   // RN's Image.ios.js: without it a border radius rounds the view but not the picture.
   Image: { overflow: 'hidden' },
   // RN's Modal.js gives the native host this; without it the modal does not lay out.
@@ -1995,8 +2002,16 @@ const FONT_REFRESH_STEP = 0.006;
 /** The views that take a cursor, on either platform. */
 const TEXT_INPUTS = new Set(['TextInput', 'AndroidTextInput']);
 
+/**
+ * Android's horizontal scroll view and the view that holds its content. RN's `ScrollView.js`
+ * commits them in place of `ScrollView` and its plain content view when `horizontal` is set, and
+ * the vertical view ignores `horizontal`. See `viewNameOf` and `committedViewName`.
+ */
+const HORIZONTAL_SCROLL = 'AndroidHorizontalScrollView';
+const HORIZONTAL_CONTENT = 'AndroidHorizontalScrollContentView';
+
 /** The views that scroll their content, which `focus` brings a field into view within. */
-const SCROLL_VIEWS = new Set(['ScrollView', 'AndroidHorizontalScrollView']);
+const SCROLL_VIEWS = new Set(['ScrollView', HORIZONTAL_SCROLL]);
 
 /** Element name -> the element name of the ancestor it commits into. See `registerHoist`. */
 const HOISTS: Record<string, string> = {};
@@ -2138,6 +2153,8 @@ export interface ViewNameNode {
   readonly children?: readonly ViewNameNode[];
   /** Set on the paragraph the engine makes for a run of text written straight into a view. */
   readonly anonymous?: boolean;
+  /** Its props, of which `horizontal` decides which scroll view a scroll view is on Android. */
+  readonly props?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -2214,9 +2231,24 @@ function stacksRuns(node: EngineNode): boolean {
 const oneRun = (child: EngineNode): boolean =>
   child.kind === 'text' || (child.kind === 'element' && TEXT_ELEMENTS.has(child.tag));
 
-/** The view a node is committed as: `viewNameOf`, but for a text element that aligns its text. */
-const committedViewName = (node: EngineNode): string =>
-  aligningText(node) ? DEFAULT_VIEW : viewNameOf(node);
+/**
+ * The view a node is committed as: `viewNameOf`, but for a text element that aligns its text, and
+ * for the content view of a horizontal scroll view on Android, which RN commits as a view of its
+ * own. That one is a plain view in every other respect, so only the commit names it: a scroll
+ * view changing axis is made again with everything in it (see `forgetRenamed`), and a view moved
+ * into or out of one is too (see `reconcileUnder`), so the name cannot go stale on a clone.
+ */
+function committedViewName(node: EngineNode): string {
+  if (aligningText(node)) return DEFAULT_VIEW;
+  const name = viewNameOf(node);
+  return name === DEFAULT_VIEW && platformOS === 'android' && holdsContentOf(node.parent)
+    ? HORIZONTAL_CONTENT
+    : name;
+}
+
+/** Whether a node is a horizontal scroll view, whose children hold its content. */
+const holdsContentOf = (parent: EngineNode | null): boolean =>
+  parent !== null && parent.kind === 'element' && viewNameOf(parent) === HORIZONTAL_SCROLL;
 
 /**
  * The native view a node commits as: `Paragraph` for a `<text>`, `VirtualText` for one nested in
@@ -2236,7 +2268,7 @@ export function viewNameOf(node: ViewNameNode): string {
   if (node.componentHost && !node.nativeView && YIELDING.has(node.tag)) return DEFAULT_VIEW;
   const registered = registeredViewName(node.tag);
   // Nearly every element: a view of some kind, by its name alone.
-  if (registered !== PARAGRAPH) return registered ?? DEFAULT_VIEW;
+  if (registered !== PARAGRAPH) return namedView(node, registered);
   // One of HTML's text elements that holds something other than text: a view.
   if (node.tag !== 'text' && TEXT_ELEMENTS.has(node.tag) && !holdsOnlyText(node)) {
     return DEFAULT_VIEW;
@@ -2245,6 +2277,16 @@ export function viewNameOf(node: ViewNameNode): string {
   // of the element that view is.
   return nestedText(node) ? VIRTUAL_TEXT : PARAGRAPH;
 }
+
+/**
+ * The view an element other than text is by its registered name: a plain view when it has none,
+ * and on Android, where there is a scroll view for each axis, the horizontal one when RN would
+ * pick it, `horizontal` set to true.
+ */
+const namedView = (node: ViewNameNode, registered: string | undefined): string =>
+  registered === 'ScrollView' && platformOS === 'android' && node.props?.['horizontal'] === true
+    ? HORIZONTAL_SCROLL
+    : (registered ?? DEFAULT_VIEW);
 
 /**
  * Whether a text element is a span of the paragraph above it: under another text element, but
@@ -4846,7 +4888,7 @@ export class Engine implements HostEngine {
    * transform make one in a browser too; read them here if a box is ever raised past one.
    */
   private raisedBy(node: EngineNode, viewName: string): number | undefined {
-    if (viewName !== DEFAULT_VIEW) return undefined;
+    if (viewName !== DEFAULT_VIEW && viewName !== HORIZONTAL_CONTENT) return undefined;
     let over = 0;
     for (const child of node.children) {
       const z = child.committed?.props['zIndex'];
