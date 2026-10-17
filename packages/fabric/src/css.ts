@@ -1526,6 +1526,91 @@ const TWIN: Readonly<Record<'ltr' | 'rtl', Readonly<Record<string, string>>>> = 
   rtl: twins(SIDES_LTR.map(([logical, physical]) => [logical, mirrored(physical)] as const)),
 };
 
+/** The props of each edge of a box across and down, in each form Yoga or React Native reads. */
+const across = (box: string): string[] =>
+  ['Left', 'Right', 'Start', 'End', 'InlineStart', 'InlineEnd'].map((side) => `${box}${side}`);
+const down = (box: string): string[] =>
+  ['Top', 'Bottom', 'BlockStart', 'BlockEnd'].map((side) => `${box}${side}`);
+
+/** A box's shorthand for every edge, across and down, keyed by the name an inline style uses. */
+function boxShorthands(
+  all: string,
+  edges: { across: string[]; down: string[] },
+  axes: { across: string[]; down: string[] },
+): [string, string[]][] {
+  return [
+    [all, [...edges.across, ...edges.down, ...axes.across, ...axes.down]],
+    ...axes.across.map((axis): [string, string[]] => [
+      axis,
+      [...edges.across, ...axes.across.filter((other) => other !== axis)],
+    ]),
+    ...axes.down.map((axis): [string, string[]] => [
+      axis,
+      [...edges.down, ...axes.down.filter((other) => other !== axis)],
+    ]),
+  ];
+}
+
+/** Every corner, physical and logical, by the name of its radius. */
+const CORNERS = [
+  ...['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight', 'TopStart', 'TopEnd'],
+  ...['BottomStart', 'BottomEnd', 'StartStart', 'StartEnd', 'EndStart', 'EndEnd'],
+].map((corner) => `border${corner}Radius`);
+
+/**
+ * The props each shorthand an inline style can set covers, in every form a native view reads
+ * them: physical, logical and the aliases Yoga takes. A stylesheet's shorthand is compiled to its
+ * longhands, so only an element's own style commits one as it is written, and there CSS has it
+ * win over a rule's longhand, where Yoga and React Native read the more specific edge or corner.
+ */
+const COVERS: ReadonlyMap<string, readonly string[]> = new Map([
+  ...['margin', 'padding'].flatMap((box) =>
+    boxShorthands(
+      box,
+      { across: across(box), down: down(box) },
+      { across: [`${box}Horizontal`, `${box}Inline`], down: [`${box}Vertical`, `${box}Block`] },
+    ),
+  ),
+  ...boxShorthands(
+    'inset',
+    {
+      across: ['left', 'right', 'start', 'end', 'insetInlineStart', 'insetInlineEnd'],
+      down: ['top', 'bottom', 'insetBlockStart', 'insetBlockEnd'],
+    },
+    { across: ['insetInline'], down: ['insetBlock'] },
+  ),
+  ['gap', ['rowGap', 'columnGap']],
+  ['borderWidth', [...across('border'), ...down('border')].map((side) => `${side}Width`)],
+  ['borderColor', [...across('border'), ...down('border'), 'borderBlock'].map((s) => `${s}Color`)],
+  ['borderBlockColor', down('border').map((side) => `${side}Color`)],
+  ['borderRadius', CORNERS],
+]);
+
+/**
+ * Gives each prop in `style` that a shorthand the element sets itself covers the shorthand's
+ * value: one in its inline style, `inline`, or bound from a token, `bound`. The value rather than
+ * nothing, so a transition of the side eases to it, as in a browser. Not a prop the element sets
+ * as well, which Yoga reads over its shorthand as before, nor one a rule marked `!important`,
+ * which beats the element's own declaration.
+ */
+export function underOwnShorthands(
+  style: Record<string, unknown>,
+  inline: Readonly<Record<string, unknown>>,
+  bound: ReadonlyMap<string, unknown> | undefined,
+  important: ReadonlySet<string> | undefined,
+): void {
+  const cover = (shorthand: string) => {
+    const value = style[shorthand];
+    for (const key of COVERS.get(shorthand) ?? []) {
+      if (!(key in style) || key in inline || bound?.has(key) || important?.has(key)) continue;
+      if (value == null) delete style[key];
+      else style[key] = value;
+    }
+  };
+  for (const key in inline) if (inline[key] != null) cover(key);
+  if (bound) for (const key of bound.keys()) cover(key);
+}
+
 /** The properties of a rule that have another form, plain and important, or null for neither. */
 interface Sided {
   readonly plain: readonly string[];
