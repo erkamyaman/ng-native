@@ -250,6 +250,18 @@ describe('going back in an app with tabs', () => {
     assert.equal(router.url, '/library');
   });
 
+  it("pushes onto a tab's stack from another tab, where a plain navigation switches to it", async () => {
+    await go('/library');
+    await go('/library/7');
+    await go('/search');
+    assert.equal(await navigation.push('/library'), true);
+    await settle();
+    assert.equal(router.url, '/library');
+
+    assert.equal(await pressBack(), true);
+    assert.equal(router.url, '/library/7', 'the album is still under the pushed library');
+  });
+
   it('pops a tab s stack to the tab s first screen, after a trip to another tab', async () => {
     await go('/library');
     await go('/library/7');

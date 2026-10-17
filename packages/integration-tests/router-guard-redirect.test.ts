@@ -148,7 +148,16 @@ it('leaves a later navigation of its own to do what it asks', async () => {
   await router.navigateByUrl('/home');
   await turns();
   assert.equal(router.url, '/login');
-  assert.deepEqual(pages(app), ['Login'], 'a plain navigation back to a kept page, not a push');
+  assert.deepEqual(
+    pages(app),
+    ['Login', 'A', 'Login'],
+    'a plain navigation to a kept page pushes it, as its history entry does',
+  );
+
+  nav.back();
+  await turns();
+  assert.equal(router.url, '/a', 'and back returns to the page it came from');
+  assert.deepEqual(pages(app), ['Login', 'A']);
 });
 
 it("keeps the intent through a route config's own redirect", async () => {

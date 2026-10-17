@@ -8,6 +8,7 @@
  *
  * No decorators, so tests can import it and so it can be provided with `useClass`.
  */
+import { PlatformLocation } from '@angular/common';
 import { Injector, inject, type ComponentRef } from '@angular/core';
 import {
   BaseRouteReuseStrategy,
@@ -61,6 +62,13 @@ function keyOf(route: ActivatedRouteSnapshot): string {
   return JSON.stringify(levels);
 }
 
+/** Whether a route is a tab bar: a tab among its children, past any with no component. */
+function holdsTabs(route: ActivatedRouteSnapshot): boolean {
+  return route.children.some(
+    (child) => isTabRoute(child.routeConfig) || (child.component === null && holdsTabs(child)),
+  );
+}
+
 function injectorHere(): Injector | null {
   try {
     return inject(Injector);
@@ -109,12 +117,30 @@ export class NativeStackReuseStrategy extends BaseRouteReuseStrategy {
     if (handle) {
       // The same screen stored again takes its place at the end, not a second one.
       this.handles.set(key, [...kept.filter((one) => one !== handle), handle]);
+      this.entryOf.set(handle, this.shownIn.get(route));
       this.forgetOnDestroy((handle as StoredHandle).componentRef);
       return;
     }
-    // The router has re-attached the one `retrieve` answered with: the last.
-    if (kept.length > 1) this.handles.set(key, kept.slice(0, -1));
+    // The router has re-attached the one `retrieve` answered with.
+    const attached = this.answered.get(route) ?? kept.at(-1);
+    const left = kept.filter((one) => one !== attached);
+    if (left.length) this.handles.set(key, left);
     else this.handles.delete(key);
+  }
+
+  /**
+   * The navigation that last put each route's screen on screen, by the snapshot it built, and so
+   * the one whose id is in that screen's history entry: Angular writes the id of the navigation
+   * into the entry it pushes or replaces, a back included.
+   */
+  private readonly shownIn = new WeakMap<ActivatedRouteSnapshot, number | undefined>();
+  /** Each kept screen's history entry, by that navigation's id. */
+  private readonly entryOf = new WeakMap<DetachedRouteHandle, number | undefined>();
+  /** The screen `retrieve` answered with for a route, for `store` to take out once attached. */
+  private readonly answered = new WeakMap<ActivatedRouteSnapshot, DetachedRouteHandle>();
+
+  private showing(route: ActivatedRouteSnapshot): void {
+    this.shownIn.set(route, this.injector?.get(Router).currentNavigation()?.id);
   }
 
   private readonly watched = new WeakSet<ComponentRef<unknown>>();
@@ -156,7 +182,10 @@ export class NativeStackReuseStrategy extends BaseRouteReuseStrategy {
       !isScreenRoute(config) ||
       config?.data?.[REUSE_SCREEN] === true ||
       keyOf(future) === keyOf(curr);
-    if (reuse) this.reused.add(future);
+    if (reuse) {
+      this.reused.add(future);
+      this.showing(future);
+    }
     return reuse;
   }
 
@@ -168,6 +197,11 @@ export class NativeStackReuseStrategy extends BaseRouteReuseStrategy {
    * already on the stack is a new screen over it, as a native stack makes one, and Back returns
    * to where the push came from. Going back to the kept one is a back, or `popTo`.
    *
+   * A plain `Router.navigate()` is a push too, as it is in history: it adds an entry, and going
+   * back to the screen below would leave the entries between pointing at screens destroyed. What
+   * goes back is a back through history, and a navigation that replaces its entry, as the stack's
+   * own pops do where history is not the way back, and as a replace and a reset do.
+   *
    * Never for a route with no component, which is never kept: the router asks for every route,
    * and a group at path `''` has the same url as a page at `''` beside it, whose screen it would
    * otherwise be handed.
@@ -176,11 +210,36 @@ export class NativeStackReuseStrategy extends BaseRouteReuseStrategy {
    * and building the tab again would leave a second stack in the tab's screen. Only into the bar
    * already showing, though: a push that builds another bar over it builds its tabs too, and the
    * one kept at the same url is the bar beneath's.
+   *
+   * A plain navigation goes back to a kept tab bar, as `push()` does by going there first (one tab
+   * bar, as a native app has), and to what a tab it brings back holds: going to another tab's url
+   * is a switch to that tab as it was left, not a push into it.
    */
   override shouldAttach(route: ActivatedRouteSnapshot): boolean {
     if (route.component === null) return false;
-    if (this.pushing() && !(isTabRoute(route.routeConfig) && this.inKeptBar(route))) return false;
-    return this.retrieve(route) !== null;
+    this.showing(route);
+    const forward = this.forward();
+    if (forward && !this.returnsTo(route, forward)) return false;
+    const attach = this.retrieve(route) !== null;
+    if (attach) this.restored.add(route);
+    return attach;
+  }
+
+  /** The routes the navigation in flight goes back to, by the snapshot it is building. */
+  private readonly restored = new WeakSet<ActivatedRouteSnapshot>();
+
+  /** Whether a navigation forward still goes back to the screen kept for this route. */
+  private returnsTo(route: ActivatedRouteSnapshot, forward: 'push' | 'plain'): boolean {
+    if (isTabRoute(route.routeConfig) && this.inKeptBar(route)) return true;
+    return forward === 'plain' && (holdsTabs(route) || this.underRestored(route));
+  }
+
+  /** Whether a route above this one is a kept screen the navigation goes back to. */
+  private underRestored(route: ActivatedRouteSnapshot): boolean {
+    for (let above = route.parent; above; above = above.parent) {
+      if (this.restored.has(above)) return true;
+    }
+    return false;
   }
 
   /** Whether the tab bar above a tab's route is one the navigation keeps rather than builds. */
@@ -190,13 +249,19 @@ export class NativeStackReuseStrategy extends BaseRouteReuseStrategy {
     return bar !== null && this.reused.has(bar);
   }
 
-  private pushing(): boolean {
+  /**
+   * Whether the navigation in flight goes forward: a push, or a plain navigation that adds a
+   * history entry. Null for a back, a replace, a reset, or a navigation that replaces its entry.
+   */
+  private forward(): 'push' | 'plain' | null {
     const router = this.injector?.get(Router);
     const navigation = router?.currentNavigation();
     // A back restores the state its history entry was pushed with, intent and all: that is the
     // screen being returned to, not a push.
-    if (!router || !navigation || navigation.trigger === 'popstate') return false;
-    return navigationIntent(router, navigation)?.stack === 'push';
+    if (!router || !navigation || navigation.trigger === 'popstate') return null;
+    const stack = navigationIntent(router, navigation)?.stack;
+    if (stack) return stack === 'push' ? 'push' : null;
+    return navigation.extras.replaceUrl ? null : 'plain';
   }
 
   override retrieve(route: ActivatedRouteSnapshot): DetachedRouteHandle | null {
@@ -206,7 +271,28 @@ export class NativeStackReuseStrategy extends BaseRouteReuseStrategy {
     );
     if (kept.length) this.handles.set(key, kept);
     else this.handles.delete(key);
-    // The newest: the one a back from the top of the stack returns to.
-    return kept.at(-1) ?? null;
+    // Asked again for the same route as the router attaches it, by which time the router has
+    // written its own id into the entry: the same answer.
+    const before = this.answered.get(route);
+    if (before && kept.includes(before)) return before;
+    // The one at the history entry a back returns to, where two screens share the url: a back of
+    // three screens from C over A, B, A is the first A. Otherwise the newest, the one a back from
+    // the top of the stack returns to.
+    const entry = this.backTo();
+    const handle =
+      (entry !== undefined && kept.find((one) => this.entryOf.get(one) === entry)) ||
+      kept.at(-1) ||
+      null;
+    if (handle) this.answered.set(route, handle);
+    return handle;
+  }
+
+  /** The id in the history entry a back is returning to, which names the screen shown there. */
+  private backTo(): number | undefined {
+    const router = this.injector?.get(Router);
+    if (router?.currentNavigation()?.trigger !== 'popstate') return undefined;
+    const state = this.injector?.get(PlatformLocation, null)?.getState();
+    const id = (state as { navigationId?: unknown } | null)?.navigationId;
+    return typeof id === 'number' ? id : undefined;
   }
 }
