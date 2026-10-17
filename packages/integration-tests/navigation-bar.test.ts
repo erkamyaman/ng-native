@@ -231,3 +231,69 @@ describe("the navigation bar's platform source", () => {
     await new Promise((resolve) => setImmediate(resolve));
   });
 });
+
+describe('a navigation bar claim with a property set to undefined', () => {
+  // As for the status bar: an undefined property leaves whatever the claim underneath said.
+  it('keeps the bar hidden underneath while the claim lasts', () => {
+    const { calls, source } = recorder();
+    const { bar } = build(source);
+    bar.set({ hidden: true });
+    calls.length = 0;
+
+    bar.push({ hidden: undefined, style: 'light' });
+    assert.deepEqual(calls, [
+      ['style', 'light'],
+      ['hidden', true],
+    ]);
+    assert.equal(bar.state().hidden, true);
+  });
+
+  it('keeps what is underneath until the claim drops, then puts it back', () => {
+    const { calls, source } = recorder();
+    const { bar } = build(source);
+    bar.set({ style: 'light', hidden: true });
+    calls.length = 0;
+
+    const claim = bar.push({ style: undefined, hidden: false });
+    assert.deepEqual(calls, [
+      ['style', 'light'],
+      ['hidden', false],
+    ]);
+    calls.length = 0;
+
+    claim();
+    assert.deepEqual(calls, [
+      ['style', 'light'],
+      ['hidden', true],
+    ]);
+    assert.deepEqual(bar.state(), { style: 'light', hidden: true });
+  });
+
+  it('leaves an undefined property of the base claim out of the state', () => {
+    const { calls, source } = recorder();
+    const { bar } = build(source);
+    bar.set({ style: 'light', hidden: undefined });
+    assert.deepEqual(calls, [['style', 'light']]);
+    assert.deepEqual(bar.state(), { style: 'light' });
+  });
+
+  it('sends the fixed style underneath again on a scheme change', () => {
+    const { calls, source } = recorder();
+    const colors = scheme('light');
+    const { bar } = build(source, colors.source);
+    bar.set({ style: 'dark' });
+    bar.push({ style: undefined, hidden: true });
+    calls.length = 0;
+
+    colors.change('dark');
+    assert.deepEqual(calls, [['style', 'dark']]);
+  });
+
+  it('hands the screens the visibility underneath', () => {
+    const { source } = recorder(true);
+    const { bar } = build(source);
+    bar.set({ hidden: true });
+    bar.push({ hidden: undefined, style: 'dark' });
+    assert.deepEqual(bar.forScreens(), { hidden: true });
+  });
+});

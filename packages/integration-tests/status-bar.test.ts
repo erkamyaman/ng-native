@@ -283,3 +283,83 @@ describe('an animated status bar change', () => {
     assert.deepEqual(calls, [['hidden', [true, 'fade']]]);
   });
 });
+
+describe('a status bar claim with a property set to undefined', () => {
+  // `{ style: maybeStyle }` compiles without `exactOptionalPropertyTypes`, and an undefined
+  // property is as absent as a missing one: it leaves whatever the claim underneath said.
+  it('keeps the style underneath while the claim lasts', () => {
+    const { calls, source } = recorder();
+    const bar = build(source);
+    bar.set({ style: 'dark' });
+    calls.length = 0;
+
+    bar.push({ style: undefined, hidden: true });
+    assert.deepEqual(calls, [
+      ['style', ['dark', undefined]],
+      ['hidden', [true, undefined]],
+    ]);
+    assert.equal(bar.state().style, 'dark');
+  });
+
+  it('keeps what is underneath until the claim drops, then puts it back', () => {
+    const { calls, source } = recorder();
+    const bar = build(source);
+    bar.set({ style: 'dark', hidden: true, animated: true });
+    calls.length = 0;
+
+    const claim = bar.push({ style: 'light', hidden: undefined, animated: undefined });
+    assert.deepEqual(calls, [
+      ['style', ['light', true]],
+      ['hidden', [true, 'fade']],
+    ]);
+    calls.length = 0;
+
+    claim();
+    assert.deepEqual(calls, [
+      ['style', ['dark', true]],
+      ['hidden', [true, 'fade']],
+    ]);
+    assert.deepEqual(bar.state(), { style: 'dark', hidden: true, animated: true });
+  });
+
+  it('leaves an undefined property of the base claim out of the state', () => {
+    const { calls, source } = recorder();
+    const bar = build(source);
+    bar.set({ style: 'dark', hidden: undefined });
+    assert.deepEqual(calls, [['style', ['dark', undefined]]]);
+    assert.deepEqual(bar.state(), { style: 'dark' });
+  });
+
+  it('keeps the background color underneath', () => {
+    const { calls, source } = recorder();
+    const bar = build(source);
+    bar.set({ backgroundColor: '#123456' });
+    calls.length = 0;
+
+    bar.push({ backgroundColor: undefined, hidden: true });
+    assert.deepEqual(calls, [
+      ['hidden', [true, undefined]],
+      ['background', ['#123456', undefined]],
+    ]);
+  });
+
+  it('keeps following the scheme for an auto style underneath', () => {
+    const { calls, source } = recorder();
+    const colors = scheme('light');
+    const bar = build(source, colors.source);
+    bar.set({ style: 'auto' });
+    bar.push({ style: undefined, hidden: true });
+    calls.length = 0;
+
+    colors.change('dark');
+    assert.deepEqual(calls, [['style', ['light', undefined]]]);
+  });
+
+  it('hands the screens the style and visibility underneath', () => {
+    const { source } = recorder();
+    const bar = build({ ...source, screensSetBar: true });
+    bar.set({ style: 'dark', hidden: true });
+    bar.push({ style: undefined, hidden: undefined, translucent: true });
+    assert.deepEqual(bar.forScreens(), { style: 'dark', hidden: true });
+  });
+});

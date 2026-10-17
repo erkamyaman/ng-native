@@ -21,6 +21,7 @@ import {
   type Signal,
 } from '@angular/core';
 import { ColorScheme, type Scheme } from './color-scheme.ts';
+import { mergeClaims } from './merge-claims.ts';
 import { reactNative } from './react-native.ts';
 
 /**
@@ -87,9 +88,7 @@ export class NavigationBar {
   private readonly stack = signal<readonly NavigationBarState[]>([{}]);
 
   /** What is actually showing: every claim in order, later ones winning per property. */
-  readonly state: Signal<NavigationBarState> = computed(() =>
-    this.stack().reduce((merged, entry) => ({ ...merged, ...entry }), {}),
-  );
+  readonly state: Signal<NavigationBarState> = computed(() => mergeClaims(this.stack()));
 
   /**
    * What a screen with no `navigationBarHidden` of its own carries, so the claim still holds when

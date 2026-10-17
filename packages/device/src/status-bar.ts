@@ -21,6 +21,7 @@ import {
   type Signal,
 } from '@angular/core';
 import { ColorScheme, type Scheme } from './color-scheme.ts';
+import { mergeClaims } from './merge-claims.ts';
 import { reactNative } from './react-native.ts';
 
 /**
@@ -151,9 +152,7 @@ export class StatusBar {
   private readonly stack = signal<readonly StatusBarState[]>([{}]);
 
   /** What is actually showing: every claim in order, later ones winning per property. */
-  readonly state: Signal<StatusBarState> = computed(() =>
-    this.stack().reduce((merged, entry) => ({ ...merged, ...entry }), {}),
-  );
+  readonly state: Signal<StatusBarState> = computed(() => mergeClaims(this.stack()));
 
   /**
    * How tall it is, in points. Android reports it; iOS does not, and on iOS the number a layout
