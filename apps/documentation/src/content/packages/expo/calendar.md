@@ -60,7 +60,9 @@ export class ThisWeek {
 ```
 
 `events()` answers each occurrence of a recurring event as an event of its own, so a weekly match
-shows on every week it falls in.
+shows on every week it falls in. The platforms draw the range differently: on iOS an event that
+overlaps it at all is in it, and on Android only an event that starts and ends inside it. To catch
+an event running across either end on Android too, ask for a wider range and keep what overlaps.
 
 ## Adding an event
 
@@ -105,7 +107,7 @@ system's own new-event screen instead, for the user to fill in and save.
 - **`pickCalendar()`**: the system's calendar picker, on iOS. `null` if the user cancels it, and on
   Android.
 - **`events(calendars, start, end)`**: the events from `start` to `end` in the calendars given, as
-  handles or ids.
+  handles or ids. On iOS, every event overlapping the range; on Android, those inside it.
 - **`event(id)`** and **`reminder(id)`**: an event or, on iOS, a reminder whose id is already known.
 - **`sources()`**: the accounts the calendars belong to, on iOS.
 

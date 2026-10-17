@@ -153,7 +153,9 @@ export class Calendar {
 
   /**
    * The events from `start` to `end` in the calendars given, as handles or their ids, each
-   * occurrence of a recurring event as an event of its own.
+   * occurrence of a recurring event as an event of its own. On iOS an event that overlaps the
+   * range at all is in it; on Android only one that starts and ends inside it, so widen the range
+   * there to catch an event running across either end.
    */
   async events(
     calendars: readonly (string | ExpoCalendar)[],
