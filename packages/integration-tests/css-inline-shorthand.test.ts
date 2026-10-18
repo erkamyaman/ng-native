@@ -69,6 +69,7 @@ describe('an inline shorthand over a longhand from a stylesheet', () => {
     ],
     ['padding-top: 4px', { paddingBlock: 10 }, ['paddingTop']],
     ['margin-right: 4px', { marginInline: 10 }, ['marginRight']],
+    ['border-top-color: red', { borderBlockColor: 'blue' }, ['borderTopColor']],
   ];
 
   for (const [css, inline, over, kept] of covered) {
@@ -107,6 +108,20 @@ describe('an inline shorthand over a longhand from a stylesheet', () => {
     for (const side of ['Right', 'Bottom', 'Left', 'Start', 'End', 'Horizontal', 'Vertical']) {
       assert.equal(`padding${side}` in props, false, side);
     }
+  });
+
+  it('leaves the longhand under a shorthand of several values, which native does not take', () => {
+    // Expanded, `4px 8px` would cover each side with its own part; whole, it is no side's value.
+    const css = '.a { border-top-left-radius: 2px; border-top-color: green; padding-left: 2px }';
+    const s = scene(css, 'a');
+    s.style({ borderRadius: '4px 8px', borderColor: 'red blue', paddingInline: '4px 8px' });
+    const props = s.props();
+    assert.equal(props['borderTopLeftRadius'], 2);
+    assert.equal(props['borderTopColor'], 'rgb(0, 128, 0)');
+    assert.equal(props['paddingLeft'], 2);
+    s.style({ borderRadius: '4px / 8px', borderColor: 'rgb(0 0 255)' });
+    assert.equal(s.props()['borderTopLeftRadius'], 2, 'nor an elliptical radius');
+    assert.equal(s.props()['borderTopColor'], 'rgb(0 0 255)', 'one value with spaces covers it');
   });
 
   it('leaves the longhand under an inline shorthand that is null, which sets nothing', () => {
@@ -186,6 +201,11 @@ describe('an inline shorthand over a longhand from a stylesheet', () => {
   it('takes the longhand out under a bound shorthand whose token is unset', () => {
     // An inline `padding: var(--unset)` is padding at its initial value on every side.
     const s = scene('.a { padding-top: 4px }', 'a');
+    assert.equal(
+      s.props()['paddingTop'],
+      4,
+      'committed first, so the side has a value to take out',
+    );
     s.engine.setBoundStyle(s.node, 'padding', 'var(--unset)');
     assert.equal(has(s.props(), 'paddingTop'), false, 'sent null');
     assert.equal(has(s.props(), 'padding'), false);

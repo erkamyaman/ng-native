@@ -1540,14 +1540,9 @@ function boxShorthands(
 ): [string, string[]][] {
   return [
     [all, [...edges.across, ...edges.down, ...axes.across, ...axes.down]],
-    ...axes.across.map((axis): [string, string[]] => [
-      axis,
-      [...edges.across, ...axes.across.filter((other) => other !== axis)],
-    ]),
-    ...axes.down.map((axis): [string, string[]] => [
-      axis,
-      [...edges.down, ...axes.down.filter((other) => other !== axis)],
-    ]),
+    // An axis's own name among them is skipped as one the element sets itself.
+    ...axes.across.map((axis): [string, string[]] => [axis, [...edges.across, ...axes.across]]),
+    ...axes.down.map((axis): [string, string[]] => [axis, [...edges.down, ...axes.down]]),
   ];
 }
 
@@ -1587,6 +1582,20 @@ const COVERS: ReadonlyMap<string, readonly string[]> = new Map([
 ]);
 
 /**
+ * Whether a value is several CSS values, `4px 8px` or `4px / 8px`, split on whitespace outside
+ * brackets. Native takes none of them for a side, so a side keeps its own.
+ *
+ * ponytail: a side keeps its own rather than taking its part of the value. The renderer's
+ * `longhands` splits `padding`, `margin`, `inset` and `gap` into their parts; the others can join it.
+ */
+function severalValues(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  let flat = value;
+  for (let inner = flat; (inner = flat.replace(/\([^()]*\)/g, '()')) !== flat;) flat = inner;
+  return flat.split(CSS_SPACE).filter(Boolean).length > 1;
+}
+
+/**
  * Gives each prop in `style` that a shorthand the element sets itself covers the shorthand's
  * value: one in its inline style, `inline`, or bound from a token, `bound`. The value rather than
  * nothing, so a transition of the side eases to it, as in a browser. Not a prop the element sets
@@ -1601,6 +1610,7 @@ export function underOwnShorthands(
 ): void {
   const cover = (shorthand: string) => {
     const value = style[shorthand];
+    if (severalValues(value)) return;
     for (const key of COVERS.get(shorthand) ?? []) {
       if (!(key in style) || key in inline || bound?.has(key) || important?.has(key)) continue;
       if (value == null) delete style[key];
