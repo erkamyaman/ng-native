@@ -124,6 +124,29 @@ describe('an inline shorthand over a longhand from a stylesheet', () => {
     assert.equal(s.props()['borderTopColor'], 'rgb(0 0 255)', 'one value with spaces covers it');
   });
 
+  it('gives a longhand two shorthands cover the one native reads, in either order', () => {
+    // React Native reads `paddingInline` over `paddingHorizontal` over `padding`, whatever order
+    // they are written in, so the side a rule set takes the same value it would have without it.
+    const css = '.a { padding-left: 2px; padding-top: 2px; border-top-color: green; top: 2px }';
+    for (const order of [
+      { padding: 20, paddingHorizontal: 10, paddingInline: 5, paddingVertical: 7, paddingBlock: 3 },
+      { paddingBlock: 3, paddingVertical: 7, paddingInline: 5, paddingHorizontal: 10, padding: 20 },
+    ]) {
+      const s = scene(css, 'a');
+      s.style({ ...order, borderBlockColor: 'blue', borderColor: 'red', insetBlock: 4, inset: 9 });
+      const props = s.props();
+      assert.equal(props['paddingLeft'], 5, 'paddingInline');
+      assert.equal(props['paddingTop'], 3, 'paddingBlock');
+      assert.equal(props['borderTopColor'], 'blue', 'borderBlockColor');
+      assert.equal(props['top'], 4, 'insetBlock');
+    }
+    const s = scene(css, 'a');
+    s.style({ paddingHorizontal: 10 });
+    s.engine.setBoundStyle(s.node, 'padding', 'var(--p)');
+    s.engine.setCustomProperty(s.node, '--p', '20px');
+    assert.equal(s.props()['paddingLeft'], 10, 'and a bound one is ranked the same');
+  });
+
   it('leaves the longhand under an inline shorthand that is null, which sets nothing', () => {
     const s = scene('.a { padding-top: 4px }', 'a');
     s.style({ padding: null });

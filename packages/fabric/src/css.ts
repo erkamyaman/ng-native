@@ -1857,8 +1857,21 @@ export function underOwnShorthands(
       else style[key] = value;
     }
   };
-  for (const key in inline) if (inline[key] != null) cover(key);
-  if (bound) for (const key of bound.keys()) cover(key);
+  const set: string[] = [];
+  for (const key in inline) if (inline[key] != null && COVERS.has(key)) set.push(key);
+  if (bound) for (const key of bound.keys()) if (COVERS.has(key)) set.push(key);
+  // The one native reads last: React Native applies `paddingInline` over `paddingHorizontal`.
+  if (set.length > 1) set.sort((a, b) => rankOf(a) - rankOf(b));
+  for (const key of set) cover(key);
+}
+
+/**
+ * How late React Native applies a shorthand to an edge it shares with another
+ * (`YogaLayoutableShadowNode`): the box's own name, then its axis, then the logical axis.
+ */
+function rankOf(shorthand: string): number {
+  if (/(Inline|Block)$/.test(shorthand)) return 2;
+  return /(Horizontal|Vertical|BlockColor)$/.test(shorthand) ? 1 : 0;
 }
 
 /** The properties of a rule that have another form, plain and important, or null for neither. */
