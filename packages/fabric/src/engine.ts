@@ -22,6 +22,9 @@ import {
   usesActive,
   elementsAtEnd,
   hasAbove,
+  hasBeside,
+  forgetHasAnswers,
+  keepHasAnswers,
   joinSubjects,
   placeReadElsewhere,
   siblingReach,
@@ -460,21 +463,21 @@ interface Committed {
 }
 
 export interface EngineNode extends HostNode {
-  readonly kind: NodeKind;
+  readonly nodeKind: NodeKind;
   /** Lowercase template spelling, e.g. `view`. Never the native view name. */
   readonly tag: string;
   /** `tag` again, for Angular 22.0, which reads it on a component's host element. */
   readonly tagName: string;
   props: Record<string, unknown>;
-  text: string;
-  children: EngineNode[];
+  nodeText: string;
+  childList: EngineNode[];
   parent: EngineNode | null;
   listeners: Map<string, Set<(event: unknown) => void>> | null;
 
   /** CSS classes on this node, for selector matching. */
   classes: Set<string> | null;
   /** The compiled stylesheet of the component that created this node, if any. */
-  sheet: StyleSheet | null;
+  templateSheet: StyleSheet | null;
   /** The sheet of the component this node hosts, if it hosts one. What `:host` matches against. */
   hostSheet: StyleSheet | null;
   /** Custom properties set on the node itself; see `StyleTarget.customProperties`. */
@@ -503,7 +506,7 @@ export interface EngineNode extends HostNode {
   touchWithin?: boolean;
   /**
    * The paragraph the engine makes around a run of text written straight into a view. It is in no
-   * template and in no node's `children`: it holds the text, and commits where the text would.
+   * template and in no node's `childList`: it holds the text, and commits where the text would.
    */
   box?: EngineNode;
   /** A node the engine made, which no rule matches: it only inherits. */
@@ -801,6 +804,13 @@ export function registerPlatformComponents(platform: string): void {
  */
 const DEFAULT_PROPS: Record<string, Record<string, unknown>> = {
   ScrollView: { flexGrow: 1, flexShrink: 1, flexDirection: 'column', overflow: 'scroll' },
+  // Its `baseHorizontal`, for the view a horizontal scroll view is on Android.
+  AndroidHorizontalScrollView: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexDirection: 'row',
+    overflow: 'scroll',
+  },
   // RN's Image.ios.js: without it a border radius rounds the view but not the picture.
   Image: { overflow: 'hidden' },
   // RN's Modal.js gives the native host this; without it the modal does not lay out.
@@ -855,10 +865,10 @@ function keepForTransition(
 }
 
 function firstInFlow(node: EngineNode): EngineNode | undefined {
-  for (const child of node.children ?? []) {
+  for (const child of node.childList ?? []) {
     // Not the paragraph itself, which holds the words it was made around.
-    if (child.kind === 'text' && child.box) return child.box === node ? undefined : child.box;
-    if (child.kind !== 'element' || ownLayout(child, 'display') === 'none') continue;
+    if (child.nodeKind === 'text' && child.box) return child.box === node ? undefined : child.box;
+    if (child.nodeKind !== 'element' || ownLayout(child, 'display') === 'none') continue;
     if (ownLayout(child, 'position') !== 'absolute') return child;
   }
   return undefined;
@@ -868,13 +878,13 @@ const isNode = (node: EngineNode | undefined): node is EngineNode => node !== un
 
 /** Whether a row lays a child out among its others, and so can take its baseline from it. */
 const inFlow = (child: EngineNode): boolean =>
-  child.kind === 'element' && ownLayout(child, 'position') !== 'absolute';
+  child.nodeKind === 'element' && ownLayout(child, 'position') !== 'absolute';
 
 /** The text field a row's box takes its baseline from: itself, or the first in its flow down. */
 function fieldOnBaseline(item: EngineNode): EngineNode | undefined {
   let at: EngineNode | undefined = item;
-  while (at?.kind === 'element' && !TEXT_INPUTS.has(viewNameOf(at))) at = firstInFlow(at);
-  return at?.kind === 'element' ? at : undefined;
+  while (at?.nodeKind === 'element' && !TEXT_INPUTS.has(viewNameOf(at))) at = firstInFlow(at);
+  return at?.nodeKind === 'element' ? at : undefined;
 }
 
 type TextDirection = 'ltr' | 'rtl';
@@ -1125,11 +1135,17 @@ function ownLayout(node: EngineNode, key: string): unknown {
 
 /**
  * A container's main axis and how it aligns across it, as `row` or `column` and a keyword. A
- * `display: contents` node is no container: its children are laid out in the one above it.
+ * `display: contents` node is no container: its children are laid out in the one above it. With
+ * no direction of its own, the axis is its view's default, as Android's horizontal scroll view
+ * commits a row.
  */
 function containerOf(node: EngineNode): string {
   if (ownLayout(node, 'display') === 'contents') return 'contents';
-  const direction = String(ownLayout(node, 'flexDirection') ?? 'column');
+  const direction = String(
+    ownLayout(node, 'flexDirection') ??
+      DEFAULT_PROPS[viewNameOf(node)]?.['flexDirection'] ??
+      'column',
+  );
   return `${direction.startsWith('row') ? 'row' : 'column'} ${ownLayout(node, 'alignItems') ?? 'stretch'}`;
 }
 
@@ -1264,7 +1280,7 @@ function definiteHeight(node: EngineNode): boolean {
 
 function hasDefiniteHeight(node: EngineNode): boolean {
   // The root is the screen, and only a plain view is sized by its content alone.
-  if (!node.parent || node.kind !== 'element' || viewNameOf(node) !== 'View') return true;
+  if (!node.parent || node.nodeKind !== 'element' || viewNameOf(node) !== 'View') return true;
   const parent = layoutParent(node);
   if (!parent) return true;
   const height = ownLayout(node, 'height');
@@ -1669,8 +1685,8 @@ const BREAKS = /[\s\-\u00ad\u200b\u2010\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\u
 function unbroken(node: EngineNode): boolean {
   let text = '';
   const collect = (from: EngineNode): void => {
-    for (const child of from.children) {
-      if (child.kind === 'text') text += child.text;
+    for (const child of from.childList) {
+      if (child.nodeKind === 'text') text += child.nodeText;
       else if (isTextElement(child)) collect(child);
     }
   };
@@ -1744,7 +1760,7 @@ function pointOf(nativeEvent: unknown): { x: number; y: number } {
  */
 function touchActions(node: EngineNode): readonly string[] | undefined {
   for (let up: EngineNode | null = node; up; up = up.parent) {
-    const said = up.kind === 'element' ? touchActionOf(up) : undefined;
+    const said = up.nodeKind === 'element' ? touchActionOf(up) : undefined;
     if (typeof said === 'string') return said.split(' ');
   }
   return undefined;
@@ -1847,7 +1863,7 @@ const TEXT_CONTENT_PROPS: Record<string, string> = {};
 
 /** Whether `node` takes its text content as a prop rather than as text children. */
 function takesTextAsProp(node: EngineNode): boolean {
-  return node.kind === 'element' && TEXT_CONTENT_PROPS[viewNameOf(node)] !== undefined;
+  return node.nodeKind === 'element' && TEXT_CONTENT_PROPS[viewNameOf(node)] !== undefined;
 }
 
 /** Sets a view's text prop from its content, unless the prop is set explicitly. */
@@ -1875,9 +1891,9 @@ const trimEnds = (text: string): string => trimEnd(trimStart(text));
 function textContent(node: EngineNode): string {
   let text = '';
   let nested = false;
-  for (const child of node.children) {
-    if (child.kind === 'text') text += child.text;
-    else if (child.kind === 'element') nested = true;
+  for (const child of node.childList) {
+    if (child.nodeKind === 'text') text += child.nodeText;
+    else if (child.nodeKind === 'element') nested = true;
   }
   return nested ? trimStart(text) : trimEnd(trimStart(text));
 }
@@ -1981,7 +1997,7 @@ export function fontsSettled(families: Iterable<string>): void {
 function namesFamily(node: EngineNode, families: ReadonlySet<string>): boolean {
   const family = node.committed?.props['fontFamily'];
   if (typeof family === 'string' && families.has(family)) return true;
-  return node.children.some((child) => namesFamily(child, families));
+  return node.childList.some((child) => namesFamily(child, families));
 }
 
 /** A text size cap far above any a platform offers, so it caps nothing. See `fontsRegistered`. */
@@ -1996,8 +2012,16 @@ const FONT_REFRESH_STEP = 0.006;
 /** The views that take a cursor, on either platform. */
 const TEXT_INPUTS = new Set(['TextInput', 'AndroidTextInput']);
 
+/**
+ * Android's horizontal scroll view and the view that holds its content. RN's `ScrollView.js`
+ * commits them in place of `ScrollView` and its plain content view when `horizontal` is set, and
+ * the vertical view ignores `horizontal`. See `viewNameOf` and `committedViewName`.
+ */
+const HORIZONTAL_SCROLL = 'AndroidHorizontalScrollView';
+const HORIZONTAL_CONTENT = 'AndroidHorizontalScrollContentView';
+
 /** The views that scroll their content, which `focus` brings a field into view within. */
-const SCROLL_VIEWS = new Set(['ScrollView', 'AndroidHorizontalScrollView']);
+const SCROLL_VIEWS = new Set(['ScrollView', HORIZONTAL_SCROLL]);
 
 /** Element name -> the element name of the ancestor it commits into. See `registerHoist`. */
 const HOISTS: Record<string, string> = {};
@@ -2105,23 +2129,24 @@ interface KeptHoist {
 function paragraphText(node: EngineNode): string {
   let root = node.parent;
   // Text written straight into a view is a paragraph of its own, and all of it.
-  if (root === null || !isTextElement(root)) return node.box ? trimEnds(node.text) : node.text;
+  if (root === null || !isTextElement(root))
+    return node.box ? trimEnds(node.nodeText) : node.nodeText;
   // A text element a view stands in for, which places what it holds: no paragraph runs past it.
   const inParagraph = (above: EngineNode | null) =>
     isTextElement(above) && !aligningText(above as EngineNode);
   // The commonest paragraph by far: one run and nothing else, so it is both the first and last.
-  if (root.children.length === 1 && !inParagraph(root.parent)) return trimEnds(node.text);
+  if (root.childList.length === 1 && !inParagraph(root.parent)) return trimEnds(node.nodeText);
   while (inParagraph(root.parent)) root = root.parent!;
   const runs: EngineNode[] = [];
   const collect = (from: EngineNode) => {
-    for (const child of from.children) {
-      if (child.kind === 'text') {
-        if (child.text) runs.push(child);
+    for (const child of from.childList) {
+      if (child.nodeKind === 'text') {
+        if (child.nodeText) runs.push(child);
       } else if (isTextElement(child)) collect(child);
     }
   };
   collect(root);
-  let text = node.text;
+  let text = node.nodeText;
   if (runs[0] === node) text = trimStart(text);
   if (runs[runs.length - 1] === node) text = trimEnd(text);
   return text;
@@ -2129,16 +2154,18 @@ function paragraphText(node: EngineNode): string {
 
 /** The part of a node `viewNameOf` reads: an engine node, or any host's mirror of one. */
 export interface ViewNameNode {
-  readonly kind: string;
+  readonly nodeKind: string;
   readonly tag: string;
   readonly parent: ViewNameNode | null;
   /** Whether a component is mounted on it, and whether that component is the native view. */
   readonly componentHost?: boolean;
   readonly nativeView?: boolean;
   /** What it holds, which decides whether one of HTML's text elements is text or a view. */
-  readonly children?: readonly ViewNameNode[];
+  readonly childList?: readonly ViewNameNode[];
   /** Set on the paragraph the engine makes for a run of text written straight into a view. */
   readonly anonymous?: boolean;
+  /** Its props, of which `horizontal` decides which scroll view a scroll view is on Android. */
+  readonly props?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -2146,7 +2173,7 @@ export interface ViewNameNode {
  * other such elements. Worked out each time, from the tree as it is, so nothing can go stale.
  */
 function isTextElement(node: ViewNameNode | null): boolean {
-  if (node === null || node.kind !== 'element') return false;
+  if (node === null || node.nodeKind !== 'element') return false;
   if (node.tag === 'text') return true;
   // One lookup settles nearly every other element, which is a view.
   if (registeredViewName(node.tag) !== PARAGRAPH) return false;
@@ -2155,9 +2182,9 @@ function isTextElement(node: ViewNameNode | null): boolean {
 
 /** Whether a text element holds text and nothing else. One that holds nothing holds no text. */
 function holdsOnlyText(node: ViewNameNode): boolean {
-  const children = node.children ?? [];
+  const children = node.childList ?? [];
   for (const child of children) {
-    if (child.kind === 'element' && !isTextElement(child)) return false;
+    if (child.nodeKind === 'element' && !isTextElement(child)) return false;
   }
   return children.length > 0;
 }
@@ -2177,11 +2204,11 @@ const ALIGNS = new Set(['center', 'flex-end', 'space-around', 'space-evenly']);
  * the one run is left as it was.
  */
 function aligningText(node: EngineNode): boolean {
-  if (node.kind !== 'element' || node.tag === 'text' || !TEXT_ELEMENTS.has(node.tag)) {
+  if (node.nodeKind !== 'element' || node.tag === 'text' || !TEXT_ELEMENTS.has(node.tag)) {
     return false;
   }
   const stacked = stacksRuns(node);
-  if (!stacked && (node.children.length !== 1 || !oneRun(node.children[0]!))) return false;
+  if (!stacked && (node.childList.length !== 1 || !oneRun(node.childList[0]!))) return false;
   // Under a text element it is a span of that paragraph, unless that one is a view placing it.
   if (isTextElement(node.parent) && !aligningText(node.parent as EngineNode)) return false;
   return placesByFlex(node, stacked);
@@ -2204,20 +2231,36 @@ function placesByFlex(node: EngineNode, stacked: boolean): boolean {
  */
 function stacksRuns(node: EngineNode): boolean {
   let runs = 0;
-  for (const child of node.children) {
-    if (child.kind === 'element' && TEXT_ELEMENTS.has(child.tag)) runs++;
-    else if (child.kind === 'text' ? trimEnds(child.text) : child.kind !== 'anchor') return false;
+  for (const child of node.childList) {
+    if (child.nodeKind === 'element' && TEXT_ELEMENTS.has(child.tag)) runs++;
+    else if (child.nodeKind === 'text' ? trimEnds(child.nodeText) : child.nodeKind !== 'anchor')
+      return false;
   }
   return runs > 1;
 }
 
 /** One run of text to place: text itself, or a text element around some, a label in a span. */
 const oneRun = (child: EngineNode): boolean =>
-  child.kind === 'text' || (child.kind === 'element' && TEXT_ELEMENTS.has(child.tag));
+  child.nodeKind === 'text' || (child.nodeKind === 'element' && TEXT_ELEMENTS.has(child.tag));
 
-/** The view a node is committed as: `viewNameOf`, but for a text element that aligns its text. */
-const committedViewName = (node: EngineNode): string =>
-  aligningText(node) ? DEFAULT_VIEW : viewNameOf(node);
+/**
+ * The view a node is committed as: `viewNameOf`, but for a text element that aligns its text, and
+ * for the content view of a horizontal scroll view on Android, which RN commits as a view of its
+ * own. That one is a plain view in every other respect, so only the commit names it: a scroll
+ * view changing axis is made again with everything in it (see `forgetRenamed`), and a view moved
+ * into or out of one is too (see `reconcileUnder`), so the name cannot go stale on a clone.
+ */
+function committedViewName(node: EngineNode): string {
+  if (aligningText(node)) return DEFAULT_VIEW;
+  const name = viewNameOf(node);
+  return name === DEFAULT_VIEW && platformOS === 'android' && holdsContentOf(node.parent)
+    ? HORIZONTAL_CONTENT
+    : name;
+}
+
+/** Whether a node is a horizontal scroll view, whose children hold its content. */
+const holdsContentOf = (parent: EngineNode | null): boolean =>
+  parent !== null && parent.nodeKind === 'element' && viewNameOf(parent) === HORIZONTAL_SCROLL;
 
 /**
  * The native view a node commits as: `Paragraph` for a `<text>`, `VirtualText` for one nested in
@@ -2229,7 +2272,7 @@ const committedViewName = (node: EngineNode): string =>
  * table the commit does, so after `registerPlatformComponents('android')` it answers for Android.
  */
 export function viewNameOf(node: ViewNameNode): string {
-  if (node.kind === 'text') return RAW_TEXT;
+  if (node.nodeKind === 'text') return RAW_TEXT;
   // RN models nested text as a span inside a paragraph: `Paragraph > [RawText, Text > RawText]`.
   // Committing a nested `<text>` as another Paragraph gives a paragraph inside a paragraph,
   // which lays out as a separate block instead of flowing inline.
@@ -2237,7 +2280,7 @@ export function viewNameOf(node: ViewNameNode): string {
   if (node.componentHost && !node.nativeView && YIELDING.has(node.tag)) return DEFAULT_VIEW;
   const registered = registeredViewName(node.tag);
   // Nearly every element: a view of some kind, by its name alone.
-  if (registered !== PARAGRAPH) return registered ?? DEFAULT_VIEW;
+  if (registered !== PARAGRAPH) return namedView(node, registered);
   // One of HTML's text elements that holds something other than text: a view.
   if (node.tag !== 'text' && TEXT_ELEMENTS.has(node.tag) && !holdsOnlyText(node)) {
     return DEFAULT_VIEW;
@@ -2246,6 +2289,16 @@ export function viewNameOf(node: ViewNameNode): string {
   // of the element that view is.
   return nestedText(node) ? VIRTUAL_TEXT : PARAGRAPH;
 }
+
+/**
+ * The view an element other than text is by its registered name: a plain view when it has none,
+ * and on Android, where there is a scroll view for each axis, the horizontal one when RN would
+ * pick it, `horizontal` set to true.
+ */
+const namedView = (node: ViewNameNode, registered: string | undefined): string =>
+  registered === 'ScrollView' && platformOS === 'android' && node.props?.['horizontal'] === true
+    ? HORIZONTAL_SCROLL
+    : (registered ?? DEFAULT_VIEW);
 
 /**
  * Whether a text element is a span of the paragraph above it: under another text element, but
@@ -2301,7 +2354,7 @@ const BOOLEAN_VIEW_PROPS = new Set([
  */
 function wasOrIsEmptyWithout(node: EngineNode, moved: EngineNode): boolean {
   if (!fills(moved)) return false;
-  return !node.children.some((child) => child !== moved && fills(child));
+  return !node.childList.some((child) => child !== moved && fills(child));
 }
 
 /**
@@ -2502,7 +2555,7 @@ function takesTouches(node: EngineNode, value: unknown, prop: unknown): boolean 
   if (value === 'none' && prop === 'none') return false;
   // CSS's `none` and native's `box-none` take no touches themselves: their children answer.
   if (value === 'none' || value === 'box-none') {
-    return node.children.some((child) => child.touchWithin);
+    return node.childList.some((child) => child.touchWithin);
   }
   return true;
 }
@@ -2639,12 +2692,12 @@ class RetainedNode {
   }
 
   props: Record<string, unknown> = {};
-  text = '';
-  children: EngineNode[] = [];
+  nodeText = '';
+  childList: EngineNode[] = [];
   parent: EngineNode | null = null;
   listeners: Map<string, Set<(event: unknown) => void>> | null = null;
   classes: Set<string> | null = null;
-  sheet: StyleSheet | null = null;
+  templateSheet: StyleSheet | null = null;
   hostSheet: StyleSheet | null = null;
   customProperties: Record<string, TokenValue> | null = null;
   styleCache: StyleCache | null = null;
@@ -2676,15 +2729,15 @@ class RetainedNode {
   scrolled?: ScrollAnimation;
   owned?: { readonly tag: number; readonly keys: Set<string> };
 
-  readonly kind: NodeKind;
+  readonly nodeKind: NodeKind;
   readonly tag: string;
-  /** See `HostNode.host`. */
-  readonly host: HostEngine;
+  /** See `HostNode.engine`. */
+  readonly engine: HostEngine;
 
   constructor(kind: NodeKind, tag: string, host: HostEngine) {
-    this.kind = kind;
+    this.nodeKind = kind;
     this.tag = tag;
-    this.host = host;
+    this.engine = host;
   }
 
   get tagName(): string {
@@ -2746,7 +2799,7 @@ class RetainedNode {
     while (depth < mine.length && depth < theirs.length && mine[depth] === theirs[depth]) depth++;
     if (depth === mine.length) return 4 | 16;
     if (depth === theirs.length) return 2 | 8;
-    const siblings = mine[depth - 1]!.children as unknown as RetainedNode[];
+    const siblings = mine[depth - 1]!.childList as unknown as RetainedNode[];
     return siblings.indexOf(theirs[depth]!) < siblings.indexOf(mine[depth]!) ? 2 : 4;
   }
 
@@ -2755,7 +2808,7 @@ class RetainedNode {
    * would do: see `HostEngine.focus`.
    */
   focus(): void {
-    this.host.focus(this as unknown as EngineNode);
+    this.engine.focus(this as unknown as EngineNode);
   }
 
   get classList(): { contains(name: string): boolean } {
@@ -2776,9 +2829,9 @@ class RetainedNode {
     let byType = byListener.get(listener);
     if (!byType) byListener.set(listener, (byType = new Map()));
     if (byType.has(type)) return;
-    if (type === 'mouseenter') reportHover(this.host);
+    if (type === 'mouseenter') reportHover(this.engine);
     const stops = events.map((event) =>
-      this.host.setEventListener(this as unknown as EngineNode, event, listener),
+      this.engine.setEventListener(this as unknown as EngineNode, event, listener),
     );
     byType.set(type, () => {
       for (const stop of stops) stop();
@@ -3222,8 +3275,15 @@ export class Engine implements HostEngine {
   private readonly placeElsewhere = new Set<PlaceReader>();
   /** The sheets `watchStructure` has read, which it is asked about once an element. */
   private readonly watchedStructure = new WeakSet<StyleSheet>();
-  /** Whether any sheet uses `:has()`. See `markBeneath`. */
+  /**
+   * The sheets in play that use `:has()`, each with whether it asks about what comes after a
+   * node, `:has(+ .x)`: see `hasBeside`. A sheet taken away asks no more.
+   */
+  private readonly hasWatched = new Map<StyleSheet, boolean>();
+  /** Whether any sheet in play uses `:has()`. See `markBeneath`. */
   private hasSheets = false;
+  /** Whether any asks about what comes after a node. See `markBefore`. */
+  private hasBesideSheets = false;
   private readonly resolveAssetSource: (value: unknown) => unknown;
 
   constructor(fabric: FabricUIManager, rootTag: number, options: EngineOptions = {}) {
@@ -3410,11 +3470,11 @@ export class Engine implements HostEngine {
    * so a commit steps over them: the walk here is what finds the ones it must not step over.
    */
   private markWrittenFor(sheet: StyleSheet, node: EngineNode): void {
-    if (node.kind === 'element' && this.styles.couldMatch(sheet, node)) {
+    if (node.nodeKind === 'element' && this.styles.couldMatch(sheet, node)) {
       node.styleDirty = true;
       this.markPath(node);
     }
-    for (const child of node.children) this.markWrittenFor(sheet, child);
+    for (const child of node.childList) this.markWrittenFor(sheet, child);
   }
 
   /**
@@ -3450,10 +3510,10 @@ export class Engine implements HostEngine {
       this.markProps(measured, false);
     };
     const visit = (node: EngineNode): void => {
-      for (const child of node.children) {
+      for (const child of node.childList) {
         // The paragraph of a run of text written straight into a view is kept on the text.
-        if (child.kind === 'text' && child.box?.committed) again(child.box);
-        if (child.kind !== 'element') continue;
+        if (child.nodeKind === 'text' && child.box?.committed) again(child.box);
+        if (child.nodeKind !== 'element') continue;
         if (child.committed && MEASURED_VIEWS.has(committedViewName(child))) again(child);
         visit(child);
       }
@@ -3497,9 +3557,9 @@ export class Engine implements HostEngine {
       held = true;
     };
     const visit = (node: EngineNode): void => {
-      for (const child of node.children) {
+      for (const child of node.childList) {
         // The paragraph of a run of text written straight into a view is kept on the text.
-        release(child.kind === 'text' ? child.box : child);
+        release(child.nodeKind === 'text' ? child.box : child);
         visit(child);
       }
     };
@@ -3522,10 +3582,10 @@ export class Engine implements HostEngine {
       return true;
     };
     const visit = (node: EngineNode): void => {
-      for (const child of node.children) {
+      for (const child of node.childList) {
         // The paragraph of a run of text written straight into a view is kept on the text.
-        if (child.kind === 'text' && child.box) refresh(child.box);
-        if (child.kind === 'element' && !refresh(child)) visit(child);
+        if (child.nodeKind === 'text' && child.box) refresh(child.box);
+        if (child.nodeKind === 'element' && !refresh(child)) visit(child);
       }
     };
     visit(this.root);
@@ -3601,10 +3661,10 @@ export class Engine implements HostEngine {
    * against the one it was created with once `like` is null.
    */
   adoptScope(node: EngineNode, like: EngineNode | null): void {
-    if (like && !this.ownSheets.has(node)) this.ownSheets.set(node, node.sheet);
-    const sheet = like ? like.sheet : this.ownSheets.get(node);
-    if (sheet === undefined || node.sheet === sheet) return;
-    node.sheet = sheet;
+    if (like && !this.ownSheets.has(node)) this.ownSheets.set(node, node.templateSheet);
+    const sheet = like ? like.templateSheet : this.ownSheets.get(node);
+    if (sheet === undefined || node.templateSheet === sheet) return;
+    node.templateSheet = sheet;
     this.styles.noteSheet(sheet, true);
     this.watchStructure(sheet);
     this.watchHas(sheet);
@@ -3647,7 +3707,7 @@ export class Engine implements HostEngine {
 
   createElement(name: string, sheet: StyleSheet | null = null): EngineNode {
     const node = new RetainedNode('element', name, this);
-    node.sheet = sheet;
+    node.templateSheet = sheet;
     this.styles.noteSheet(sheet, true);
     const html = HTML_ELEMENTS.get(name);
     if (html !== undefined) {
@@ -3697,7 +3757,7 @@ export class Engine implements HostEngine {
     this.markProps(node, false);
     if (!reach) return;
     if (reach.own) node.ownDirty = true;
-    if (this.hasSheets && reach.beneath) this.markBeneath(node.parent);
+    if (this.hasSheets && reach.beneath) this.markBeneath(node.parent, null, node);
     // `:has(> .on)`: only the box right above the node can answer it.
     else if (this.hasSheets && reach.parentHas) this.markBeneath(node.parent, node.parent?.parent);
     if (this.styles.reachesUnder(reach)) {
@@ -3727,10 +3787,10 @@ export class Engine implements HostEngine {
   }
 
   private markAllUnder(node: EngineNode): void {
-    if (node.kind !== 'element') return;
+    if (node.nodeKind !== 'element') return;
     node.ownDirty = true;
     this.markPath(node);
-    for (const child of node.children) this.markAllUnder(child);
+    for (const child of node.childList) this.markAllUnder(child);
   }
 
   /**
@@ -3738,8 +3798,8 @@ export class Engine implements HostEngine {
    * under another is marked too: what is under an element marked this way keeps its rules.
    */
   private markUnder(node: EngineNode, subjects: Subjects): void {
-    for (const child of node.children) {
-      if (child.kind !== 'element') continue;
+    for (const child of node.childList) {
+      if (child.nodeKind !== 'element') continue;
       if (this.styles.isFor(subjects, child)) {
         child.ownDirty = true;
         this.markPath(child);
@@ -3799,7 +3859,7 @@ export class Engine implements HostEngine {
 
   createText(value: string): EngineNode {
     const node = new RetainedNode('text', '#text', this);
-    node.text = value;
+    node.nodeText = value;
     return node;
   }
 
@@ -3808,9 +3868,9 @@ export class Engine implements HostEngine {
     this.detach(child);
     this.markReturned(child);
     child.parent = parent;
-    parent.children.push(child);
+    parent.childList.push(child);
     if (child.dormantHoists) this.wakeHoists(child);
-    this.markStructure(parent, child, parent.children.length - 1);
+    this.markStructure(parent, child, parent.childList.length - 1);
     this.markTextContent(parent, child);
   }
 
@@ -3819,11 +3879,11 @@ export class Engine implements HostEngine {
     this.detach(child);
     this.markReturned(child);
     child.parent = parent;
-    const at = ref ? parent.children.indexOf(ref) : -1;
-    if (at < 0) parent.children.push(child);
-    else parent.children.splice(at, 0, child);
+    const at = ref ? parent.childList.indexOf(ref) : -1;
+    if (at < 0) parent.childList.push(child);
+    else parent.childList.splice(at, 0, child);
     if (child.dormantHoists) this.wakeHoists(child);
-    this.markStructure(parent, child, at < 0 ? parent.children.length - 1 : at);
+    this.markStructure(parent, child, at < 0 ? parent.childList.length - 1 : at);
     this.markTextContent(parent, child);
   }
 
@@ -3840,9 +3900,10 @@ export class Engine implements HostEngine {
   removeChild(parent: EngineNode | null, child: EngineNode): void {
     const target = parent ?? child.parent;
     if (!target) return;
-    const at = target.children.indexOf(child);
+    const at = target.childList.indexOf(child);
     if (at < 0) return;
-    target.children.splice(at, 1);
+    this.carryHoists(child);
+    target.childList.splice(at, 1);
     child.parent = null;
     this.outSince.set(child, this.classesAbove);
     this.removedSinceCommit.add(child);
@@ -3855,9 +3916,9 @@ export class Engine implements HostEngine {
    * changes it too, by keeping or dropping the space before it.
    */
   private markTextContent(parent: EngineNode, child: EngineNode): void {
-    if (child.kind === 'anchor') return;
+    if (child.nodeKind === 'anchor') return;
     if (takesTextAsProp(parent)) this.markProps(parent);
-    else if (isTextElement(parent)) this.markWords(parent, child.kind === 'element');
+    else if (isTextElement(parent)) this.markWords(parent, child.nodeKind === 'element');
   }
 
   /**
@@ -3872,6 +3933,17 @@ export class Engine implements HostEngine {
     // ponytail: one restyled to another line height is not; mark its paragraph if seen cut.
     const words = root.oneWord !== undefined && unbroken(root) !== root.oneWord;
     if (run || words) this.markProps(root, false);
+  }
+
+  /**
+   * A node taken out of a subtree that left the tree can take hoisted nodes of the subtree's with
+   * it, as content projected inside an element of an `@if` moves into the element made again when
+   * the block opens. All of the subtree's are woken, and the commit, which the removal makes
+   * release, puts each back with the subtree it is in.
+   */
+  private carryHoists(child: EngineNode): void {
+    const top = this.topOf(child);
+    if (top.dormantHoists) this.wakeHoists(top);
   }
 
   /** A subtree that went out of the tree is back in: its hoisted nodes commit again. */
@@ -3966,12 +4038,13 @@ export class Engine implements HostEngine {
 
   /**
    * Angular calls this per node on view destroy, but only when `Renderer2.destroyNode` is
-   * non-null. Without it the listener sets on discarded nodes stay reachable from the
-   * closures Angular hands us, which is a slow leak on any screen that churns views.
+   * non-null. It is not always the end of the node: Angular calls it for the content an
+   * `<ng-content>` at the top of the view projects too, which belongs to the declaring view, and
+   * puts the same nodes back when the view is made again. So what is let go here comes back when
+   * the node does, and its listeners stay: each goes when the view or directive that added it
+   * tears it down, and Angular does not listen again for content it puts back.
    */
   destroyNode(node: EngineNode): void {
-    node.listeners?.clear();
-    node.listeners = null;
     // With what it holds: a node Angular destroys can be put back, as content projected into
     // an `@if` is, and its children's views would then be handed to the view it is made again
     // as. Native gives a view one parent for its life, and aborts on a second.
@@ -3988,7 +4061,12 @@ export class Engine implements HostEngine {
     }
     this.running.delete(node);
     this.playing.delete(node);
-    this.hoisted.delete(node);
+    // Held by the subtree it left, as `releaseDetached` holds it, and hoisted again if put back.
+    const top = this.hoisted.has(node) ? this.topOf(node) : this.root;
+    if (top !== this.root) {
+      this.hoisted.delete(node);
+      (top.dormantHoists ??= []).push(node);
+    }
     node.kept = undefined;
     // A field popped with the keyboard up never sends its blur.
     if (this.focusedNode === node) this.dropFocus();
@@ -3999,7 +4077,7 @@ export class Engine implements HostEngine {
   }
 
   nextSibling(node: EngineNode): EngineNode | null {
-    const siblings = node.parent?.children;
+    const siblings = node.parent?.childList;
     if (!siblings) return null;
     return siblings[siblings.indexOf(node) + 1] ?? null;
   }
@@ -4231,8 +4309,8 @@ export class Engine implements HostEngine {
   }
 
   setText(node: EngineNode, value: string): void {
-    const filled = (node.text === '') !== (value === '');
-    node.text = value;
+    const filled = (node.nodeText === '') !== (value === '');
+    node.nodeText = value;
     this.markProps(node);
     if (!node.parent) return;
     this.markTextContent(node.parent, node);
@@ -4279,7 +4357,7 @@ export class Engine implements HostEngine {
       // state, though nothing about the sibling moved. Only sheets that ask about siblings pay.
       // Not for a change `beside` says no rule asks of an element before another.
       if (this.structuralSheets && beside) this.markLaterSiblings(node);
-      if (this.hasSheets) this.markBeneath(node.parent);
+      if (this.hasSheets) this.markBeneath(node.parent, null, node);
     }
     // The root has no parent to carry the mark, so it carries its own: `.dark` on the root alone
     // restyles everything beneath it.
@@ -4290,6 +4368,9 @@ export class Engine implements HostEngine {
   private watchHas(sheet: StyleSheet | null | undefined): void {
     if (!sheet?.has) return;
     if (!this.hasReaders.has(sheet)) this.hasReaders.set(sheet, hasAbove(sheet));
+    if (this.hasWatched.has(sheet)) return;
+    this.hasWatched.set(sheet, hasBeside(sheet));
+    if (this.hasWatched.get(sheet)) this.hasBesideSheets = true;
     if (this.hasSheets) return;
     this.hasSheets = true;
     this.styles.tracksHas = true;
@@ -4300,16 +4381,62 @@ export class Engine implements HostEngine {
     this.markPath(this.root);
   }
 
+  /** A sheet has left play: what it asked of `:has()` goes with it. */
+  private unwatchHas(sheet: StyleSheet): void {
+    this.hasReaders.delete(sheet);
+    if (!this.hasWatched.delete(sheet)) return;
+    this.hasSheets = this.hasWatched.size > 0;
+    this.hasBesideSheets = [...this.hasWatched.values()].some(Boolean);
+  }
+
   /**
    * Something at or beneath `from` changed: every node from there up may match a `:has()` rule
    * it did not, or stop matching one, up to `upTo` and not it. They are matched again rather than
    * marked for restyling, which would restyle everything under them. Only sheets that use
    * `:has()` pay.
    */
-  private markBeneath(from: EngineNode | null, upTo: EngineNode | null = null): void {
+  private markBeneath(
+    from: EngineNode | null,
+    upTo: EngineNode | null = null,
+    changed?: EngineNode,
+    at?: number,
+  ): void {
+    forgetHasAnswers();
+    const wasClean = !this.root.structureDirty && !this.root.subtreeDirty;
+    this.markAsking(from, upTo);
+    if (wasClean && this.root.subtreeDirty) this.onDirty?.();
+    if (!this.hasBesideSheets || !from) return;
+    this.markBefore(from, at ?? (changed ? from.childList.indexOf(changed) : 0));
+  }
+
+  /** Each box from `from` up to `upTo`, and not it, to be matched again for `:has()`. */
+  private markAsking(from: EngineNode | null, upTo: EngineNode | null): void {
     for (let node = from; node && node !== upTo; node = node.parent) {
       node.hasDirty = true;
+      // Each is reached by the commit, though a box on the way was marked and not committed
+      // since: one with `display: none` keeps its mark, and `markPath` stops at a marked box.
+      node.subtreeDirty = true;
       if (this.hasReaders.size) this.changedBeneath.add(node);
+    }
+  }
+
+  /**
+   * `:has(+ .x)` and `:has(~ .x .y)`: a change in `parent`'s list at `at` can change what the
+   * elements before it match, and so can one beneath a box for the elements before that box.
+   * Each is matched again, as an ancestor is. Only sheets that ask about what comes after pay.
+   */
+  private markBefore(parent: EngineNode, at: number): void {
+    let end = at;
+    for (let list: EngineNode | null = parent; list;) {
+      for (let i = 0; i < end; i++) {
+        const before = list.childList[i]!;
+        if (before.nodeKind !== 'element') continue;
+        before.hasDirty = true;
+        if (this.hasReaders.size) this.changedBeneath.add(before);
+      }
+      const up: EngineNode | null = list.parent;
+      if (up) end = up.childList.indexOf(list);
+      list = up;
     }
   }
 
@@ -4365,7 +4492,25 @@ export class Engine implements HostEngine {
     if (!asked.length) return above;
     const subjects = asked.map((reader) => reader.subjects);
     this.markUnder(node, subjects.length === 1 ? subjects[0]! : joinSubjects(subjects));
+    for (const reader of asked) if (reader.beside) this.markAfter(node, reader.subjects);
     return new Set([...(above ?? []), ...asked]);
+  }
+
+  /**
+   * Have matched again each element after `node` that one of `subjects`' rules could be for, and
+   * each under one of those: what `.card:has(.x) ~ .title` is for, where the card is `node`.
+   */
+  private markAfter(node: EngineNode, subjects: Subjects): void {
+    const siblings = node.parent?.childList ?? [];
+    for (let i = siblings.indexOf(node) + 1; i < siblings.length; i++) {
+      const sibling = siblings[i]!;
+      if (sibling.nodeKind !== 'element') continue;
+      if (this.styles.isFor(subjects, sibling)) {
+        sibling.ownDirty = true;
+        this.markPath(sibling);
+      }
+      this.markUnder(sibling, subjects);
+    }
   }
 
   /**
@@ -4374,14 +4519,14 @@ export class Engine implements HostEngine {
    */
   private markLaterSiblings(node: EngineNode): void {
     let left = this.structuralAfter;
-    const siblings = left > 0 ? node.parent?.children : undefined;
+    const siblings = left > 0 ? node.parent?.childList : undefined;
     if (!siblings) return;
     // Each matched again, and left as it was with all under it where it matches what it did:
     // see `markPlace`.
     for (let i = siblings.indexOf(node) + 1; i < siblings.length && left > 0; i++) {
       const sibling = siblings[i]!;
       this.markPlace(sibling);
-      if (sibling.kind === 'element') left--;
+      if (sibling.nodeKind === 'element') left--;
     }
   }
 
@@ -4392,7 +4537,7 @@ export class Engine implements HostEngine {
     // the old last row is no longer the last. Only sheets that ask about position pay for this.
     if (this.structuralSheets) {
       moved.styleDirty = true;
-      this.markRepositioned(node.children, at, moved);
+      this.markRepositioned(node.childList, at, moved);
       // What the node itself matches hangs on its child list only through `:empty`, which only
       // its first child arriving or its last one leaving changes: and then what a later sibling
       // matches can too, `.box:empty + .spacer`. Styled again for any other change, everything
@@ -4402,7 +4547,7 @@ export class Engine implements HostEngine {
         this.markLaterSiblings(node);
       }
     }
-    if (this.hasSheets) this.markBeneath(node);
+    if (this.hasSheets) this.markBeneath(node, null, undefined, at);
     this.markPath(node.parent);
   }
 
@@ -4430,7 +4575,7 @@ export class Engine implements HostEngine {
     for (let i = at; i < children.length && left > 0; i++) {
       const child = children[i]!;
       this.markPlace(child);
-      if (child.kind === 'element' && child !== moved) left--;
+      if (child.nodeKind === 'element' && child !== moved) left--;
     }
   }
 
@@ -4443,7 +4588,7 @@ export class Engine implements HostEngine {
    * that is no element.
    */
   private markPlace(child: EngineNode): void {
-    if (child.kind !== 'element' || this.placeReadFromUnder(child)) child.styleDirty = true;
+    if (child.nodeKind !== 'element' || this.placeReadFromUnder(child)) child.styleDirty = true;
     else child.stateDirty = true;
   }
 
@@ -4505,6 +4650,16 @@ export class Engine implements HostEngine {
    * optimisation.
    */
   commit(): boolean {
+    // What `:has()` answers is kept for the commit, where a sheet asks it: see `keepHasAnswers`.
+    keepHasAnswers(this.hasSheets);
+    try {
+      return this.commitWhole();
+    } finally {
+      keepHasAnswers(false);
+    }
+  }
+
+  private commitWhole(): boolean {
     if (this.removedSinceCommit.size) this.releaseDetached();
     // The root is never reconciled itself, so it has no `committed` record and `isClean` would
     // always say dirty. Ask the flags directly, or every change-detection pass ends in a
@@ -4750,8 +4905,8 @@ export class Engine implements HostEngine {
   private visibleChildren(node: EngineNode): EngineNode[] {
     // A view that takes its text as a prop has no text children to commit. See `ViewNameOptions`.
     const textAsProp = takesTextAsProp(node);
-    return node.children.filter(
-      (child) => child.kind !== 'anchor' && !(textAsProp && child.kind === 'text'),
+    return node.childList.filter(
+      (child) => child.nodeKind !== 'anchor' && !(textAsProp && child.nodeKind === 'text'),
     );
   }
 
@@ -4788,9 +4943,9 @@ export class Engine implements HostEngine {
   }
 
   private mergeProps(node: EngineNode, viewName: string): Record<string, unknown> {
-    if (node.kind === 'text') return { text: paragraphText(node) };
+    if (node.nodeKind === 'text') return { text: paragraphText(node) };
     if (this.dev) this.checkProps(node);
-    this.registerSheet(node.sheet);
+    this.registerSheet(node.templateSheet);
     this.registerSheet(node.hostSheet);
     const props: Record<string, unknown> = { ...DEFAULT_PROPS[viewName], ...node.defaultStyle };
     Object.assign(props, this.styles.resolve(node, this.styleEpoch).style);
@@ -4862,9 +5017,9 @@ export class Engine implements HostEngine {
    * transform make one in a browser too; read them here if a box is ever raised past one.
    */
   private raisedBy(node: EngineNode, viewName: string): number | undefined {
-    if (viewName !== DEFAULT_VIEW) return undefined;
+    if (viewName !== DEFAULT_VIEW && viewName !== HORIZONTAL_CONTENT) return undefined;
     let over = 0;
-    for (const child of node.children) {
+    for (const child of node.childList) {
       const z = child.committed?.props['zIndex'];
       if (typeof z !== 'number' || z <= over) continue;
       if (!this.committedElsewhere(child) && !this.withheld(child)) over = z;
@@ -4906,7 +5061,7 @@ export class Engine implements HostEngine {
    * itself: one that does not scale, or stops at a size, beside text that does.
    */
   private tallestRun(node: EngineNode, within: Record<string, unknown>, tallest: number): number {
-    for (const child of node.children) {
+    for (const child of node.childList) {
       if (!isTextElement(child)) continue;
       const scaling = {
         allowFontScaling: child.props['allowFontScaling'] ?? within['allowFontScaling'],
@@ -4982,8 +5137,8 @@ export class Engine implements HostEngine {
 
   /** Have a container's children merged again, through any `display: contents` among them. */
   private refit(container: EngineNode): void {
-    for (const child of container.children) {
-      if (child.kind !== 'element') continue;
+    for (const child of container.childList) {
+      if (child.nodeKind !== 'element') continue;
       child.propsDirty = true;
       if (containerOf(child) === 'contents') this.refit(child);
     }
@@ -5062,7 +5217,7 @@ export class Engine implements HostEngine {
    */
   sheetReplaced(sheet: StyleSheet, next: StyleSheet | null): void {
     if (sheet === next && this.knownSheets.has(sheet)) return;
-    this.hasReaders.delete(sheet);
+    this.unwatchHas(sheet);
     this.watchHas(next);
     this.unwatchActive(sheet);
     this.watchActive(next);
@@ -5107,7 +5262,7 @@ export class Engine implements HostEngine {
 
   /** Mark every node under `node` with an animation, so it looks its keyframes up again. */
   private markAnimated(node: EngineNode): void {
-    for (const child of node.children) {
+    for (const child of node.childList) {
       if (child.playing || child.scrolled) this.markProps(child, false);
       this.markAnimated(child);
     }
@@ -5134,10 +5289,10 @@ export class Engine implements HostEngine {
     const named = (text: EngineNode | undefined): void => {
       if (typeof text?.committed?.props['fontFamily'] === 'string') this.markProps(text, false);
     };
-    for (const child of node.children) {
+    for (const child of node.childList) {
       // The paragraph of a run of text written straight into a view is kept on the text.
-      if (child.kind === 'text') named(child.box);
-      if (child.kind !== 'element') continue;
+      if (child.nodeKind === 'text') named(child.box);
+      if (child.nodeKind !== 'element') continue;
       if (child.committed && FONT_NAMES[child.committed.viewName]) this.markProps(child, false);
       else named(child);
       this.markFontText(child);
@@ -5192,7 +5347,7 @@ export class Engine implements HostEngine {
    * a `:host` animation is played by its parent's frames where both have the name.
    */
   private keyframesOf(node: EngineNode, name: string): readonly Keyframe[] | undefined {
-    const own = node.sheet?.keyframes?.[name] ?? node.hostSheet?.keyframes?.[name];
+    const own = node.templateSheet?.keyframes?.[name] ?? node.hostSheet?.keyframes?.[name];
     return own ?? this.keyframes.get(name);
   }
 
@@ -6210,7 +6365,7 @@ export class Engine implements HostEngine {
   /** Whether a node, or an element it is in, is `display: none`. */
   private boxless(node: EngineNode): boolean {
     for (let at: EngineNode | null = node; at; at = at.parent) {
-      if (at.kind !== 'element') continue;
+      if (at.nodeKind !== 'element') continue;
       this.styles.resolve(at, this.styleEpoch);
       if (ownLayout(at, 'display') === 'none') return true;
     }
@@ -6384,7 +6539,7 @@ export class Engine implements HostEngine {
     const before = row.baselineFields;
     if (!aligned && !before) return;
     const now = new Set(
-      aligned ? row.children.filter(inFlow).map(fieldOnBaseline).filter(isNode) : [],
+      aligned ? row.childList.filter(inFlow).map(fieldOnBaseline).filter(isNode) : [],
     );
     // One that is no longer this row's, and that no other row has marked since.
     for (const field of before ?? []) {
@@ -6415,7 +6570,7 @@ export class Engine implements HostEngine {
    */
   private freshBaselines(row: EngineNode): void {
     if (!row.committed || ownLayout(row, 'alignItems') !== 'baseline') return;
-    for (const item of row.children) {
+    for (const item of row.childList) {
       let at = firstInFlow(item);
       while (at?.committed && committedViewName(at) !== PARAGRAPH) at = firstInFlow(at);
       if (!at?.committed) continue;
@@ -6458,7 +6613,7 @@ export class Engine implements HostEngine {
     // inherits changed with it, and nothing marked this node dirty. The resolver hands back the
     // very same cache object when nothing has changed, so one reference comparison settles it,
     // and a subtree whose inherited context is unmoved is skipped exactly as before.
-    const style = node.kind === 'element' ? this.styles.resolve(node, this.styleEpoch) : null;
+    const style = node.nodeKind === 'element' ? this.styles.resolve(node, this.styleEpoch) : null;
     const styleChanged = node.styleCommitted !== style;
     if (this.isClean(node) && !styleChanged) return node.committed!.handle;
     node.styleCommitted = style;
@@ -6555,16 +6710,16 @@ export class Engine implements HostEngine {
     if (HOIST_ONLY.has(node.tag)) return this.reconcileOnlyHoisted(node);
     if (HOIST_TARGETS.has(node.tag)) return this.reconcileHoistTarget(node, context);
     const handles: FabricNode[] = [];
-    for (const child of node.children) {
+    for (const child of node.childList) {
       const clean = this.cleanUnder(node, child, context);
       if (clean) {
         handles.push(clean);
         continue;
       }
-      if (child.kind === 'anchor' || this.committedElsewhere(child) || this.withheld(child)) {
+      if (child.nodeKind === 'anchor' || this.committedElsewhere(child) || this.withheld(child)) {
         continue;
       }
-      if (child.kind === 'text') {
+      if (child.nodeKind === 'text') {
         const handle = this.reconcileText(node, child, viewName, context);
         if (handle) handles.push(handle);
         continue;
@@ -6604,7 +6759,7 @@ export class Engine implements HostEngine {
   }
 
   private looseText(parent: EngineNode, text: EngineNode, drawnBy = 'text'): EngineNode | null {
-    if (!trimEnds(text.text)) return null;
+    if (!trimEnds(text.nodeText)) return null;
     let box = text.box;
     // One made for another element, before the view was registered again, is done with.
     if (box && box.tag !== drawnBy) {
@@ -6614,7 +6769,7 @@ export class Engine implements HostEngine {
     if (!box) {
       box = new RetainedNode('element', drawnBy, this);
       box.anonymous = true;
-      box.children = [text];
+      box.childList = [text];
       text.box = box;
     }
     box.parent = parent;
@@ -6668,7 +6823,7 @@ export class Engine implements HostEngine {
    * is: what its views held of their own, a scroll offset, is not kept.
    */
   private undisplayed(child: EngineNode): boolean {
-    if (child.kind !== 'element') return false;
+    if (child.nodeKind !== 'element') return false;
     this.styles.resolve(child, this.styleEpoch);
     if (ownLayout(child, 'display') !== 'none') return false;
     if (child.committed) {
@@ -6707,7 +6862,7 @@ export class Engine implements HostEngine {
     // and UIKit collapses a large title against the scroll view down the screen's first subviews,
     // which RNS keeps clear by never letting the header config be the first.
     const direct: EngineNode[] = [];
-    for (const child of node.children) {
+    for (const child of node.childList) {
       const taken = this.takenByTarget(node, child, context);
       if (taken === null) continue;
       if (taken === 'direct') direct.push(child);
@@ -6730,8 +6885,8 @@ export class Engine implements HostEngine {
     const handles: FabricNode[] = [];
     const hoisted = this.hoistedInto(node);
     const landed = new Set<string>();
-    for (const child of node.children) {
-      if (child.kind === 'anchor' || this.committedElsewhere(child) || this.withheld(child)) {
+    for (const child of node.childList) {
+      if (child.nodeKind === 'anchor' || this.committedElsewhere(child) || this.withheld(child)) {
         continue;
       }
       if (this.hoisted.has(child)) {
@@ -6792,7 +6947,7 @@ export class Engine implements HostEngine {
       this.markProps(follower, false);
     }
     if (node.box?.committed) this.forgetCommitted(node.box);
-    for (const child of node.children) {
+    for (const child of node.childList) {
       if (child.committed || child.box?.committed) this.forgetCommitted(child);
     }
   }
@@ -6862,7 +7017,7 @@ export class Engine implements HostEngine {
     }
     const clean = this.cleanUnder(node, child, context);
     if (clean) return clean;
-    if (child.kind === 'anchor' || this.withheld(child)) return null;
+    if (child.nodeKind === 'anchor' || this.withheld(child)) return null;
     return this.reconcileUnder(node, child, context);
   }
 
@@ -6876,7 +7031,7 @@ export class Engine implements HostEngine {
     child: EngineNode,
     context: object | undefined,
   ): FabricNode | null {
-    if (child.kind !== 'element' || child.committedUnder !== parent) return null;
+    if (child.nodeKind !== 'element' || child.committedUnder !== parent) return null;
     return this.stillCommitted(child, context);
   }
 
@@ -6892,7 +7047,7 @@ export class Engine implements HostEngine {
     ) {
       return null;
     }
-    if (child.kind === 'text') return committed.handle;
+    if (child.nodeKind === 'text') return committed.handle;
     const holds = child.styleCache === child.styleCommitted && this.styles.holds(child, context);
     return holds ? committed.handle : null;
   }
@@ -6966,7 +7121,7 @@ export class Engine implements HostEngine {
    */
   private checkClaimed(node: EngineNode): void {
     // The paragraph the engine wraps loose text in is its own: no template wrote it.
-    if (node.kind !== 'element' || node.claimed || node.anonymous) return;
+    if (node.nodeKind !== 'element' || node.claimed || node.anonymous) return;
     if (!PRIMITIVE_NAMES.has(node.tag)) return;
     if (this.reported.has(node.tag)) return;
     this.reported.add(node.tag);
@@ -7096,7 +7251,7 @@ export class Engine implements HostEngine {
    * the trade for not holding a registry per component, and the typo is the case that matters.
    */
   private checkKnown(node: EngineNode): void {
-    if (node.kind !== 'element' || node.componentHost || node.tag in VIEW_NAMES) return;
+    if (node.nodeKind !== 'element' || node.componentHost || node.tag in VIEW_NAMES) return;
     if (this.declaredElements.has(node.tag) || this.reported.has(node.tag)) return;
     this.reported.add(node.tag);
     console.error(
@@ -7519,7 +7674,7 @@ export class Engine implements HostEngine {
    */
   private holdScroll(node: EngineNode): void {
     for (let up = node.parent; up; up = up.parent) {
-      if (up.kind !== 'element' || !SCROLL_VIEWS.has(viewNameOf(up))) continue;
+      if (up.nodeKind !== 'element' || !SCROLL_VIEWS.has(viewNameOf(up))) continue;
       this.scrollHeld = up;
       this.tellScreen(up);
       return;
@@ -7565,7 +7720,7 @@ export class Engine implements HostEngine {
   /** The screen of a native stack a node is on, or nothing where it is on none. */
   private screenOf(node: EngineNode): EngineNode | null {
     for (let up: EngineNode | null = node; up; up = up.parent) {
-      if (up.kind === 'element' && viewNameOf(up) === STACK_SCREEN) return up;
+      if (up.nodeKind === 'element' && viewNameOf(up) === STACK_SCREEN) return up;
     }
     return null;
   }
@@ -7692,5 +7847,5 @@ export class Engine implements HostEngine {
 function settlePaths(node: EngineNode): void {
   if (!node.subtreeDirty) return;
   node.subtreeDirty = false;
-  for (const child of node.children) settlePaths(child);
+  for (const child of node.childList) settlePaths(child);
 }

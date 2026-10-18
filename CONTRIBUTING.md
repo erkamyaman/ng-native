@@ -171,4 +171,26 @@ See [RELEASING.md](./docs/RELEASING.md) for how an actual release goes out.
   explaining why (see `git log --oneline -20` for the style); there is no conventional-commits
   prefix convention (`feat:`, `fix:`, and so on) in use.
 
+### Checking a change against main
+
+`node scripts/pr-gate.mjs` runs what a pull request is checked for against `origin/main`, and prints
+a report for its description:
+
+- formatting, then lint, typecheck and tests of every project the change can reach;
+- the existing tests the change edits or deletes, which the description explains;
+- a version plan, where a package's code changed;
+- what every canary screen sends native, on main and on the change, and each view and prop that
+  differs (`scripts/native-output.mjs`);
+- `pnpm bench`, `bench:tailwind` and `bench:screens` in `packages/integration-tests`, run in turn
+  on each side. A measure fails where it is more than 3% slower and every round of the change was
+  slower than every round of main; one past 3% whose rounds overlap is marked, to be run again with
+  more rounds.
+
+`--base <ref>`, `--rounds <n>`, `--limit <percent>` and `--out <file>` change what it compares with
+and how, and `--skip-bench` leaves the benchmarks out. It exits 1 where a check failed.
+
+What the native output cannot show is how native draws it. For a change that draws, the
+`screens-check` skill (`.claude/skills/screens-check`) opens each screen whose native output changed
+on a simulator, in main's bundle and the change's, and compares the two screenshots.
+
 For maintainers cutting a release, see [RELEASING.md](./docs/RELEASING.md).

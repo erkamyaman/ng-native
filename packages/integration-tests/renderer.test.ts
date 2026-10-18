@@ -21,7 +21,7 @@ interface Features {
 
 function findEngineNode(node: EngineNode, name: string): EngineNode | undefined {
   if (node.tag === name) return node;
-  for (const child of node.children) {
+  for (const child of node.childList) {
     const hit = findEngineNode(child, name);
     if (hit) return hit;
   }
@@ -100,7 +100,7 @@ describe('the renderer', () => {
     assert.doesNotMatch(fabric.render(), /RawText "\[badge\]"/);
   });
 
-  it('calls destroyNode so listeners do not outlive their view', async () => {
+  it('lets no listener outlive its view', async () => {
     const pressable = findEngineNode(app.engine.root, 'pressable');
     assert.ok(pressable, 'pressable is in the retained tree');
     assert.ok(pressable.listeners?.size, 'listener registered while the view is alive');
@@ -108,7 +108,11 @@ describe('the renderer', () => {
     instance.showListener.set(false);
     await settle();
 
-    assert.equal(pressable.listeners, null, 'destroyNode cleared the listeners');
+    // Each is taken off by whoever added it: the template's through `listen()`'s teardown, and
+    // the pressable's own when it is destroyed. `destroyNode` leaves them, since Angular calls it
+    // for projected content it puts back too.
+    const left = [...pressable.listeners!].filter(([, set]) => set.size).map(([type]) => type);
+    assert.deepEqual(left, [], 'every listener went with the view');
     assert.equal(findEngineNode(app.engine.root, 'pressable'), undefined, 'node detached');
   });
 });
@@ -127,11 +131,11 @@ describe('taking a node out through the renderer', () => {
     renderer.appendChild(holder, child);
     renderer.appendChild(holder, second);
     renderer.removeChild(other, child);
-    assert.deepEqual(holder!.children, [second]);
+    assert.deepEqual(holder!.childList, [second]);
     assert.equal(child!.parent, null);
     // And what is no node at all, as a document is not.
     renderer.removeChild({}, second);
-    assert.deepEqual(holder!.children, []);
+    assert.deepEqual(holder!.childList, []);
     // And one that is in nothing is left as it is, whatever it is said to be in.
     assert.doesNotThrow(() => renderer.removeChild({}, second));
     assert.doesNotThrow(() => renderer.removeChild(holder, second));

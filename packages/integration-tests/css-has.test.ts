@@ -240,6 +240,32 @@ describe(':has() as what is beneath a node changes', () => {
   });
 });
 
+describe(':has() and the cost of asking it', () => {
+  it('follows a change under a box that is not drawn', () => {
+    const s = scene(`${RULE} .none { display: none }`);
+    const hidden = s.el('none', s.card);
+    const inner = s.el('', hidden);
+    assert.equal(s.opacity('card'), undefined);
+    s.engine.addClass(inner, 'action');
+    assert.equal(s.opacity('card'), 0.5);
+    s.engine.removeClass(inner, 'action');
+    assert.equal(s.opacity('card') ?? null, null);
+  });
+
+  it('asks a box once a commit, however many of what it holds ask it', () => {
+    // Each row asks whether the card has an action, which is a walk of every row in the card.
+    const s = scene('.card:has(.action) .row { opacity: 0.5 }');
+    const rows = 2000;
+    for (let i = 0; i < rows; i++) s.el('row', s.card);
+    resetStyleStats();
+    s.engine.commit();
+    assert.ok(
+      styleStats.compoundTests < rows * 20,
+      `${styleStats.compoundTests} compound tests for ${rows} rows`,
+    );
+  });
+});
+
 describe(':has() on a box the styled node is in', () => {
   // A component library's own: `.field:has(.input:focus) .label`, a label moved by what is in
   // the field beside it, and `.group:has(.button) .input`, a field squared off for its button.
@@ -323,23 +349,19 @@ describe(':has() on a box the styled node is in', () => {
   });
 });
 
-describe(':has() the engine does not take', () => {
-  it('refuses what it cannot match and what a browser drops, each by name', () => {
-    for (const [css, why] of [
-      ['.card:has(.action) + .title { opacity: 0.5 }', /the node the rule styles/],
-      ['.card:has(.action) ~ .panel .title { opacity: 0.5 }', /the node the rule styles/],
-      ['.card:has(.a .b) { opacity: 0.5 }', /one compound/],
-      ['.card:has(+ .next) { opacity: 0.5 }', /one compound/],
-      ['.card:has(~ .later) { opacity: 0.5 }', /one compound/],
-      // Chrome drops each of these as invalid: no ':has()' inside another.
-      ['.card:has(.a:has(.b)) { opacity: 0.5 }', /inside another/],
-      ['.card:has(.a:not(:has(.b))) { opacity: 0.5 }', /inside another/],
-      ['.card:has(:is(.a:has(.b))) { opacity: 0.5 }', /inside another/],
-      ['.card .title:has(> .a:has(.b)) { opacity: 0.5 }', /inside another/],
-    ] as const) {
+describe(':has() and the sheet it is in', () => {
+  it('takes one beside the styled node, a combinator inside, and a sibling', () => {
+    // What each matches is in css-nested-selector.
+    for (const css of [
+      '.card:has(.action) + .title { opacity: 0.5 }',
+      '.card:has(.action) ~ .panel .title { opacity: 0.5 }',
+      '.card:has(.a .b) { opacity: 0.5 }',
+      '.card:has(+ .next) { opacity: 0.5 }',
+      '.card:has(~ .later) { opacity: 0.5 }',
+    ]) {
       const s = scene(css);
-      assert.equal(s.reports.length, 1, css);
-      assert.match(s.reports[0]!, why, css);
+      assert.deepEqual(s.reports, [], css);
+      assert.equal((s.sheet as { rules: unknown[] }).rules.length, 1, css);
     }
   });
 
