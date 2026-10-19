@@ -232,6 +232,7 @@ describe('the entry points a published package has', () => {
     'components',
     'expo',
     'web',
+    'web-compat',
     'testing',
   ];
   const targets = (entry: unknown): string[] =>

@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --import ./register-linker.mjs --test \"**/*.test.ts\"",
+    "test": "node --import ./register-linker.mjs --test \"**/*.test.ts\" && pnpm test:layout-asks",
+    "layout-fuzz": "node --import ./register-linker.mjs layout-fuzz/run.ts",
+    "test:layout-asks": "node --import ./layout-asks-check.mjs --import ./register-linker.mjs --test \"css-*.test.ts\"",
     "css-oracle": "node scripts/generate-css-oracle.mjs",
     "tailwind-oracle": "node scripts/generate-tailwind-oracle.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -86,6 +88,7 @@
     "marked": "^18.0.14",
     "metro-resolver": "^0.84.5",
     "open-props": "1.7.23",
+    "playwright": "^1.63.0",
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-gesture-handler": "^2.32.0",

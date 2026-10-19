@@ -45,6 +45,7 @@
     "./image-editor": "./src/image-editor.ts",
     "./image-picker": "./src/image-picker.ts",
     "./keep-awake": "./src/keep-awake.ts",
+    "./keyboard": "./src/keyboard.ts",
     "./language-model": "./src/language-model.ts",
     "./live-activity": "./src/live-activity.ts",
     "./locale": "./src/locale.ts",
@@ -179,6 +180,10 @@
         "types": "./dist/keep-awake.d.ts",
         "default": "./dist/keep-awake.js"
       },
+      "./keyboard": {
+        "types": "./dist/keyboard.d.ts",
+        "default": "./dist/keyboard.js"
+      },
       "./language-model": {
         "types": "./dist/language-model.d.ts",
         "default": "./dist/language-model.js"
@@ -275,6 +280,7 @@
     }
   },
   "dependencies": {
+    "@ng-native/device": "workspace:*",
     "@ng-native/fabric": "workspace:*"
   },
   "nx": {
@@ -318,7 +324,7 @@
     "expo-image-picker": "^57.0.0",
     "expo-keep-awake": "^57.0.0",
     "expo-local-authentication": "^57.0.0",
-    "expo-local-llm": "^0.6.0",
+    "expo-local-llm": "^0.8.1",
     "expo-localization": "^57.0.0",
     "expo-location": "^57.0.0",
     "expo-maps": "^57.0.0",
@@ -364,7 +370,7 @@
     "expo-image-picker": "^57.0.20",
     "expo-keep-awake": "^57.0.2",
     "expo-local-authentication": "^57.0.3",
-    "expo-local-llm": "^0.6.0",
+    "expo-local-llm": "^0.8.1",
     "expo-localization": "^57.0.2",
     "expo-location": "^57.0.20",
     "expo-maps": "^57.0.3",

@@ -206,6 +206,7 @@ export const PACKAGES: NavSection = {
         { path: 'packages/expo/locale', title: 'Locale' },
         { path: 'packages/expo/sensors', title: 'Sensors' },
         { path: 'packages/expo/keep-awake', title: 'Keep awake' },
+        { path: 'packages/expo/keyboard', title: 'Keyboard motion' },
         { path: 'packages/expo/app-info', title: 'App info' },
         { path: 'packages/expo/haptics', title: 'Haptics', group: 'Feedback' },
         { path: 'packages/expo/clipboard', title: 'Clipboard' },

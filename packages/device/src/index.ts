@@ -41,7 +41,14 @@ export {
 export { Sharing, type NativeSharing, type ShareRequest } from './sharing.ts';
 export { Vibration, type NativeVibration } from './vibration.ts';
 export { HardwareBack, hardwareBackSource, type HardwareBackSource } from './hardware-back.ts';
-export { Keyboard, type KeyboardMetrics, type KeyboardSource } from './keyboard.ts';
+export {
+  KEYBOARD_MOTION,
+  Keyboard,
+  keyboardSource,
+  type KeyboardMetrics,
+  type KeyboardMotion,
+  type KeyboardSource,
+} from './keyboard.ts';
 export type { NativeKeyboardEvent } from './react-native.ts';
 export { SafeArea, type Frame, type Insets } from './safe-area.ts';
 export { COMPACT_WIDTH, Screen, type ScreenSource, type Size, type Sizes } from './screen.ts';
