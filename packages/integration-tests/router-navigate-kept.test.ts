@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { afterEach, before, beforeEach, describe, it } from 'node:test';
 import type { Type } from '@angular/core';
 import { PlatformLocation } from '@angular/common';
-import { Router, withComponentInputBinding, type Routes } from '@angular/router';
+import { Router, withComponentInputBinding, withRouterConfig, type Routes } from '@angular/router';
 import { cleanup, render, settle, type FakeFabric, type FakeFabricNode } from '@ng-native/testing';
 import { NativeNavigation, intentOf } from '../router/src/native-navigation.ts';
 import { NativePlatformLocation } from '../router/src/native-platform-location.ts';
@@ -189,5 +189,35 @@ describe('a plain navigation to a url further down the stack', () => {
     await idle();
     assert.equal(router.url, '/user/1');
     assert.deepEqual(stack(fabric), ['home', 'user 1']);
+  });
+});
+
+describe('a plain navigation to a url further down the stack, with computed cancel resolution', () => {
+  afterEach(() => cleanup());
+
+  it('leaves the history to the router, whose page ids it would put out of step', async () => {
+    const mod = await compileFixture('fixtures/stack-app.ts');
+    const app = await render(mod['Shell'] as Type<unknown>, {
+      providers: [
+        provideNativeRouter(
+          mod['routes'] as Routes,
+          withComponentInputBinding(),
+          withRouterConfig({ canceledNavigationResolution: 'computed' }),
+        ),
+      ],
+    });
+    const router = app.componentRef.injector.get(Router);
+    const nav = app.componentRef.injector.get(NativeNavigation);
+    const history = app.componentRef.injector.get(PlatformLocation) as NativePlatformLocation;
+    await nav.push('/user/1');
+    await nav.push('/user/2');
+    await idle();
+
+    assert.equal(await router.navigateByUrl('/user/1'), true);
+    await idle();
+    assert.deepEqual(
+      history.ɵpages().map((page) => page.url),
+      ['/', '/user/1', '/user/2', '/user/1'],
+    );
   });
 });

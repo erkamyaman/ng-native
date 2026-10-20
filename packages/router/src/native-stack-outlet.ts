@@ -46,6 +46,7 @@ import {
   NavigationEnd,
   NavigationError,
   PRIMARY_OUTLET,
+  ROUTER_CONFIGURATION,
   Router,
   createUrlTreeFromSnapshot,
   type Data,
@@ -161,6 +162,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * `RouterOutletContract` directly, which is how its own tests drive it.
    */
   private readonly router = inject(Router, { optional: true });
+  private readonly routerConfig = inject(ROUTER_CONFIGURATION, { optional: true });
   /** For a refused back to reach the screen as native's own report would. */
   private readonly engine = inject(HostEngine, { optional: true });
 
@@ -707,6 +709,9 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     if (!navigation || navigation.trigger === 'popstate' || navigation.extras.skipLocationChange) {
       return;
     }
+    // A router that resolves a cancelled navigation by computing how far to go in history counts
+    // its own entries, and a rewind it did not make would put that count out of step.
+    if (this.routerConfig?.canceledNavigationResolution === 'computed') return;
     const steps = dropped + (navigation.extras.replaceUrl ? 0 : 1);
     this.rewinding = { navigation: navigation.id, steps };
   }
