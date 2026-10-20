@@ -184,6 +184,11 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * succeeds: one that fails leaves the stack as it was.
    */
   private superseded: { entries: StackEntry[]; navigation: number } | null = null;
+  /**
+   * How far back through history a plain navigation to a screen kept further down goes once it
+   * succeeds, as `popTo()` does: past the entries of the screens it took off, and its own.
+   */
+  private rewinding: { navigation: number; steps: number } | null = null;
 
   protected readonly fill = { flex: 1 };
 
@@ -566,7 +571,9 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       });
       this.applicationRef.attachView(ref.hostView);
     } else {
-      for (const above of this.entries.splice(index + 1)) this.drop(above);
+      const above = this.entries.splice(index + 1);
+      for (const entry of above) this.drop(entry);
+      if (above.length) this.rewindAfter(above.length);
       if (this.currentIntent()?.stack === 'reset') {
         this.supersede(this.entries.slice(0, index), this.navigationId());
       }
@@ -690,8 +697,39 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     this.superseded = { entries, navigation };
   }
 
+  /**
+   * A navigation the history did not drive went back to a screen kept further down, taking
+   * `dropped` screens off: a back has already moved the history, and a navigation that skips the
+   * location change leaves it where it is.
+   */
+  private rewindAfter(dropped: number): void {
+    const navigation = this.router?.getCurrentNavigation();
+    if (!navigation || navigation.trigger === 'popstate' || navigation.extras.skipLocationChange) {
+      return;
+    }
+    const steps = dropped + (navigation.extras.replaceUrl ? 0 : 1);
+    this.rewinding = { navigation: navigation.id, steps };
+  }
+
+  /**
+   * Back to the kept screen's own entry, when it is the one that far back, with no popstate: the
+   * router is there already. The entry keeps its state, the screen's presentation with it, and
+   * takes the navigation's id, as the router writes one into the entry a back reaches. A stack in
+   * a tab whose history went through another tab has that tab's entry there, and is left as it is.
+   */
+  private rewind(navigation: number, steps: number): void {
+    const history = this.history;
+    if (!(history instanceof NativePlatformLocation)) return;
+    if (this.historyUrl(-steps) !== this.router!.url) return;
+    history.ɵrewind(steps);
+    const state = history.getState();
+    const own = state && typeof state === 'object' ? state : {};
+    history.replaceState({ ...own, navigationId: navigation }, '', history.ɵurlAt(0)!);
+  }
+
   /** A navigation succeeded: what it superseded goes, and what it did is no longer undoable. */
   private settle(navigation: number): void {
+    if (this.rewinding?.navigation === navigation) this.rewind(navigation, this.rewinding.steps);
     if (this.superseded?.navigation === navigation) {
       for (const entry of this.superseded.entries) this.remove(entry);
       this.superseded = null;
