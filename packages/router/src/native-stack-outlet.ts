@@ -78,6 +78,8 @@ interface StackEntry {
   unbind: () => void;
   /** How the screen was put on screen, for a push from it to follow. */
   presentation?: ScreenPresentation;
+  /** The history entries putting it on screen added: none where it skipped or replaced one. */
+  entries?: 0 | 1;
   /** The navigation that put this screen on the stack, until that navigation ends. */
   activatedIn?: number;
   /** The navigation that covered this screen, until that navigation ends. */
@@ -461,6 +463,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     const pending = this.navigationId() === navigation ? navigation : undefined;
     if (intent?.stack === 'reset') this.supersede(this.entries.slice(), pending);
     else if (intent?.stack === 'replace' && this.top) this.supersede([this.top], pending);
+    const extras = this.router?.getCurrentNavigation()?.extras;
     this.entries.push({
       route,
       ref,
@@ -468,6 +471,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       detached: false,
       unbind,
       presentation,
+      entries: extras?.skipLocationChange || extras?.replaceUrl ? 0 : 1,
       activatedIn: navigation,
       inFront,
     });
@@ -575,7 +579,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     } else {
       const above = this.entries.splice(index + 1);
       for (const entry of above) this.drop(entry);
-      if (above.length) this.rewindAfter(above.length);
+      if (above.length) this.rewindAfter(above);
       if (this.currentIntent()?.stack === 'reset') {
         this.supersede(this.entries.slice(0, index), this.navigationId());
       }
@@ -704,7 +708,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * `dropped` screens off: a back has already moved the history, and a navigation that skips the
    * location change leaves it where it is.
    */
-  private rewindAfter(dropped: number): void {
+  private rewindAfter(dropped: readonly StackEntry[]): void {
     const navigation = this.router?.getCurrentNavigation();
     if (!navigation || navigation.trigger === 'popstate' || navigation.extras.skipLocationChange) {
       return;
@@ -712,7 +716,9 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     // A router that resolves a cancelled navigation by computing how far to go in history counts
     // its own entries, and a rewind it did not make would put that count out of step.
     if (this.routerConfig?.canceledNavigationResolution === 'computed') return;
-    const steps = dropped + (navigation.extras.replaceUrl ? 0 : 1);
+    // A screen restored from another outlet has no count here, and is taken to have added one.
+    const added = dropped.reduce((total, entry) => total + (entry.entries ?? 1), 0);
+    const steps = added + (navigation.extras.replaceUrl ? 0 : 1);
     this.rewinding = { navigation: navigation.id, steps };
   }
 

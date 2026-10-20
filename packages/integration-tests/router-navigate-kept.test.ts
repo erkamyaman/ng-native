@@ -127,6 +127,18 @@ describe('a plain navigation to a url further down the stack', () => {
     assert.deepEqual(stack(fabric), ['home']);
   });
 
+  it('counts no entry for a screen above it that skipped the location change', async () => {
+    await router.navigateByUrl('/user/3', { skipLocationChange: true });
+    await idle();
+    assert.deepEqual(stack(fabric), ['home', 'user 1', 'user 2', 'user 3']);
+    assert.deepEqual(historyOf(), ['/', '/user/1', '/user/2']);
+
+    assert.equal(await router.navigateByUrl('/user/1'), true);
+    await idle();
+    assert.deepEqual(stack(fabric), ['home', 'user 1']);
+    assert.deepEqual(historyOf(), ['/', '/user/1']);
+  });
+
   it('goes back to a tab bar a screen was pushed over, at the tab it was left on', async () => {
     await router.navigateByUrl('/wrapped-tabs/schedule');
     await router.navigateByUrl('/wrapped-tabs/speakers');
