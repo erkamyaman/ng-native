@@ -463,7 +463,6 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     const pending = this.navigationId() === navigation ? navigation : undefined;
     if (intent?.stack === 'reset') this.supersede(this.entries.slice(), pending);
     else if (intent?.stack === 'replace' && this.top) this.supersede([this.top], pending);
-    const extras = this.router?.getCurrentNavigation()?.extras;
     this.entries.push({
       route,
       ref,
@@ -471,7 +470,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       detached: false,
       unbind,
       presentation,
-      entries: extras?.skipLocationChange || extras?.replaceUrl ? 0 : 1,
+      entries: this.entriesAdded(),
       activatedIn: navigation,
       inFront,
     });
@@ -701,6 +700,12 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       return;
     }
     this.superseded = { entries, navigation };
+  }
+
+  /** The history entries the navigation in flight adds: none where it skips or replaces one. */
+  private entriesAdded(): 0 | 1 {
+    const extras = this.router?.getCurrentNavigation()?.extras;
+    return extras?.skipLocationChange || extras?.replaceUrl ? 0 : 1;
   }
 
   /**
