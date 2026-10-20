@@ -139,6 +139,20 @@ describe('a plain navigation to a url further down the stack', () => {
     assert.deepEqual(historyOf(), ['/', '/user/1']);
   });
 
+  it('counts the screens dropped in a stack inside a screen too', async () => {
+    await nav.popToRoot();
+    await nav.push('/compose');
+    await nav.push('/compose/step');
+    await nav.push('/user/1');
+    await idle();
+    assert.deepEqual(historyOf(), ['/', '/compose', '/compose/step', '/user/1']);
+
+    assert.equal(await router.navigateByUrl('/compose'), true);
+    await idle();
+    assert.equal(router.url, '/compose');
+    assert.deepEqual(historyOf(), ['/', '/compose']);
+  });
+
   it('goes back to a tab bar a screen was pushed over, at the tab it was left on', async () => {
     await router.navigateByUrl('/wrapped-tabs/schedule');
     await router.navigateByUrl('/wrapped-tabs/speakers');

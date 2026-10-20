@@ -98,6 +98,13 @@ interface StackEntry {
  */
 const presented = new WeakMap<object, number>();
 
+/**
+ * The history entries, per router, that the navigation in flight took screens off for. A
+ * navigation back to a screen holding a stack of its own drops screens in both stacks, and the
+ * rewind to its entry goes back over all of them, once.
+ */
+const rewinds = new WeakMap<object, { navigation: number; steps: number }>();
+
 /** What every screen needs to fill the stack, the same five keys RNSScreen itself expects. */
 const FILL = { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 } as const;
 
@@ -192,7 +199,6 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * How far back through history a plain navigation to a screen kept further down goes once it
    * succeeds, as `popTo()` does: past the entries of the screens it took off, and its own.
    */
-  private rewinding: { navigation: number; steps: number } | null = null;
 
   protected readonly fill = { flex: 1 };
 
@@ -723,8 +729,10 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     if (this.routerConfig?.canceledNavigationResolution === 'computed') return;
     // A screen restored from another outlet has no count here, and is taken to have added one.
     const added = dropped.reduce((total, entry) => total + (entry.entries ?? 1), 0);
-    const steps = added + (navigation.extras.replaceUrl ? 0 : 1);
-    this.rewinding = { navigation: navigation.id, steps };
+    const pending = rewinds.get(this.router!);
+    if (pending?.navigation === navigation.id) pending.steps += added;
+    else
+      rewinds.set(this.router!, { navigation: navigation.id, steps: added + this.entriesAdded() });
   }
 
   /**
@@ -745,7 +753,11 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
 
   /** A navigation succeeded: what it superseded goes, and what it did is no longer undoable. */
   private settle(navigation: number): void {
-    if (this.rewinding?.navigation === navigation) this.rewind(navigation, this.rewinding.steps);
+    const pending = this.router && rewinds.get(this.router);
+    if (pending?.navigation === navigation) {
+      rewinds.delete(this.router!);
+      this.rewind(navigation, pending.steps);
+    }
     if (this.superseded?.navigation === navigation) {
       for (const entry of this.superseded.entries) this.remove(entry);
       this.superseded = null;
