@@ -1,3 +1,4 @@
+import type { HostNode } from '@ng-native/fabric';
 import { domError } from './dom-error.ts';
 /**
  * Listeners as `addEventListener` keeps them, and events a script sends with `dispatchEvent`.
@@ -110,9 +111,51 @@ export function listen(
     // One taken off is told nothing that comes later: the mouse after a touch is told so.
     if (entry.removed) return;
     if (once) removeEntry();
-    return call(entry, target, event) as boolean | void;
+    const prevented = defaultPrevented(event);
+    const quiet = entry.passive && isObject(event) && !passiveNow.has(event);
+    if (quiet) passiveNow.add(event);
+    try {
+      return call(entry, target, event) as boolean | void;
+    } finally {
+      // Kept for one that threw after preventing it, as a browser keeps it canceled.
+      if (quiet) passiveNow.delete(event);
+      if (!prevented && !entry.passive) keepDrag(entry.type, event);
+    }
   });
   return removeEntry;
+}
+
+const defaultPrevented = (event: unknown): boolean =>
+  (event as { defaultPrevented?: unknown } | null)?.defaultPrevented === true;
+
+const isObject = (event: unknown): event is object =>
+  (typeof event === 'object' || typeof event === 'function') && event !== null;
+
+/**
+ * The events a passive listener is being told of now, whose `preventDefault()` does nothing, as
+ * in a browser: what native said is not marked canceled for a listener told after it. Kept here
+ * and not on the event, which a listener may have frozen.
+ */
+const passiveNow = new WeakSet<object>();
+
+/** Whether a passive listener is being told of this event now: see `passiveNow`. */
+export const inPassiveListener = (event: object): boolean => passiveNow.has(event);
+
+/**
+ * The moves a listener keeps a drag from the page with, by preventing their default. Not a
+ * `pointermove`, which a browser scrolls for whatever its listeners say: `touch-action` keeps a
+ * pointer's drag.
+ */
+const MOVES = new Set(['touchmove']);
+
+/**
+ * Keep the drag a move is of from the page, where the listener just told of it prevented its
+ * default: a browser scrolls no further for it. See `Engine.keepDrag`.
+ */
+function keepDrag(type: string, event: unknown): void {
+  if (!MOVES.has(type) || !defaultPrevented(event)) return;
+  const target = (event as { target?: HostNode | null }).target;
+  if (target) target.engine?.keepDrag?.(target);
 }
 
 /** What a listener on the window, the document, its root or its body is passive to unless told. */

@@ -160,7 +160,24 @@ export function rectOf(node: EngineNode): DOMRect {
   return new DOMRect(x, y, width, height);
 }
 
-/** An element's size inside its border, which is what `clientWidth` and `clientHeight` are. */
+/**
+ * Whether a box is a table's, by its display: one a table has with none written. Its border is
+ * its grid's, inside the box around it, which `clientWidth` and an observer's root count.
+ */
+export function isTable(node: EngineNode): boolean {
+  const display = styled(node, 'display');
+  return display === undefined ? node.tag === 'table' : /^(inline-)?table$/.test(String(display));
+}
+
+/**
+ * `clientWidth` and `clientHeight`: a table's are its whole box, border and all, as Chrome
+ * answers them, where every other box's are inside its border.
+ */
+function clientOf(node: EngineNode): { width: number; height: number } {
+  return isTable(node) && drawn(node) ? sizeOf(node) : clientSize(node);
+}
+
+/** An element's size inside its border: its `clientWidth` and `clientHeight`, but a table's. */
 export function clientSize(node: EngineNode): { width: number; height: number } {
   if (!drawn(node)) return { width: 0, height: 0 };
   const engine = engineOf(node);
@@ -247,10 +264,10 @@ export const geometryMembers: PropertyDescriptorMap = {
   offsetWidth: sized((node) => sizeOf(node).width),
   offsetHeight: sized((node) => sizeOf(node).height),
   clientWidth: get(function () {
-    return Math.round(clientSize(this).width);
+    return Math.round(clientOf(this).width);
   }),
   clientHeight: get(function () {
-    return Math.round(clientSize(this).height);
+    return Math.round(clientOf(this).height);
   }),
   // The width of the border, which is where what it holds starts.
   clientTop: sized((node) => border(node, 'Top')),

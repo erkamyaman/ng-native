@@ -6,16 +6,19 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import { Component, DOCUMENT, inject, Renderer2 } from '@angular/core';
-import { Engine } from '@ng-native/fabric';
-import { cleanup, createFakeFabric, render, screen, settle } from '@ng-native/testing';
+import { Engine, type StyleRule } from '@ng-native/fabric';
+import { cleanup, compileCss, createFakeFabric, render, screen, settle } from '@ng-native/testing';
 import { provideWebCompat } from './index.ts';
-import { sheetOf } from './runtime-style.ts';
+import { readsDeclaration, sheetOf } from './runtime-style.ts';
 
 /** A document as a library has it: elements it makes itself, and a head to put them in. */
 interface Page {
   readonly head: Made;
   createElement(name: string): Made;
   createTextNode(text: string): Made;
+}
+interface Lookup {
+  getElementById(id: string): Made;
 }
 interface Made {
   innerHTML: string;
@@ -30,7 +33,7 @@ interface Made {
   selector: 'x-strip',
   template: `
     <div id="strip" class="strip">
-      <div testID="one" class="item"></div>
+      <div id="one" testID="one" class="item"></div>
       <div testID="two" class="item wide"></div>
     </div>
   `,
@@ -40,6 +43,19 @@ class Strip {
 }
 
 afterEach(cleanup);
+
+/** A prop of the first item, styled by `css` and, where one is given, an inline style. */
+async function styledBy(css: string, prop: string, inline = ''): Promise<unknown> {
+  const app = await render(Strip, { providers: [provideWebCompat()] });
+  await settle();
+  const { document } = app.fixture.componentInstance;
+  const style = document.createElement('style');
+  document.head.appendChild(style);
+  style.textContent = `#strip { --c: blue; color: green } ${css}`;
+  if (inline) (document as unknown as Lookup).getElementById('one').setAttribute('style', inline);
+  await settle();
+  return screen.getByTestId('one').props[prop];
+}
 
 describe('a stylesheet read while the app runs', () => {
   it('is its rules, by id, class, attribute and what each is in, with what each declares', () => {
@@ -561,5 +577,375 @@ describe('a transition in a <style> made while the app runs', () => {
     });
     assert.equal(parts!.declarations['$transitionDuration'], 150);
     assert.equal(parts!.declarations['$transitionDelay'], 20);
+  });
+});
+
+/** What a rule sets, each prop to its value, a colour left to the node as `currentcolor`. */
+function propsOf(rule: StyleRule | undefined): Record<string, unknown> {
+  const props: Record<string, unknown> = { ...rule?.declarations };
+  for (const each of rule?.deferred ?? []) {
+    for (const prop of each.props) props[prop] = each.within ? 'currentcolor' : each;
+  }
+  return Object.fromEntries(Object.entries(props).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+describe('a border in a <style> made while the app runs', () => {
+  it('is each side’s width, style and colour', () => {
+    const [rule] = sheetOf('.box { border: 1px solid black }').rules;
+    assert.deepEqual(propsOf(rule), {
+      ...Object.fromEntries(
+        ['Top', 'Right', 'Bottom', 'Left'].flatMap((side) => [
+          [`border${side}Color`, 'black'],
+          [`border${side}Style`, 'solid'],
+          [`border${side}Width`, 1],
+        ]),
+      ),
+      borderStyle: 'solid',
+    });
+  });
+
+  it('is what the build compiles the same declaration to, and nothing where it drops one', () => {
+    const said: unknown[] = [];
+    const warn = console.warn;
+    console.warn = (...all: unknown[]) => said.push(all.join(' '));
+    try {
+      for (const declaration of [
+        'border: 1px solid rgb(0, 0, 0)',
+        'border: 2px dashed rgb(255, 0, 0)',
+        'border: 1rem dotted rgb(255, 0, 0)',
+        'border: solid',
+        'border: none',
+        'border-top: 1px hidden',
+        'border: 0',
+        'border-top: 3px solid',
+        'border-bottom: 1px solid rgb(204, 204, 204)',
+        'border-left: none',
+        'border-width: 4px',
+        'border-width: thick 0',
+        'border-width: 1px 2px 3px',
+        'border-color: rgb(255, 0, 0)',
+        'border-color: rgb(255, 0, 0) rgb(0, 0, 255)',
+        'border-color: currentcolor',
+        'border-style: dashed',
+        'border-style: none',
+        'border-top-width: thin',
+        'border-right-style: dashed',
+        'border-left-color: rgb(255, 0, 0)',
+        'outline: 2px solid rgb(255, 0, 0)',
+        'outline: 2px dotted',
+        'outline: none',
+        'outline-width: 2px',
+        'outline-style: dashed',
+        'outline-color: rgb(255, 0, 0)',
+        'outline-offset: 2px',
+        'outline-offset: -1px',
+        'border-radius: 4px',
+        'border-radius: 4px 8px',
+        'border-radius: 1px 2px 3px 4px',
+        'border-radius: 50%',
+        'border-top-left-radius: 4px',
+      ]) {
+        const css = `.box { ${declaration} }`;
+        assert.deepEqual(
+          propsOf(sheetOf(css).rules[0]),
+          propsOf(compileCss(css).rules[0]),
+          declaration,
+        );
+      }
+      assert.deepEqual(said, []);
+      // What the build drops, a line native cannot draw and a corner of two radii, is passed over.
+      for (const declaration of [
+        'border: 1px double red',
+        'border-style: solid dashed',
+        'border-radius: 4px / 8px',
+        'border-top-left-radius: 4px 8px',
+        'border: 1px solid nonsense',
+      ]) {
+        assert.deepEqual(sheetOf(`.box { ${declaration} }`).rules, [], declaration);
+      }
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(said.length, 5);
+  });
+
+  it('leaves a token to each side, and transitions each side, as the build does', () => {
+    for (const declaration of [
+      'border-width: var(--w)',
+      'border-top-width: var(--w)',
+      'border-color: var(--c)',
+      'border-radius: var(--r)',
+      'outline-color: var(--c)',
+      'transition: border-color 1s',
+      'transition: border 1s',
+    ]) {
+      const css = `.box { ${declaration} }`;
+      const [built] = compileCss(css).rules;
+      const [read] = sheetOf(css).rules;
+      assert.deepEqual(read?.deferred, built!.deferred, declaration);
+      assert.deepEqual(
+        Object.keys(read?.declarations['$transition'] ?? {}).sort(),
+        Object.keys(built!.declarations['$transition'] ?? {}).sort(),
+        declaration,
+      );
+    }
+  });
+
+  it('leaves a line with a token in it to the node, as the build does', () => {
+    for (const declaration of [
+      'border: 1px solid var(--c)',
+      'border: var(--w) solid rgb(255, 0, 0)',
+      'border: var(--w) var(--c)',
+      'border: 1px solid var(--c,)',
+      'border: currentcolor 1px var(--s)',
+      'border: none var(--c)',
+      'border-top: 1px var(--c)',
+      'border-left: var(--w) solid',
+      'outline: var(--w) solid',
+      'outline: 2px dotted var(--c)',
+      'border: 1em solid rgb(255, 0, 0)',
+      'border-top-width: 0.5em',
+      'border-radius: 1em',
+      'outline: 1em solid rgb(255, 0, 0)',
+      'border: 1px solid var(--c, rgb(1, 2, 3))',
+      'border-top: 2px solid var(--c, rgba(0, 0, 255, 0.5))',
+    ]) {
+      const css = `.box { ${declaration} }`;
+      const [built] = compileCss(css).rules;
+      const [read] = sheetOf(css).rules;
+      assert.deepEqual(
+        [read?.declarations, read?.deferred],
+        [built!.declarations, built!.deferred],
+        declaration,
+      );
+      assert.equal(readsDeclaration(declaration.split(':')[0]!, declaration.split(': ')[1]!), true);
+    }
+  });
+
+  it('draws a line with a token in it by what the token is', async () => {
+    const app = await render(Strip, { providers: [provideWebCompat()] });
+    await settle();
+    const { document } = app.fixture.componentInstance;
+    const style = document.createElement('style');
+    document.head.appendChild(style);
+    style.textContent =
+      '#strip { --c: blue; --w: 5px; font-size: 10px } ' +
+      '#strip .item { border: 1px solid var(--c) } #strip .wide { border: var(--w) solid red; ' +
+      'outline: 1em solid var(--missing, green) }';
+    await settle();
+    const props = (id: string) => screen.getByTestId(id).props;
+    assert.deepEqual(
+      [
+        props('one')['borderTopColor'],
+        props('one')['borderLeftWidth'],
+        props('one')['borderStyle'],
+      ],
+      ['blue', 1, 'solid'],
+    );
+    assert.deepEqual(
+      [
+        props('two')['borderTopColor'],
+        props('two')['borderLeftWidth'],
+        props('two')['outlineColor'],
+      ],
+      ['red', 5, 'green'],
+    );
+    assert.equal(props('two')['outlineWidth'], 10);
+  });
+
+  it('draws a line in the fallback of its token, where the fallback is a colour function', async () => {
+    const css = '.item { border: 1px solid var(--missing, rgb(1, 2, 3)) }';
+    assert.equal(await styledBy(css, 'borderTopColor'), 'rgb(1, 2, 3)');
+  });
+
+  it('offsets an outline by a length in em, in the font size of the element', async () => {
+    const css = '.item { font-size: 10px; outline: 1px solid; outline-offset: 1.5em }';
+    assert.equal(await styledBy(css, 'outlineOffset'), 15);
+    assert.equal(sheetOf('.box { outline-offset: 10% }').rules.length, 0, 'it takes no share');
+    assert.equal(sheetOf('.box { outline-offset: 1..2em }').rules.length, 0, 'nor a broken number');
+  });
+
+  it('draws a dotted or dashed side solid, and says so, as the build does', () => {
+    const said: string[] = [];
+    const warn = console.warn;
+    console.warn = (...all: unknown[]) => said.push(all.join(' '));
+    const told: string[] = [];
+    const sides = [
+      'border-left: 1px dotted rgb(255, 0, 0)',
+      'border-top: 2px dashed var(--c)',
+      'border-top: dashed',
+    ];
+    const whole = [
+      'border: 1px dashed rgb(255, 0, 0)',
+      'border-style: dotted',
+      'border-top-style: dashed',
+    ];
+    try {
+      for (const declaration of [...sides, ...whole, 'outline: 1px dashed rgb(255, 0, 0)']) {
+        const css = `.box { ${declaration} }`;
+        const [built] = compileCss(css, 'test', {
+          onUnsupported: (m: string) => void told.push(m),
+        }).rules;
+        const [read] = sheetOf(css).rules;
+        assert.deepEqual(
+          [read?.declarations, read?.deferred],
+          [built!.declarations, built!.deferred],
+          declaration,
+        );
+      }
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(told.length, sides.length, 'the build says it of each side');
+    assert.deepEqual(
+      said,
+      sides.map(
+        (declaration) =>
+          `[angular-native] a <style> made while the app runs: '${declaration}': native has one ` +
+          `border style for the whole box, so a '${/dotted|dashed/.exec(declaration)![0]}' side ` +
+          `is drawn solid, native's default.`,
+      ),
+    );
+  });
+
+  it('passes over an outline of auto, and says so, as the build drops it', () => {
+    const said: unknown[] = [];
+    const warn = console.warn;
+    console.warn = (...all: unknown[]) => said.push(all.join(' '));
+    const declarations = [
+      ...['outline: auto', 'outline: thin auto', 'outline: 1px solid auto', 'outline: red auto'],
+      ...['outline-style: auto', 'outline-color: auto'],
+    ];
+    try {
+      for (const declaration of declarations) {
+        const css = `.box { ${declaration} }`;
+        assert.deepEqual(compileCss(css, 'test', { onUnsupported: () => {} }).rules, []);
+        assert.deepEqual(sheetOf(css).rules, [], declaration);
+      }
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(said.length, declarations.length);
+  });
+
+  it('mixes a colour for each side', () => {
+    const mixed = (name: string) =>
+      sheetOf(`.box { ${name}: color-mix(in srgb, var(--c), white 20%) }`).rules[0]?.deferred?.[0]
+        ?.props;
+    assert.deepEqual(mixed('border-color'), [
+      ...['borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor'],
+    ]);
+    assert.deepEqual(mixed('border-top-color'), ['borderTopColor']);
+    assert.deepEqual(mixed('color'), ['color']);
+  });
+
+  it('is drawn on the element a rule is for', async () => {
+    const app = await render(Strip, { providers: [provideWebCompat()] });
+    await settle();
+    const { document } = app.fixture.componentInstance;
+    const style = document.createElement('style');
+    document.head.appendChild(style);
+    style.textContent =
+      '#strip .item { border: 2px dashed red } #strip .wide { border-top: 3px solid }';
+    await settle();
+    const props = (id: string) => screen.getByTestId(id).props;
+    assert.deepEqual(
+      [
+        props('one')['borderLeftWidth'],
+        props('one')['borderStyle'],
+        props('one')['borderLeftColor'],
+      ],
+      [2, 'dashed', 'red'],
+    );
+    assert.equal(props('two')['borderTopWidth'], 3);
+    assert.equal(props('two')['borderBottomWidth'], 2);
+    // A side written with no colour is the text's.
+    assert.equal(props('two')['borderTopColor'], 'black');
+  });
+});
+
+describe('the order of declarations in one block of a <style> made while the app runs', () => {
+  it('lets the later of a token and a plain declaration win, as the build does', async () => {
+    const app = await render(Strip, { providers: [provideWebCompat()] });
+    await settle();
+    const { document } = app.fixture.componentInstance;
+    const style = document.createElement('style');
+    document.head.appendChild(style);
+    const cases: [block: string, prop: string, expected: unknown][] = [
+      ['border: 1px solid; border-color: var(--c)', 'borderTopColor', 'blue'],
+      ['border-color: var(--c); border-top-color: red', 'borderTopColor', 'red'],
+      ['border-color: var(--c); border-top-color: red', 'borderLeftColor', 'blue'],
+      ['border-top-color: var(--c); border-top: 1px solid red', 'borderTopColor', 'red'],
+      ['border-width: var(--w); border: 1px solid red', 'borderTopWidth', 1],
+      ['border-radius: var(--r); border-top-left-radius: 2px', 'borderTopLeftRadius', 2],
+      ['border-radius: var(--r); border-top-left-radius: 2px', 'borderTopRightRadius', 9],
+      ['padding: var(--p); padding-top: 2px', 'paddingTop', 2],
+      ['padding: var(--p); padding-top: 2px', 'paddingLeft', 5],
+      ['padding-top: 2px; padding: var(--p)', 'paddingTop', 5],
+      ['border: 1px solid; border-color: red', 'borderTopColor', 'red'],
+      ['border-top: 1px solid red; border-top-color: var(--c)', 'borderTopColor', 'blue'],
+    ];
+    for (const [block, prop, expected] of cases) {
+      style.textContent = `#strip { --c: blue; --w: 5px; --p: 5px; --r: 9px } .item { ${block} }`;
+      await settle();
+      assert.equal(screen.getByTestId('one').props[prop], expected, `${block}: ${prop}`);
+    }
+  });
+
+  it('drops a value set earlier in the block where a later declaration leaves the prop to the node, as the build does', () => {
+    for (const block of [
+      'border-top-color: rgb(255, 0, 0); border-top-color: currentcolor',
+      'border-width: 2px; border-width: 1em',
+    ]) {
+      const css = `.box { ${block} }`;
+      const [built] = compileCss(css).rules;
+      const [read] = sheetOf(css).rules;
+      assert.deepEqual(
+        [read?.declarations, read?.deferred],
+        [built!.declarations, built!.deferred],
+        block,
+      );
+    }
+  });
+
+  it('keeps an important declaration over a later plain one, and a later rule over an earlier one', async () => {
+    const app = await render(Strip, { providers: [provideWebCompat()] });
+    await settle();
+    const { document } = app.fixture.componentInstance;
+    const style = document.createElement('style');
+    document.head.appendChild(style);
+    const cases: [css: string, expected: unknown][] = [
+      ['.item { border: 2px solid; border-color: var(--c) !important; border-color: red }', 'blue'],
+      ['.item { border: 2px solid red !important; border-top-color: var(--c) }', 'red'],
+      ['.item { border: 2px solid red } .item { border-top-color: var(--c) }', 'blue'],
+      ['.item { border-top-color: var(--c) } .item { border: 2px solid red }', 'red'],
+    ];
+    for (const [css, expected] of cases) {
+      style.textContent = `#strip { --c: blue } ${css}`;
+      await settle();
+      assert.equal(screen.getByTestId('one').props['borderTopColor'], expected, css);
+    }
+  });
+
+  const importantLine = '.item { border: 1px solid var(--c) !important }';
+
+  it("keeps an important line's template over a more specific rule", async () => {
+    const css = `${importantLine} #strip .item { border-top-color: red }`;
+    assert.equal(await styledBy(css, 'borderTopColor'), 'blue');
+  });
+
+  it("keeps an important line's template over an inline style", async () => {
+    assert.equal(await styledBy(importantLine, 'borderTopColor', 'border-top-color: red'), 'blue');
+  });
+
+  it('keeps an important length in em over a later plain one', async () => {
+    const css =
+      '.item { font-size: 10px; border: 1px solid; border-width: 1em !important; border-width: 2px }';
+    assert.equal(await styledBy(css, 'borderTopWidth'), 10);
+  });
+
+  it('keeps an important line of the colour in scope over a more specific rule', async () => {
+    const css = '.item { border: 1px solid !important } #strip .item { border-top-color: red }';
+    assert.equal(await styledBy(css, 'borderTopColor'), 'green');
   });
 });

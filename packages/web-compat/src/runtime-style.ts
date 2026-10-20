@@ -11,6 +11,7 @@ import { CSSStyleSheet, DETACH, sheetOfElement, type CSSRule } from './css-style
 import { supportsCondition } from './supports-condition.ts';
 import { mediaCondition } from './media-query.ts';
 import { transitionOf, transitionPart } from './transition-style.ts';
+import { drawnSolid, isLine, lineProps, lineWithTokens } from './runtime-border.ts';
 import { declarationsIn, pieces, withoutComments } from './css-style-declaration.ts';
 import { partsOf } from './css-grammar.ts';
 import { tokenize } from './css-tokens.ts';
@@ -39,7 +40,7 @@ import { domError } from './dom-error.ts';
  * ponytail: what a component writes this way and no more. Selectors as `runtime-selector.ts`
  * reads them; `@media` as `media-query.ts` reads it; lengths in `px`, `rem` and `%`, or one token; the layout
  * properties below, and colours as they are written. No shorthand but `flex`, `margin`,
- * `padding` and `inset`. A rule or a declaration outside that is passed over and said.
+ * `padding`, `inset`, and a border's as `runtime-border.ts` reads them. A rule or a declaration outside that is passed over and said.
  * `@supports` holds for what is read here, which is `CSS.supports` too. A library's whole theme
  * is the build's to compile: see `isTheBuilds`.
  */
@@ -54,7 +55,7 @@ const LENGTHS = new Set([
   ...['top', 'right', 'bottom', 'left', 'gap', 'row-gap', 'column-gap', 'flex-basis'],
   ...['margin-top', 'margin-right', 'margin-bottom', 'margin-left'],
   ...['padding-top', 'padding-right', 'padding-bottom', 'padding-left'],
-  ...['font-size', 'border-radius', 'border-width'],
+  ...['font-size', 'outline-offset'],
 ]);
 const NUMBERS = new Set(['flex-grow', 'flex-shrink', 'opacity', 'z-index', 'order']);
 const WORDS: Readonly<Record<string, readonly string[]>> = {
@@ -72,7 +73,7 @@ const WORDS: Readonly<Record<string, readonly string[]>> = {
   'pointer-events': ['none', 'auto'],
   visibility: ['visible', 'hidden', 'collapse'],
 };
-const COLOURS = new Set(['color', 'background-color', 'border-color']);
+const COLOURS = new Set(['color', 'background-color']);
 /** A shape's paint, which is a colour too. */
 const PAINTED = new Set(['fill', 'stroke']);
 
@@ -122,6 +123,7 @@ function flex(value: string, out: Declarations): boolean {
 
 /** A value of one word: a length, a number, a keyword or a colour, by what its property takes. */
 function single(name: string, value: string): unknown {
+  if (name === 'outline-offset') return offset(value);
   if (LENGTHS.has(name)) return length(value);
   if (NUMBERS.has(name)) return /^-?[\d.]+$/.test(value) ? Number(value) : undefined;
   if (WORDS[name]) return WORDS[name].includes(value) ? value : undefined;
@@ -181,13 +183,56 @@ const READERS: Readonly<
 /** The props a property sets, learnt by declaring it: one that takes no length is its own name. */
 function transitioned(property: string): readonly string[] {
   const set: Declarations = {};
-  declare(property, '1px', set);
+  // A border's line is each of its parts, which no one value is.
+  const samples = isLine(property) ? ['1px', 'red', '1px solid red'] : ['1px'];
+  for (const sample of samples) declare(property, sample, set);
   const props = Object.keys(set);
   return props.length ? props : [camel(property)];
 }
 
-/** Write one declaration as the props it is, and answer whether it was one this reads. */
-function declare(name: string, value: string, out: Declarations): boolean {
+/** The marker the build writes for `currentcolor`, which the node fills in. */
+const CURRENT_COLOUR = Object.freeze({ __colour: Object.freeze({ color: 'currentcolor' }) });
+
+/** A border's prop read as the kind its name says: a length, a colour, or a style as written. */
+function lineValue(prop: string, text: string): unknown {
+  if (/(Width|Radius)$/.test(prop)) return length(text) ?? ems(text);
+  if (!prop.endsWith('Color')) return text;
+  return text === 'currentcolor' ? CURRENT_COLOUR : single('color', text);
+}
+
+/** An outline's offset: a length, one in `em` as the build writes it, and no share or `auto`. */
+function offset(value: string): unknown {
+  const read = length(value) ?? ems(value);
+  return typeof read === 'string' ? undefined : read;
+}
+
+/** A length in `em`, as the marker the build writes for the node to settle in its font size. */
+function ems(text: string): unknown {
+  const factor = Number(/^(-?[\d.]+)em$/.exec(text)?.[1] ?? NaN);
+  return Number.isFinite(factor) ? { __defer: { unit: 'em', factor } } : undefined;
+}
+
+/**
+ * A border's props, all of them or none where one is not read. A line with a token in it puts
+ * the template the node fills in in `later`.
+ */
+function line(name: string, value: string, out: Declarations, later?: Deferred[]): boolean {
+  const template = /var\(/i.test(value) ? lineWithTokens(name, value) : undefined;
+  const props = template?.props ?? lineProps(name, value);
+  if (!props) return false;
+  const read = Object.entries(props).map(([prop, text]) => [prop, lineValue(prop, text)]);
+  if (read.some(([, each]) => each === undefined)) return false;
+  Object.assign(out, Object.fromEntries(read));
+  if (template?.deferred) later?.push(template.deferred as Deferred);
+  return true;
+}
+
+/**
+ * Write one declaration as the props it is, and answer whether it was one this reads. What it
+ * leaves to the node is put in `later`.
+ */
+function declare(name: string, value: string, out: Declarations, later?: Deferred[]): boolean {
+  if (isLine(name)) return line(name, value, out, later);
   const reader = Object.hasOwn(READERS, name) ? READERS[name] : undefined;
   if (reader) return reader(name, value, out);
   const read = single(name, value);
@@ -196,10 +241,23 @@ function declare(name: string, value: string, out: Declarations): boolean {
 }
 
 const said = new Set<string>();
-function pass(what: string): void {
-  if (said.has(what)) return;
-  said.add(what);
-  console.warn(`[angular-native] a <style> made while the app runs: ${what} is not read.`);
+/** Say what of a declaration is passed over, once: `what is not read` where no `why` is given. */
+function pass(what: string, why = 'is not read'): void {
+  const message = `${what} ${why}`;
+  if (said.has(message)) return;
+  said.add(message);
+  console.warn(`[angular-native] a <style> made while the app runs: ${message}.`);
+}
+
+/** Say of a side native draws solid what the build says of it. */
+function sayDrawnSolid(name: string, value: string, set: Declarations): void {
+  const style = drawnSolid(name, set);
+  if (style === undefined) return;
+  pass(
+    `'${name}: ${value}':`,
+    `native has one border style for the whole box, so a '${style}' side is drawn solid, ` +
+      `native's default`,
+  );
 }
 
 type Deferred = NonNullable<StyleRule['deferred']>[number];
@@ -208,6 +266,13 @@ type Deferred = NonNullable<StyleRule['deferred']>[number];
 function propsOf(name: string): { props: string[]; kind: string } | undefined {
   if (name === 'margin' || name === 'padding') {
     return { props: SIDES.map((side) => `${name}${side}`), kind: 'length' };
+  }
+  // A border's width, colour or corner, on each side or corner it sets.
+  const [, part] = (isLine(name) && /-(width|radius|color)$/.exec(name)) || [];
+  if (part) {
+    const set: Declarations = {};
+    line(name, part === 'color' ? 'red' : '1px', set);
+    return { props: Object.keys(set), kind: part === 'color' ? 'color' : 'length' };
   }
   if (LENGTHS.has(name)) return { props: [camel(name)], kind: 'length' };
   return COLOURS.has(name) ? { props: [camel(name)], kind: 'color' } : undefined;
@@ -220,13 +285,19 @@ function propsOf(name: string): { props: string[]; kind: string } | undefined {
 function deferred(name: string, value: string): Deferred | undefined {
   // A colour made of others, `color-mix(in srgb, var(--brand), white 20%)`, worked out the same
   // way, from its tokens where it is used: what a chart library brightens a colour of its
-  // palette with, having asked if it may.
-  if (/^color-mix\(/i.test(value) && (COLOURS.has(name) || PAINTED.has(name))) {
-    return boundDeclaration(camel(name), tokenFromValue(value)) ?? undefined;
-  }
+  // palette with, having asked if it may. A border's is each side's.
+  if (/^color-mix\(/i.test(value)) return mixed(name, value);
   const [, reference] = /^var\(\s*(--[\w-]+)\s*\)$/.exec(value) ?? [];
   const written = reference && propsOf(name);
   return written ? ({ ...written, reference } as unknown as Deferred) : undefined;
+}
+
+/** A colour made of others, for each prop its property sets. */
+function mixed(name: string, value: string): Deferred | undefined {
+  const written = PAINTED.has(name) ? { props: [name], kind: 'color' } : propsOf(name);
+  if (written?.kind !== 'color') return undefined;
+  const one = boundDeclaration(written.props[0]!, tokenFromValue(value));
+  return one ? ({ ...one, props: written.props } as Deferred) : undefined;
 }
 
 /**
@@ -272,14 +343,51 @@ function declarations(block: string): Declared {
     const written = each.slice(at + 1).trim();
     const value = written.replace(/\s*!important$/i, '');
     const token = deferred(name, value);
-    if (token) later.push(token);
+    const set: Declarations = {};
+    const lines: Deferred[] = [];
+    // A token marked important keeps its rank, as the build keeps it.
+    if (token) later.push(written === value ? token : ({ ...token, important: true } as Deferred));
     // What a box takes from its parent, or has with no rule, is not a value of its own here.
-    else if (CSS_WIDE.test(value)) pass(`'${name}: ${value}'`);
-    else if (!declare(name, value, value === written ? plain : important)) {
-      pass(`'${name}: ${value}'`);
+    else if (CSS_WIDE.test(value) || !declare(name, value, set, lines)) pass(`'${name}: ${value}'`);
+    else {
+      sayDrawnSolid(name, value, set);
+      const marked = written !== value;
+      wrote({ set, lines }, marked ? important : plain, later, marked);
     }
   }
   return { plain, important, later, tokens, importantTokens };
+}
+
+/**
+ * Put what one declaration sets in its block, in its place among those that wait for a token:
+ * what it sets is taken from an earlier one, since the engine settles a rule's tokens after its
+ * other declarations, as the build does. What it leaves to the node waits too, from here: a
+ * colour left to the one in scope, a length in `em`, and a line's template.
+ */
+function wrote(
+  { set, lines }: { set: Declarations; lines: Deferred[] },
+  into: Declarations,
+  later: Deferred[],
+  important: boolean,
+): void {
+  for (const [at, one] of [...later.entries()].reverse()) {
+    if (one.important && !important) continue;
+    const props = one.props.filter((prop) => !(prop in set));
+    if (props.length === one.props.length) continue;
+    if (props.length) later[at] = { ...one, props } as Deferred;
+    else later.splice(at, 1);
+  }
+  const rank = important ? { important } : {};
+  for (const [prop, value] of Object.entries(set)) {
+    delete into[prop];
+    if (value === CURRENT_COLOUR) continue;
+    const marker = (value as { __defer?: Deferred['compute'] } | null)?.__defer;
+    if (marker) later.push({ props: [prop], compute: marker, ...rank } as Deferred);
+    else into[prop] = value;
+  }
+  const current = Object.keys(set).filter((prop) => set[prop] === CURRENT_COLOUR);
+  if (current.length) later.push({ props: current, within: CURRENT_COLOUR, ...rank } as Deferred);
+  later.push(...lines.map((one) => ({ ...one, ...rank })));
 }
 
 /** A block's custom properties as the engine keeps them, and those marked `!important`. */

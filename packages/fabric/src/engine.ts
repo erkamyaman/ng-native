@@ -17,6 +17,7 @@ import {
   fills,
   inlineInherited,
   setsInherited,
+  attributeOf,
   handsDownPaint,
   StyleResolver,
   underOwnShorthands,
@@ -714,6 +715,8 @@ export interface EngineNode extends HostNode {
   nativeView?: true;
   /** Props kept for selectors to match and left out of what is committed. See `keepAsAttribute`. */
   attributeOnly?: Set<string>;
+  /** Attributes a package keeps apart from props, for selectors alone. See `keepAttribute`. */
+  keptAttributes: Record<string, string> | undefined;
   /**
    * Set by whoever needs to know which props have been written: each `setProp` with a value adds
    * its key, even one equal to the value already there, and one with `undefined` or `null` takes
@@ -4741,6 +4744,13 @@ const HOIST_TARGETS = new Set<string>();
 const HOIST_ONLY = new Set<string>();
 /** Element name -> the ancestor names it never hoists past. See `HoistOptions.stopAt`. */
 const HOIST_STOPS: Record<string, ReadonlySet<string>> = {};
+/** Element name -> its registrations, the newest last, which is the one in effect. */
+const HOIST_REGISTRATIONS = new Map<string, HoistRegistration[]>();
+
+interface HoistRegistration {
+  readonly ancestorName: string;
+  readonly options: HoistOptions;
+}
 
 /**
  * Commit every `elementName` as a direct child of its nearest `ancestorName`, wherever the
@@ -4754,18 +4764,47 @@ const HOIST_STOPS: Record<string, ReadonlySet<string>> = {};
  * just after the ancestor's child it was written in, or after all of them when it was written in
  * the ancestor itself, which keeps a page's scroll view ahead of its header as UIKit's large
  * title wants. A node with no such ancestor commits where it is.
+ *
+ * Answers what takes the registration away again, for a package that can be taken out.
  */
 export function registerHoist(
   elementName: string,
   ancestorName: string,
   options: HoistOptions = {},
-): void {
-  HOISTS[elementName] = ancestorName;
-  HOIST_TARGETS.add(ancestorName);
+): () => void {
+  const registration = { ancestorName, options };
+  const stack = HOIST_REGISTRATIONS.get(elementName) ?? [];
+  stack.push(registration);
+  HOIST_REGISTRATIONS.set(elementName, stack);
+  hoistAs(elementName, registration);
+  return () => {
+    const index = stack.indexOf(registration);
+    if (index === -1) return;
+    stack.splice(index, 1);
+    // Registered again since, the later registration stays the one that counts.
+    if (index < stack.length) return;
+    if (stack.length === 0) HOIST_REGISTRATIONS.delete(elementName);
+    hoistAs(elementName, stack.at(-1));
+  };
+}
+
+/** Hoist an element as a registration says, or not at all, and note again what each ancestor is. */
+function hoistAs(elementName: string, registration: HoistRegistration | undefined): void {
+  const { ancestorName, options } = registration ?? { ancestorName: undefined, options: {} };
+  if (ancestorName === undefined) delete HOISTS[elementName];
+  else HOISTS[elementName] = ancestorName;
   if (options.standIn) STAND_INS[elementName] = options.standIn;
-  if (options.only) HOIST_ONLY.add(ancestorName);
+  else delete STAND_INS[elementName];
   if (options.stopAt) HOIST_STOPS[elementName] = new Set(options.stopAt);
   else delete HOIST_STOPS[elementName];
+  // An ancestor no registration in effect names any more is an ordinary view again.
+  HOIST_TARGETS.clear();
+  HOIST_ONLY.clear();
+  for (const all of HOIST_REGISTRATIONS.values()) {
+    const current = all.at(-1)!;
+    HOIST_TARGETS.add(current.ancestorName);
+    if (current.options.only) HOIST_ONLY.add(current.ancestorName);
+  }
 }
 
 export interface HoistOptions {
@@ -5448,6 +5487,7 @@ class RetainedNode {
   parent: EngineNode | null = null;
   listeners: Map<string, Set<(event: unknown) => void>> | null = null;
   classes: Set<string> | null = null;
+  keptAttributes: Record<string, string> | undefined = undefined;
   templateSheet: StyleSheet | null = null;
   hostSheet: StyleSheet | null = null;
   customProperties: Record<string, TokenValue> | null = null;
@@ -5679,6 +5719,7 @@ const ENGINE_NODE_FIELDS = {
   componentHost: true,
   nativeView: true,
   attributeOnly: true,
+  keptAttributes: true,
   writes: true,
   paintsOn: true,
   paintTaker: true,
@@ -6327,7 +6368,7 @@ function wantsGenerated(node: EngineNode, boxes: GeneratedFor): boolean {
 /** Whether an element has an attribute a rule gives the box to by that alone. */
 function hasGeneratedAttribute(node: EngineNode, boxes: GeneratedFor): boolean {
   for (const name of boxes.attributes) {
-    const value = node.props[name];
+    const value = attributeOf(node, name);
     if (value !== undefined && value !== null && value !== false) return true;
   }
   return false;
@@ -7706,6 +7747,26 @@ export class Engine implements HostEngine {
   }
 
   /**
+   * Keep an attribute of a node apart from its props: matched by a selector, over a prop of the
+   * same name, and committed to nothing. For a package that keeps attributes a native view reads
+   * under other names, as `@ng-native/web-compat` keeps a drawing's `width`. What depends on it is
+   * restyled as it would be for a prop; `null` or `undefined` takes it away.
+   */
+  keepAttribute(node: EngineNode, name: string, value: string | null | undefined): void {
+    const kept = node.keptAttributes;
+    if (value === undefined || value === null) {
+      if (kept?.[name] === undefined) return;
+      delete kept[name];
+    } else {
+      if (kept?.[name] === value) return;
+      (node.keptAttributes ??= {})[name] = value;
+    }
+    if (this.generated !== null) this.generateFor(node, name);
+    // Only one some selector names can change what anything matches: see `setProp`.
+    if (this.styles.reads(name)) this.markProps(node, true, this.styles.readsBeside(name));
+  }
+
+  /**
    * Whether a node's inline style can change what it or anything below it resolves to: it sets,
    * or until now set, a property its children inherit.
    */
@@ -7860,7 +7921,20 @@ export class Engine implements HostEngine {
     let set = listeners.get(topLevelType);
     if (!set) listeners.set(topLevelType, (set = new Set()));
     set.add(fn);
-    return () => set.delete(fn);
+    // With the last of a type goes its set, and with the last set the map: `destroyNode` leaves
+    // them, so an empty one would stay on the node for good and read as someone listening. Only
+    // from the set it was put in: a teardown run again once that set is gone takes nothing from
+    // a later one, the same function listening again included.
+    let done = false;
+    return () => {
+      // Once: a teardown run again takes nothing, the same function listening again included.
+      if (done) return;
+      done = true;
+      const current = node.listeners?.get(topLevelType);
+      if (current !== set || !set.delete(fn) || set.size) return;
+      node.listeners!.delete(topLevelType);
+      if (!node.listeners!.size) node.listeners = null;
+    };
   }
 
   // --- dirty marking ----------------------------------------------------
@@ -9312,7 +9386,7 @@ export class Engine implements HostEngine {
     for (let up = node.parent; up && up !== this.root; up = up.parent) {
       if (!this.movedItself(up) && holdsItsContent(up)) return up;
       // One committed under another view than its parent is laid out in that one.
-      if (this.hoisted.has(up) || this.fixedLate.has(up) || this.isFixedIn(up)) return null;
+      if (this.committedElsewhere(up) || this.fixedLate.has(up) || this.isFixedIn(up)) return null;
     }
     return null;
   }
@@ -10832,7 +10906,7 @@ export class Engine implements HostEngine {
   /** What a touch on an element that keeps a drag holds off, while it lasts: see `holdSwipe`. */
   private heldFor(node: EngineNode, merged: Record<string, unknown>): void {
     if (node === this.swipeHeld) merged['gestureResponseDistance'] = NO_SWIPE;
-    if (node === this.scrollHeld) merged['scrollEnabled'] = false;
+    if (this.scrollHeld.size && this.scrollHeld.has(node)) merged['scrollEnabled'] = false;
   }
 
   /**
@@ -12622,8 +12696,8 @@ export class Engine implements HostEngine {
    */
   private keeps(node: EngineNode, running: RunningAnimation): boolean {
     if (running.spec.fill === 'forwards' || running.spec.fill === 'both') return true;
-    // One that listened and has stopped leaves an empty set behind: nobody to hear it.
-    if (!node.listeners?.get('topAnimationend')?.size) return false;
+    // One that listened and has stopped takes its set with it: nobody to hear it.
+    if (!node.listeners?.has('topAnimationend')) return false;
     this.lettingGo.add(node);
     return true;
   }
@@ -14244,7 +14318,7 @@ export class Engine implements HostEngine {
     if (!handle || !this.fabric.setIsJSResponder) return;
     const asked = this.responders.get(node)?.blockNativeResponder ?? false;
     // And for a drag an element's `touch-action` keeps from the page: see `holdSwipe`.
-    const block = asked || this.drag?.held === true;
+    const block = asked || this.drag?.held === true || this.dragKept;
     this.fabric.setIsJSResponder(handle, isResponder, block);
   }
 
@@ -14420,7 +14494,7 @@ export class Engine implements HostEngine {
     // A first finger down is a new touch: the last one's end never came where what it was on
     // went from under the finger.
     const fingers = (nativeEvent as { touches?: readonly unknown[] } | null)?.touches?.length;
-    if (this.drag && fingers === 1) this.releaseSwipe(null);
+    if ((this.drag || this.dragKept) && fingers === 1) this.releaseSwipe(null);
     if (this.drag || !target) return;
     const actions = touchActions(target);
     if (!keeps(actions, PANS_ACROSS)) return;
@@ -14433,20 +14507,36 @@ export class Engine implements HostEngine {
     this.tellScreen(screen);
   }
 
-  /** The scroll view whose scrolling is off while a drag over it is an element's own. */
-  private scrollHeld: EngineNode | null = null;
+  /** The scroll views whose scrolling is off while a drag over them is an element's own. */
+  private readonly scrollHeld = new Set<EngineNode>();
+
+  /** Whether a package has kept the drag now under way from the page: see `keepDrag`. */
+  private dragKept = false;
 
   /**
-   * Stop the scroll view a node is in from scrolling, until the touch ends. Telling native who
-   * holds the touch does this on Android. On iOS a scroll view is held off only by a responder
-   * that is over it, never one inside it, so it is told not to scroll.
+   * Keep the drag now under way from the page, as a browser does for a `touchmove` a listener
+   * prevented the default of: the scroll view the node is in stops scrolling, and native is told
+   * that whoever holds the touch keeps it, until the last finger lifts. Told from a move, a
+   * frame or so after native saw it, so a scroll that had already begun stops where it is.
+   */
+  keepDrag(node: EngineNode): void {
+    if (this.dragKept) return;
+    this.dragKept = true;
+    if (this.currentResponder) this.tellNative(this.currentResponder, true);
+    if (!this.scrollHeld.size) this.holdScroll(node);
+  }
+
+  /**
+   * Stop every scroll view a node is in from scrolling, until the touch ends: one held off hands
+   * the drag to the one around it. Telling native who holds the touch does this on Android. On
+   * iOS a scroll view is held off only by a responder that is over it, never one inside it, so
+   * each is told not to scroll.
    */
   private holdScroll(node: EngineNode): void {
     for (let up = node.parent; up; up = up.parent) {
       if (up.nodeKind !== 'element' || !SCROLL_VIEWS.has(committedViewName(up))) continue;
-      this.scrollHeld = up;
+      this.scrollHeld.add(up);
       this.tellScreen(up);
-      return;
     }
   }
 
@@ -14469,11 +14559,11 @@ export class Engine implements HostEngine {
     const left = (nativeEvent as { touches?: readonly unknown[] } | null)?.touches?.length ?? 0;
     if (left > 0) return;
     this.drag = null;
-    for (const held of [this.scrollHeld, this.swipeHeld]) {
-      if (held === this.scrollHeld) this.scrollHeld = null;
-      else this.swipeHeld = null;
-      if (held) this.tellScreen(held);
-    }
+    this.dragKept = false;
+    const held = [...this.scrollHeld, this.swipeHeld];
+    this.scrollHeld.clear();
+    this.swipeHeld = null;
+    for (const each of held) if (each) this.tellScreen(each);
   }
 
   /**

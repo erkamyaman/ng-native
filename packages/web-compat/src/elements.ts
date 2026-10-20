@@ -6,6 +6,7 @@ import {
   type EngineNode,
 } from '@ng-native/fabric';
 import { documentOf } from './document.ts';
+import { nameRecordOf, XHTML } from './qualified-name.ts';
 
 /**
  * The HTML elements a library writes that the engine has no view for, each a plain view, with
@@ -114,12 +115,60 @@ const isHtml = (name: string): boolean =>
   (registeredViewName(name) === undefined && (!name.includes('-') || named(name)));
 
 /**
+ * What a browser's own stylesheet starts an HTML element at, under every style an app or a
+ * library writes. Its padding and border are outside the width and height it is given, where a
+ * native view's are inside them.
+ */
+const CONTENT_BOX = { boxSizing: 'content-box' };
+/**
+ * What a browser sizes whole, its padding and border inside its size: a button, a select, and a
+ * table, which is no block and keeps the engine's layout.
+ */
+const WHOLE = { boxSizing: 'border-box' };
+/**
+ * The elements a browser lays out as blocks: one under the other, as wide as what holds them.
+ * A paragraph and a heading are text to the engine, and blocks to what holds them. A table's
+ * parts are not blocks in a browser, and keep the engine's layout.
+ */
+const BLOCKS = new Set([
+  ...['div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'nav', 'address'],
+  ...['ul', 'ol', 'li', 'dl', 'dt', 'dd', 'menu', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+  ...['hgroup', 'pre', 'blockquote', 'figure', 'figcaption', 'hr', 'form', 'fieldset', 'legend'],
+  ...['details', 'summary', 'search'],
+]);
+const BLOCK = { ...CONTENT_BOX, display: 'block' };
+const SIZED_WHOLE = new Set(['button', 'select', 'table']);
+
+/**
+ * What a browser's own stylesheet gives an HTML element of this one's name, in an app that asked
+ * for this package. None for an element of a drawing, which SVG sizes itself, nor one a script
+ * made in no namespace or another, which has no browser default.
+ */
+export function defaultsOf(node: EngineNode, engine: Engine): Record<string, unknown> | undefined {
+  if (node.namespace !== undefined || !isHtml(node.tag) || !documentOf(engine)) return undefined;
+  const record = nameRecordOf(node);
+  if (record && record.namespace !== XHTML) return undefined;
+  return SIZED_WHOLE.has(node.tag) ? WHOLE : BLOCKS.has(node.tag) ? BLOCK : CONTENT_BOX;
+}
+
+/**
+ * Give an element what `defaultsOf` says, where it says anything: one made, and a copy
+ * `cloneNode` makes, which is given it by its name and not by what the element has now: a
+ * field's and a select's own defaults are added to it.
+ */
+export function giveDefaults(node: EngineNode, engine: Engine): void {
+  const style = defaultsOf(node, engine);
+  if (style) engine.setDefaultStyle(node, style);
+}
+
+/**
  * Have an element made in an app that asked for this package scroll what overflows it where its
  * style says `overflow: auto` or `scroll`, as a browser's does: a list of options in a panel. The
- * engine's own views, a `<view>` or a `<scroll-view>`, keep what they are, and a text field
- * scrolls its own text, and is no field as a scroll view.
+ * engine's own views, a `<view>` or a `<scroll-view>`, keep what they are, a text field
+ * scrolls its own text, and is no field as a scroll view, and a table scrolls nothing, as Chrome
+ * draws one.
  */
 export function scrollWhereStyled(node: EngineNode, engine: Engine): void {
-  if (node.tag === 'input' || node.tag === 'textarea') return;
+  if (node.tag === 'input' || node.tag === 'textarea' || node.tag === 'table') return;
   if (isHtml(node.tag) && documentOf(engine)) scrollsOverflow(node);
 }

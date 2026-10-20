@@ -11,11 +11,19 @@ import { required } from './dom-error.ts';
 import { implementationFor } from './dom-implementation.ts';
 import { byClassName, byName, byTagName, byTagNameNS } from './elements-by.ts';
 import type { HTMLCollection } from './live-list.ts';
-import { createEvent, dispatch, listen, passiveFor, unlisten } from './events.ts';
+import {
+  createEvent,
+  dispatch,
+  inPassiveListener,
+  listen,
+  passiveFor,
+  unlisten,
+} from './events.ts';
 import { asMouse } from './mouse-after-touch.ts';
 import { madeByScript } from './html-tree.ts';
 import { elementsUnder } from './element-tree.ts';
 import { descendants } from './in-document.ts';
+import { baseUrl, locationOf, pageUrl } from './page-address.ts';
 import { delivering, touchFields } from './listen.ts';
 import { NODE_CONSTANTS } from './node-constants.ts';
 import { brandNode } from './node-interfaces.ts';
@@ -25,9 +33,11 @@ import {
   checkElementName,
   extractName,
   recordName,
+  SVG,
   XHTML,
   type QualifiedName,
 } from './qualified-name.ts';
+import { drawingElement } from './svg.ts';
 import { adopt, adoptedOf, styleSheetsOf } from './runtime-style.ts';
 import type { CSSStyleSheet } from './css-style-sheet.ts';
 import { query } from './selector.ts';
@@ -73,7 +83,12 @@ export function nameOf(node: EngineNode, engine: Engine): string {
  * template's of its name is given as it is made.
  */
 export function elementNamed(engine: Engine, name: QualifiedName): EngineNode {
-  const node = engine.createElement(asciiLower(name.localName));
+  // In a drawing, by the name SVG writes it as, capital inside and all: a chart library makes
+  // its shapes this way.
+  const drawn = name.namespace === SVG;
+  const node = drawn
+    ? drawingElement(engine, name.localName, true)
+    : engine.createElement(asciiLower(name.localName));
   recordName(node, name);
   madeByScript(node, engine);
   return node;
@@ -185,6 +200,12 @@ function pointerOf(type: string, native: { identifier?: number } | undefined): o
 }
 
 /**
+ * The native events a listener on the document, the window or the body has prevented, by type: a
+ * `pointermove` and a `touchmove` are one native move here, and in a browser each is its own.
+ */
+const prevented = new Map<string, WeakSet<object>>();
+
+/**
  * Listen for an event anywhere in the app, as a listener on `document`, `body` or `window` does.
  * A touch bubbles to the engine's root, which is where this listens, and the event names the
  * node it landed on. Nothing for an event with no touch behind it, a key say, and no `click`
@@ -201,6 +222,8 @@ export function listenAnywhere(
   const native = DOCUMENT_EVENTS[type];
   if (!native) return undefined;
   watchTouches(engine);
+  const marks = prevented.get(type) ?? new WeakSet<object>();
+  prevented.set(type, marks);
   // Not for the event it is added during: a listener a press adds on the document, as opening an
   // overlay does, is added after a browser has passed the document for that press. But a
   // `mousedown` is sent after its touch, and is owed the touch it is added during.
@@ -220,8 +243,16 @@ export function listenAnywhere(
       ...pointerOf(type, nativeEvent),
       composedPath: () => path,
       cancelable: true,
-      defaultPrevented: false,
-      preventDefault() {},
+      // Kept by the event native sent, which each listener's wrapper shares, and not on the
+      // wrapper, which a listener may freeze: a later listener sees an earlier one's, as in a
+      // browser. One that is not passive keeps a drag from the page with it; one that is prevents
+      // nothing: see `events.ts`.
+      get defaultPrevented() {
+        return marks.has(event as object);
+      },
+      preventDefault(this: object) {
+        if (!inPassiveListener(this)) marks.add(event as object);
+      },
       stopPropagation() {},
     });
   };
@@ -435,6 +466,24 @@ export function documentFor(engine: Engine): CompatDocument {
     },
     readyState: 'complete',
     visibilityState: 'visible',
+    // The app's own URL, and what a relative one resolves against: see `page-address.ts`.
+    get URL() {
+      return pageUrl(engine);
+    },
+    get documentURI() {
+      return pageUrl(engine);
+    },
+    get baseURI() {
+      return baseUrl(engine, head);
+    },
+    get location() {
+      return locationOf(engine);
+    },
+    // Set as the window's is, by its `href`.
+    set location(value: unknown) {
+      const location = locationOf(engine);
+      if (location) location.href = String(value);
+    },
     // The field the keyboard belongs to, which a library reads to know one is being typed in.
     get activeElement() {
       return engine.focused ?? body;

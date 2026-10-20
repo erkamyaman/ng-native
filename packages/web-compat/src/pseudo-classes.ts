@@ -1,6 +1,6 @@
 import type { EngineNode } from '@ng-native/fabric';
 import type { Argument, Complex, Nth } from './parse-selector.ts';
-import { documentOfRoot } from './document-roots.ts';
+import { documentOfRoot, topOf } from './document-roots.ts';
 import { directionOf } from './directionality.ts';
 import {
   attributeOf,
@@ -13,6 +13,7 @@ import {
   parentElement,
   positionOf,
 } from './element-tree.ts';
+import { pageUrl } from './page-address.ts';
 import { XHTML } from './qualified-name.ts';
 import { engineOf } from './window.ts';
 
@@ -21,8 +22,6 @@ import { engineOf } from './window.ts';
  * app has no reading of (`:hover` with no pointer, `:visited`, a media element playing) matches
  * nothing, as it would in a browser where it is not the case.
  * A form control's state is read off its own properties: `:checked`, `:valid` and the rest.
- *
- * ponytail: `:target` matches nothing, which needs the location.
  */
 
 /** The element the selector is matched for: `:scope`, and the one a `:has()` is asked of. */
@@ -211,6 +210,47 @@ const isHeading = (node: EngineNode): boolean => isHtml(node, ...HEADINGS);
 
 const linked: Test = (node) => isHtml(node, 'a', 'area') && hasAttribute(node, 'href');
 
+/**
+ * `:target`: the element in the page the fragment of the page's address names, as the router's
+ * route has it: the first with it as its id, or else the first `<a>` with it as its name, by the
+ * fragment as written and then percent-decoded, as a browser finds it. An element out of the
+ * page, or of a document a script made, is none.
+ */
+const targeted: Test = (node) => {
+  const engine = engineOf(node);
+  const url = pageUrl(engine);
+  const at = url.indexOf('#');
+  if (at === -1 || at === url.length - 1 || topOf(node) !== engine.root) return false;
+  const raw = url.slice(at + 1);
+  const decoded = percentDecoded(raw);
+  // The page is looked through only for an element the fragment names at all.
+  if (!namedBy(node, raw) && !namedBy(node, decoded)) return false;
+  return (firstNamed(engine.root, raw) ?? firstNamed(engine.root, decoded)) === node;
+};
+
+function percentDecoded(fragment: string): string {
+  try {
+    return decodeURIComponent(fragment);
+  } catch {
+    // A fragment that is not percent-encoded is its own name.
+    return fragment;
+  }
+}
+
+const namedBy = (node: EngineNode, fragment: string): boolean =>
+  attributeOf(node, 'id') === fragment ||
+  (isHtml(node, 'a') && attributeOf(node, 'name') === fragment);
+
+/** The first element under a root with a fragment as its id, or else the first `<a>` of it. */
+function firstNamed(root: EngineNode, fragment: string): EngineNode | null {
+  let anchor: EngineNode | null = null;
+  for (const each of elementsUnder(root)) {
+    if (attributeOf(each, 'id') === fragment) return each;
+    if (!anchor && isHtml(each, 'a') && attributeOf(each, 'name') === fragment) anchor = each;
+  }
+  return anchor;
+}
+
 /** `:focus-within`: the focused element is this one or is inside it. */
 const focusWithin: Test = (node) => {
   for (let at = focusedIn(node); at; at = at.parent) if (at === node) return true;
@@ -242,6 +282,7 @@ const PLAIN: Readonly<Record<string, Test>> = {
   'focus-visible': (node) => focusedIn(node) === node,
   'focus-within': focusWithin,
   active: (node) => node.active === true,
+  target: targeted,
   link: linked,
   'any-link': linked,
   '-webkit-any-link': linked,

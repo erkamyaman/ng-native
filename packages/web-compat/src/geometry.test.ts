@@ -196,6 +196,39 @@ describe('offset and client members', () => {
     assert.equal(document.documentElement.clientHeight, 800);
   });
 
+  it("counts a table's border in its client size, and nowhere else, as Chrome does", async () => {
+    const { place, make } = await page();
+    const table = make('table', undefined, 'border-width: 8px; border-style: solid');
+    const row = make('tr', table);
+    const cell = make('td', row);
+    await settle();
+    place(table, { x: 0, y: 0, width: 100, height: 50 });
+    place(row, { x: 8, y: 8, width: 84, height: 34 });
+    place(cell, { x: 8, y: 8, width: 84, height: 34 });
+    assert.deepEqual(
+      [table.clientWidth, table.clientHeight, table.clientLeft, table.clientTop],
+      [100, 50, 8, 8],
+    );
+    // Within its border, where its cells are, as an offset and a scroll size are measured.
+    assert.deepEqual(
+      [row.offsetTop, row.offsetLeft, cell.offsetTop, cell.offsetLeft],
+      [0, 0, 0, 0],
+    );
+    assert.deepEqual([table.scrollWidth, table.scrollHeight], [84, 34]);
+  });
+
+  it('counts the border by the display a box has, not by its name', async () => {
+    const { place, make } = await page();
+    const border = 'border-width: 8px; border-style: solid';
+    const grid = make('div', undefined, `display: table; ${border}`);
+    const block = make('table', undefined, `display: block; ${border}`);
+    await settle();
+    place(grid, { x: 0, y: 0, width: 116, height: 16 });
+    place(block, { x: 0, y: 0, width: 100, height: 50 });
+    assert.deepEqual([grid.clientWidth, grid.clientHeight], [116, 16]);
+    assert.deepEqual([block.clientWidth, block.clientHeight], [84, 34]);
+  });
+
   it('rounds each size and offset to a whole pixel, as a browser does, where a getter reads one', async () => {
     // A 1080-pixel Android screen at 2.625 is 411.43 points across: a library that sizes a
     // chart by offsetWidth draws it at 411 in a browser, and placed every line by the fraction.
@@ -279,18 +312,12 @@ describe('scrolling an element', () => {
     assert.equal(box.scrollTop, 30);
   });
 
-  it("leaves the engine's own views, a component and a text field to scroll as they do", async () => {
+  it("leaves the engine's own views, a component, a text field and a table to scroll as they do", async () => {
     const { make } = await page();
     const scrolls = (name: string) => make(name).scrollsOverflow === true;
-    assert.deepEqual(['div', 'span', 'td', 'x-mine', 'view', 'input', 'textarea'].map(scrolls), [
-      true,
-      true,
-      true,
-      false,
-      false,
-      false,
-      false,
-    ]);
+    const names = ['div', 'span', 'td', 'x-mine', 'view', 'input', 'textarea', 'table'];
+    // A table scrolls nothing in a browser, whatever its overflow says.
+    assert.deepEqual(names.map(scrolls), [true, true, true, false, false, false, false, false]);
     // A library's own element, which the build names as a browser's.
     const named = globals.ɵngNativeBrowserElements;
     globals.ɵngNativeBrowserElements = new Set(['x-library']);
@@ -440,6 +467,19 @@ describe('window geometry', () => {
     assert.equal(globals.visualViewport.height, 800);
     assert.equal(globals.visualViewport.scale, 1);
     assert.equal(globals.visualViewport.offsetTop, 0);
+  });
+
+  it("answers the screen's pixel ratio as devicePixelRatio, and 1 where it was not told", async () => {
+    await page();
+    assert.equal(globals.devicePixelRatio, 1);
+    cleanup();
+    await render(Page, {
+      providers: [provideWebCompat()],
+      conditions: { width: 400, height: 800, colorScheme: 'light', pixelRatio: 3 },
+    });
+    assert.equal(globals.devicePixelRatio, 3);
+    cleanup();
+    assert.equal('devicePixelRatio' in globals, false, 'gone with the package');
   });
 
   it('tells a visual viewport resize listener when the window changes', async () => {
@@ -821,6 +861,73 @@ describe('IntersectionObserver', () => {
     );
     observer.unobserve(item);
     assert.deepEqual([count(scroller, 'topScroll'), count(item, 'topLayout')], before);
+  });
+
+  it("sees a table's border as in sight of it, where a box's is outside, as Chrome does", async () => {
+    const { place, make } = await page();
+    const border = 'border-width: 50px; border-style: solid; overflow: scroll';
+    const table = make('table', undefined, border);
+    const box = make('div', undefined, border);
+    const items = [make('div', table), make('div', box)];
+    await settle();
+    place(table, { x: 0, y: 0, width: 200, height: 200 });
+    place(box, { x: 0, y: 300, width: 200, height: 200 });
+    place(items[0], { x: 50, y: 50, width: 10, height: 10 });
+    place(items[1], { x: 50, y: 350, width: 10, height: 10 });
+    const bounds: string[] = [];
+    const observers = [table, box].map((root, at) => {
+      const observer = new globals.IntersectionObserver(
+        (entries: Dom[]) => bounds.push(sides(entries[0].rootBounds)),
+        { root },
+      );
+      observer.observe(items[at]);
+      return observer;
+    });
+    await nextFrame();
+    for (const observer of observers) observer.disconnect();
+    assert.deepEqual(bounds, ['0 0 200 200', '50 350 150 450']);
+  });
+
+  it('clips a table inside its border where it hides what overflows, and only then, as Chrome does', async () => {
+    const { place, make } = await page();
+    const seen: string[] = [];
+    for (const overflow of ['hidden', 'clip', 'scroll', 'auto', 'visible']) {
+      const table = make(
+        'table',
+        undefined,
+        `border-width: 50px; border-style: solid; overflow: ${overflow}`,
+      );
+      const item = make('div', table);
+      await settle();
+      place(table, { x: 0, y: 0, width: 200, height: 200 });
+      // Half across and half down into the border, so a quarter of it is inside.
+      place(item, { x: 45, y: 45, width: 10, height: 10 });
+      for (const root of [table, null]) {
+        const observer = new globals.IntersectionObserver(
+          (entries: Dom[]) =>
+            seen.push(
+              `${overflow} ${root ? 'root' : 'in'} ${entries[0].intersectionRatio} ${root ? entries[0].rootBounds.width : ''}`,
+            ),
+          { root },
+        );
+        observer.observe(item);
+        await nextFrame();
+        observer.disconnect();
+      }
+      table.remove();
+    }
+    assert.deepEqual(seen, [
+      'hidden root 0.25 100',
+      'hidden in 0.25 ',
+      'clip root 0.25 100',
+      'clip in 0.25 ',
+      'scroll root 1 200',
+      'scroll in 1 ',
+      'auto root 1 200',
+      'auto in 1 ',
+      'visible root 1 200',
+      'visible in 1 ',
+    ]);
   });
 
   it('looks again after a commit, and at what is in sight of a root and its margin', async () => {

@@ -16,8 +16,9 @@ nx start mobile
 
 `nx start` runs Metro, the same as `npx expo start` in an app made from the template. The app can
 import the workspace's Angular libraries, and they are compiled ahead of time into its bundle with
-the rest of its code. In a workspace whose root package is scoped, as the TypeScript preset's is,
-the project is named for the scope the way Nx names its own: `nx start @org/mobile`.
+the rest of its code. In a workspace with package-manager workspaces and a scoped root package, as
+the TypeScript preset has, each project is named for the scope the way Nx names its own:
+`nx start @org/mobile`, and `@org/ui` for a library, in the commands below as well.
 
 ## What nx add does
 
@@ -200,6 +201,8 @@ nx g @ng-native/nx:component profile-card --project ui
 nx test ui
 ```
 
+In the TypeScript preset the library is `@org/ui`: `--project @org/ui` and `nx test @org/ui`.
+
 `@nx/angular:library` writes tests that run on jsdom through Analog, with a `TestBed` spec for a
 `<p>`, and none of it can render a native component. `@ng-native/nx:library` runs the workspace's
 own library generator without its tests: `@nx/angular:library`, with the options `nx g` would give
@@ -217,8 +220,8 @@ this site do: `tsconfig.lib.json` allows it and `src/index.ts` is written that w
 takes that where a project emits declarations and no JavaScript, which is the preset's own setting,
 so a workspace that has changed it keeps the `.js` imports `@nx/js` writes.
 
-In the TypeScript preset `nx typecheck ui` checks the library's templates as well as its code, as
-an app's does: the generator writes `tsconfig.typecheck.json` beside `tsconfig.lib.json` and a
+In the TypeScript preset `nx typecheck @org/ui` checks the library's templates as well as its code,
+as an app's does: the generator writes `tsconfig.typecheck.json` beside `tsconfig.lib.json` and a
 `typecheck` target that runs `ngc` on it, in place of the `tsc` `@nx/js` infers, and adds
 `@angular/compiler-cli` to the library's dev dependencies. A misspelled input or a binding of the
 wrong type in a library component fails the target.
@@ -237,6 +240,8 @@ the name, such as `settings/profile-card`.
 ```sh
 nx g @ng-native/nx:tailwind mobile --library ui
 ```
+
+In the TypeScript preset that is `nx g @ng-native/nx:tailwind @org/mobile --library @org/ui`.
 
 This sets up [Tailwind](/packages/tailwind) in an app, and in the libraries whose classes it uses.
 An app that uses a library's classes without this renders them unstyled, and nothing fails: the

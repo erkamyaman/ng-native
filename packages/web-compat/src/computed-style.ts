@@ -1,6 +1,8 @@
 import type { Engine, EngineNode, TokenValue } from '@ng-native/fabric';
 import { applyChanged } from './runtime-style.ts';
 import { computedTransform } from './computed-transform.ts';
+import { isShape } from './svg.ts';
+import { fontSizeOf } from './svg-box.ts';
 import { alphaText, canvasColour } from './canvas-colour.ts';
 import { domError } from './dom-error.ts';
 import { documentOf } from './document.ts';
@@ -434,6 +436,8 @@ class ComputedStyle {
     settle(node);
     const whole = wholeOf(key, (part) => this.read(part));
     if (whole !== undefined) return whole;
+    // A text of a drawing is measured by its font size, which a chart library reads in pixels.
+    if (key === 'fontSize' && isShape(node)) return `${fontSizeOf(node)}px`;
     this[INLINE] ??= inlineOf(node);
     return settled(node, key, resolved(node, key, this[INLINE]));
   }
@@ -513,12 +517,24 @@ function laidOut(node: EngineNode, key: 'width' | 'height'): string | undefined 
  * box of an item of a flex or grid container.
  */
 function settled(node: EngineNode, key: string, value: string): string {
-  if (key === 'display') return blockified(node, value);
+  if (key === 'display') return blockified(node, listItem(node, value));
   if (value !== 'auto') return value;
   // A box that is none, or is its children's, has no size of its own to lay out.
   const display = key === 'width' || key === 'height' ? resolved(node, 'display') : 'none';
   if (!/^(none|contents)$/.test(display)) return laidOut(node, key as 'width') ?? value;
   return key === 'minWidth' || key === 'minHeight' ? minimum(node) : value;
+}
+
+/** The elements a browser's own stylesheet makes list items, which the engine lays out as blocks. */
+const LIST_ITEMS = new Set(['li', 'summary']);
+
+/** `list-item` for one of `LIST_ITEMS` that is a block by its default alone, as a browser has it. */
+function listItem(node: EngineNode, display: string): string {
+  if (display !== 'block' || !LIST_ITEMS.has(node.tag)) return display;
+  const own =
+    (node.props['style'] as Record<string, unknown> | undefined)?.['display'] ??
+    node.styleCache?.style['display'];
+  return own === undefined ? 'list-item' : display;
 }
 
 /** The display of a box an item of a flex or grid container is, which is a block's. */

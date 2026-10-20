@@ -95,6 +95,38 @@ describe('focus on what is not a text field', () => {
     assert.equal(reached.length, 4, 'nothing to give up the second time');
   });
 
+  it('is lost by an element moved to another parent, or one that has it in it', async () => {
+    // A browser takes an element out of the tree before it puts it back, and the focus goes.
+    const { document } = await page();
+    const one = document.getElementById('one');
+    const outer = document.getElementById('page');
+    const held = document.getElementById('held');
+    one.focus();
+    const heard = hear(one);
+    held.appendChild(one);
+    assert.equal(active(document), 'body');
+    assert.equal(one.matches(':focus'), false);
+    assert.deepEqual(heard, ['blur', 'focusout']);
+    one.focus();
+    outer.appendChild(held);
+    assert.equal(active(document), 'body', 'with the parent it was in');
+    // Another element moved leaves it where it is.
+    one.focus();
+    outer.appendChild(document.getElementById('two'));
+    assert.equal(active(document), 'one');
+    // And while an observer watches, which takes the element out first, as a browser does.
+    const observer = new (globalThis as unknown as { MutationObserver: Dom }).MutationObserver(
+      () => {},
+    );
+    observer.observe(outer, { childList: true, subtree: true });
+    try {
+      outer.appendChild(one);
+      assert.equal(active(document), 'body', 'with an observer watching');
+    } finally {
+      observer.disconnect();
+    }
+  });
+
   it('takes the focus from a text field, which native is told to blur', async () => {
     const { document, fabric } = await page();
     const field = document.getElementById('field');

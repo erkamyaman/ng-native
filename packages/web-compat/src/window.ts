@@ -19,6 +19,7 @@ import {
   windowEvent,
 } from './events.ts';
 import { EVENT_CLASSES, phasesOnEvent } from './event-classes.ts';
+import { pageFrames, postMessage } from './frame.ts';
 import { domParser } from './html.ts';
 import {
   IntersectionObserver,
@@ -154,11 +155,17 @@ const GLOBALS: Readonly<Record<string, unknown>> = {
   ...EVENT_CLASSES,
   // There for a device that takes touches, which is how a library asks.
   ontouchstart: null,
-  // The page's window is the top one, in no frame.
+  // The page's window is the top one, in no frame, and its `frames` the window of each iframe
+  // in it by its place: see `frame.ts`. Read as the window is put in, after every module.
   self: globalThis,
+  get frames() {
+    return pageFrames;
+  },
   parent: globalThis,
   top: globalThis,
   frameElement: null,
+  // A `message` event on the window, after the task that sent it: see `frame.ts`.
+  postMessage: (message: unknown, options?: unknown) => postMessage(globalThis, message, options),
   // What hears a change to the tree: see `mutation-observer.ts`.
   MutationObserver,
   MutationRecord,
@@ -352,6 +359,8 @@ const SIZES: Readonly<Record<string, () => number>> = {
   screenY: () => 0,
   screenLeft: () => 0,
   screenTop: () => 0,
+  // The screen's pixels in a point, which a canvas is drawn sharp by: 1 where it was not told.
+  devicePixelRatio: () => engines.at(-1)?.conditions?.pixelRatio ?? 1,
   scrollX: () => 0,
   scrollY: () => 0,
   pageXOffset: () => 0,

@@ -6,8 +6,8 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import { Component, DOCUMENT, ElementRef, inject, signal } from '@angular/core';
 import { Text, TextInput, View } from '@ng-native/components';
-import { registeredViewName } from '@ng-native/fabric';
-import { cleanup, fireEvent, render, screen, userEvent } from '@ng-native/testing';
+import { registeredViewName, viewNameOf } from '@ng-native/fabric';
+import { cleanup, fireEvent, render, screen, settle, userEvent } from '@ng-native/testing';
 
 afterEach(cleanup);
 
@@ -58,6 +58,58 @@ class PlainFields {}
 
 @Component({ selector: 'x-asking-fields', template: '<input testID="asked-field" />' })
 class AskingFields {}
+
+@Component({
+  selector: 'x-drawn',
+  template: `<svg testID="root" viewBox="0 0 2 2"><text testID="label" x="1">Hi</text></svg>`,
+})
+class Drawn {}
+
+@Component({
+  selector: 'x-shape',
+  template: `<svg testID="drawing" viewBox="0 0 2 2"><path testID="shape" d="M0 0" /></svg>`,
+})
+class Shape {}
+
+@Component({
+  selector: 'x-canvas',
+  template: `<canvas testID="canvas" width="20" height="10"></canvas>`,
+})
+class Canvas {}
+
+/** The names a canvas's views are registered by, and the globals a script asks its drawing by. */
+const CANVAS_NAMES = ['canvas', 'canvas:image', 'canvas:pattern'];
+const CANVAS_GLOBALS = ['ImageData', 'CanvasRenderingContext2D', 'CanvasGradient', 'CanvasPattern'];
+
+/** Whether the canvas of a `Canvas` app draws: its context, its views and its globals. */
+async function canvasIsUp(): Promise<void> {
+  assert.deepEqual(
+    CANVAS_NAMES.map((name) => registeredViewName(name)),
+    ['RNSVGSvgView', 'RNSVGImage', 'RNSVGPattern'],
+  );
+  for (const name of CANVAS_GLOBALS) assert.equal(typeof (globalThis as Dom)[name], 'function');
+  const node = (globalThis as Dom).document.querySelector('canvas');
+  const context = node.getContext('2d');
+  assert.ok(context instanceof (globalThis as Dom).CanvasRenderingContext2D);
+  assert.equal(node.width, 20);
+  context.fillRect(0, 0, 5, 5);
+  await settle();
+  const view = screen.getByTestId('canvas');
+  assert.deepEqual([view.props['vbWidth'], view.props['vbHeight']], [20, 10]);
+  assert.equal(view.children[0]!.children[0]!.viewName, 'RNSVGPath');
+  assert.deepEqual([...context.getImageData(0, 0, 1, 1).data], [0, 0, 0, 255]);
+}
+
+@Component({
+  selector: 'x-framed',
+  template: '<iframe src="https://video.example/embed"></iframe>',
+})
+class Framed {
+  readonly host: Dom = inject(ElementRef).nativeElement;
+}
+
+/** What an engine's children are changed by, which an app with an iframe watches. */
+const WATCHED = ['appendChild', 'insertBefore', 'removeChild'] as const;
 
 /** The package, read the first time a test asks for it: see the first test. */
 const load = () => import('./index.ts');
@@ -169,8 +221,29 @@ describe('provideWebCompat', () => {
     geometryIsUp(app, host, div, engineObserver);
     eventsAreUp(app, div);
     const input = formsAreUp(app);
+    // The page's address, and its frames: each a document of its own here, with no web view.
+    const page = ['location', 'frames', 'postMessage'];
+    assert.equal((globalThis as Dom).location.href, 'app:///');
+    assert.equal(app.instance.document.URL, 'app:///');
+    const engine = host.engine;
+    const unwatched = WATCHED.map((name) => engine[name]);
+    const iframe = app.instance.document.createElement('iframe');
+    app.instance.document.body.appendChild(iframe);
+    assert.equal((globalThis as Dom).frames.length, 1);
+    assert.equal(iframe.contentWindow.parent, globalThis);
+    assert.notDeepEqual(
+      WATCHED.map((name) => engine[name]),
+      unwatched,
+      'the engine watched for iframes',
+    );
 
     cleanup();
+    for (const name of page) assert.equal((globalThis as Dom)[name], undefined, name);
+    // Unwatched again: an iframe the engine puts in the page is opened as no frame.
+    const late = engine.createElement('iframe');
+    engine.appendChild(engine.root, late);
+    const { contentWindowOf } = await import('./frame.ts');
+    assert.equal(contentWindowOf(late), null);
     assert.deepEqual(globalsNow(), globals, 'every global as it was, the document too');
     assert.deepEqual(membersOf(host), members, 'every node member as it was');
     assert.equal(host.getAttribute, undefined);
@@ -228,6 +301,90 @@ describe('provideWebCompat', () => {
     await render(Page, { providers: [provideWebCompat()] });
     globalThis.dispatchEvent(new Event('picked'));
     assert.deepEqual(listened, []);
+  });
+
+  it('draws an svg while the app is up, and takes the names it gave its elements away after', async () => {
+    const { provideWebCompat } = await load();
+    const names = ['svg', 'path', 'svg:text', 'svg:tspan', 'svg:undrawn'];
+    const before = names.map((name) => registeredViewName(name));
+    await render(Drawn);
+    const plain = [screen.getByTestId('root').viewName, screen.getByTestId('label').viewName];
+    cleanup();
+
+    await render(Drawn, { providers: [provideWebCompat()] });
+    const label: Dom = screen.getByTestId('label');
+    assert.deepEqual(
+      [screen.getByTestId('root').viewName, label.viewName, label.children[0].viewName],
+      ['RNSVGSvgView', 'RNSVGText', 'RNSVGTSpan'],
+    );
+    const element = label.instanceHandle;
+    assert.deepEqual(
+      [element.tagName, element.namespaceURI, element.className.baseVal],
+      ['text', 'http://www.w3.org/2000/svg', ''],
+    );
+    assert.equal(registeredViewName('path'), 'RNSVGPath');
+
+    cleanup();
+    assert.deepEqual(
+      names.map((name) => registeredViewName(name)),
+      before,
+      'every name as it was',
+    );
+    assert.deepEqual(
+      before,
+      names.map(() => undefined),
+      'none of them a name before',
+    );
+    // And the renderer names an element in an `<svg>` as it is written again.
+    await render(Drawn);
+    assert.deepEqual(
+      [screen.getByTestId('root').viewName, screen.getByTestId('label').viewName],
+      plain,
+    );
+  });
+
+  it('draws on a canvas while the app is up, and takes its names and globals away after', async () => {
+    const { provideWebCompat } = await load();
+    const before = CANVAS_NAMES.map((name) => registeredViewName(name));
+    await render(Canvas);
+    const plain = screen.getByTestId('canvas').viewName;
+    cleanup();
+
+    await render(Canvas, { providers: [provideWebCompat()] });
+    const node: Dom = screen.getByTestId('canvas').instanceHandle;
+    await canvasIsUp();
+
+    cleanup();
+    assert.deepEqual(
+      CANVAS_NAMES.map((name) => registeredViewName(name)),
+      before,
+      'every name as it was',
+    );
+    assert.deepEqual(before, [undefined, undefined, undefined], 'none of them a name before');
+    for (const name of CANVAS_GLOBALS) assert.equal((globalThis as Dom)[name], undefined, name);
+    assert.deepEqual(
+      [node.getContext, node.toDataURL, node.toBlob],
+      [undefined, undefined, undefined],
+    );
+    // And a canvas is what the renderer makes of one again, with nothing drawn in it.
+    await render(Canvas);
+    assert.equal(screen.getByTestId('canvas').viewName, plain);
+    assert.deepEqual(screen.getByTestId('canvas').children, []);
+  });
+
+  it("leaves a runtime's own ImageData as it is, while the app is up and after", async () => {
+    const { provideWebCompat } = await load();
+    class OwnImageData {}
+    const globals = globalThis as Dom;
+    globals.ImageData = OwnImageData;
+    try {
+      await render(Canvas, { providers: [provideWebCompat()] });
+      assert.equal(globals.ImageData, OwnImageData);
+      cleanup();
+      assert.equal(globals.ImageData, OwnImageData);
+    } finally {
+      delete globals.ImageData;
+    }
   });
 
   it('stays while any app that asked for it is up, and gives the document to the newest', async () => {
@@ -289,6 +446,17 @@ describe('provideWebCompat', () => {
       changedTouches: [{ identifier: 0, pageX: 1, pageY: 1 }],
     });
     assert.equal(buttons.instance.host.childList[1].active, undefined, 'no press taken');
+
+    // A drawing's attributes are the props they are written as, and a shape has no fill given it.
+    await render(Shape);
+    assert.equal(screen.getByTestId('drawing').props['viewBox'], '0 0 2 2');
+    assert.equal(screen.getByTestId('shape').props['fill'], undefined);
+    // A canvas is given no group to draw in and no grid, and has no context to draw with.
+    await render(Canvas);
+    const canvas = screen.getByTestId('canvas');
+    assert.deepEqual(canvas.children, []);
+    assert.deepEqual([canvas.props['width'], canvas.props['vbWidth']], ['20', undefined]);
+    assert.equal((canvas.instanceHandle as Dom).getContext('2d'), null);
     // A style it binds is set as written, as the renderer sets one: no inset read as a side.
     await render(Inset);
     assert.equal(screen.getByTestId('inset').props['start'], undefined);
@@ -306,6 +474,40 @@ describe('provideWebCompat', () => {
     assert.deepEqual([asked['paddingTop'], typeof asked['width']], [0, 'number']);
     cleanup();
     await plainFieldsAreAsThey();
+  });
+
+  it('shows an iframe as a web view in the app that asked alone, and only while it is up', async () => {
+    const { provideWebCompat } = await load();
+    const scope = globalThis as Dom;
+    const had = Object.getOwnPropertyDescriptor(scope, '__nativeComponentRegistry__hasComponent');
+    // React Native's answer on a device with react-native-webview installed.
+    scope.__nativeComponentRegistry__hasComponent = (name: string) => name === 'RNCWebView';
+    try {
+      const before = registeredViewName('iframe');
+      const asking = await render(Page, { providers: [provideWebCompat()] });
+      const plain = await render(Framed);
+      assert.equal(registeredViewName('iframe'), 'RNCWebView');
+      const engine = plain.instance.host.engine;
+      const unwatched = WATCHED.map((name) => engine[name]);
+      const theirs = plain.instance.host.firstChild;
+      const ours = asking.instance.document.createElement('iframe');
+      asking.instance.document.body.appendChild(ours);
+      await settle();
+      // The plain app's is the plain view it is without the package, and nothing watches it.
+      assert.equal(viewNameOf(theirs), 'View');
+      assert.equal(viewNameOf(ours), 'RNCWebView');
+      assert.equal(theirs.props['newSource'], undefined);
+      assert.equal(theirs.props['src'], 'https://video.example/embed', 'its src a prop as written');
+      assert.deepEqual(
+        WATCHED.map((name) => engine[name]),
+        unwatched,
+      );
+      cleanup();
+      assert.equal(registeredViewName('iframe'), before);
+    } finally {
+      if (had) Object.defineProperty(scope, '__nativeComponentRegistry__hasComponent', had);
+      else delete scope.__nativeComponentRegistry__hasComponent;
+    }
   });
 
   it('adds it all again for an app that asks after the last one went', async () => {

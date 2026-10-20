@@ -1,4 +1,5 @@
 import type { EngineNode } from '@ng-native/fabric';
+import { CANVAS_MEMBERS } from './canvas.ts';
 import { datasetOf } from './dataset.ts';
 import { nameOf } from './document.ts';
 import { isFragment } from './document-fragment.ts';
@@ -8,6 +9,8 @@ import { CONTROLS } from './form-controls.ts';
 import { nameRecordOf, XHTML } from './qualified-name.ts';
 import { own, type Reflecting, type Reflection } from './reflect.ts';
 import { BY_ELEMENT, GLOBAL } from './reflected-attributes.ts';
+import { FRAMES } from './frame.ts';
+import { HYPERLINKS } from './hyperlink.ts';
 import { STYLE_SHEETS } from './runtime-style.ts';
 import { TABLE_PARTS } from './table-parts.ts';
 import { SELECTION } from './text-selection.ts';
@@ -17,9 +20,10 @@ import { engineOf } from './window.ts';
 /**
  * The properties of HTML elements, by element: what reflects an attribute
  * (`reflected-attributes.ts`), what a form control answers of itself (`form-controls.ts`,
- * `validity.ts`, `text-selection.ts`), a table's parts (`table-parts.ts`), an element's `text`
- * (`element-text.ts`), a `<style>`'s `sheet` (`runtime-style.ts`), and `dataset`. Nodes share one
- * prototype, so each property here asks
+ * `validity.ts`, `text-selection.ts`), a table's parts (`table-parts.ts`), a link's URL
+ * (`hyperlink.ts`), an iframe's document and window (`frame.ts`), an element's `text`
+ * (`element-text.ts`), a `<style>`'s `sheet` (`runtime-style.ts`), a `<canvas>`'s context and
+ * size (`canvas.ts`), and `dataset`. Nodes share one prototype, so each property here asks
  * which element it is read on: one with nothing of its own for the name answers what the package
  * had for it before, and a text or an element of another namespace always does.
  */
@@ -36,11 +40,14 @@ const EVERY_NODE: Readonly<Record<string, Reflection>> = {
 
 const DATASET = own((element) => datasetOf(element as never));
 
-/** An element of HTML's: no text, no fragment, and none a script made in another namespace. */
+/**
+ * An element of HTML's: no text, no fragment, and none a script made in another namespace or a
+ * template wrote in one, as it writes a drawing's in an `<svg>`.
+ */
 const isHtml = (node: EngineNode) => {
   if (node.nodeKind !== 'element' || isFragment(node)) return false;
   const name = nameRecordOf(node);
-  return !name || name.namespace === XHTML;
+  return name ? name.namespace === XHTML : node.namespace === undefined;
 };
 
 /** Every name an element answers here. */
@@ -57,10 +64,13 @@ function resolve(name: string, tables: readonly ByElement[]) {
   const byElement = new Map<string, Reflection>();
   const elements = new Set(tables.flatMap((table) => Object.keys(table)));
   for (const element of elements) {
-    const own = tables.map((table) => table[element]?.[name]).find(Boolean);
+    // By their own members only: `toString` is every object's.
+    const own = tables
+      .map((table) => table[element])
+      .find((members) => members && Object.hasOwn(members, name))?.[name];
     if (own) byElement.set(element, own);
   }
-  const global = GLOBAL[name];
+  const global = Object.hasOwn(GLOBAL, name) ? GLOBAL[name] : undefined;
   // The page's body is a view, and has a body's own members, `bgColor` and the rest, as well.
   const body = byElement.get('body');
   return (node: EngineNode): Reflection | undefined => {
@@ -107,8 +117,11 @@ export function withHtmlMembers(base: PropertyDescriptorMap): PropertyDescriptor
     VALIDATION,
     SELECTION,
     TABLE_PARTS,
+    HYPERLINKS,
+    FRAMES,
     ELEMENT_TEXT,
     STYLE_SHEETS,
+    CANVAS_MEMBERS,
     BY_ELEMENT,
   ];
   const names = new Set([...Object.keys(GLOBAL), ...namesOf(...tables)]);

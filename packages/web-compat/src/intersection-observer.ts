@@ -4,7 +4,7 @@ import { DOMRectReadOnly } from './dom-rect.ts';
 import { documentOf } from './document.ts';
 import { domError } from './dom-error.ts';
 import { report } from './events.ts';
-import { border, clientSize, drawn, frameOf, styled } from './geometry.ts';
+import { border, clientSize, drawn, frameOf, isTable, styled } from './geometry.ts';
 import { asElement } from './resize-observer.ts';
 import { engineOf, listenToResize, windowSize } from './window.ts';
 import { oncePerFrame } from './next-frame.ts';
@@ -156,12 +156,18 @@ const isElement = (root: unknown): root is EngineNode =>
 const scrollsItself = (node: EngineNode): boolean =>
   node.scrollView === true || node.tag === 'scroll-view';
 
-/** Whether an element clips what is in it: it scrolls, or its overflow is not to be seen. */
-const clips = (node: EngineNode): boolean =>
-  scrollsItself(node) ||
-  ['hidden', 'clip', 'scroll', 'auto'].includes(String(styled(node, 'overflow')));
+/**
+ * Whether an element clips what is in it: it scrolls, or its overflow is not to be seen. A table
+ * clips only where its overflow is hidden, as Chrome draws one, or where it is a scroll view here.
+ */
+const clips = (node: EngineNode): boolean => {
+  if (scrollsItself(node)) return true;
+  const overflow = String(styled(node, 'overflow'));
+  if (isTable(node)) return overflow === 'hidden' || overflow === 'clip';
+  return ['hidden', 'clip', 'scroll', 'auto'].includes(overflow);
+};
 
-/** The box an element clips what it holds to: inside its border. */
+/** The box an element clips what it holds to: inside its border, a table's as well. */
 function paddingBox(node: EngineNode): Rect {
   const frame = frameOf(node);
   const inside = clientSize(node);

@@ -1,6 +1,7 @@
 import type { Engine, EngineNode } from '@ng-native/fabric';
 import type { Renderer2 } from '@angular/core';
 import { attributeRemoved } from './attr.ts';
+import { canvasAttributes, isCanvasBox } from './canvas.ts';
 import { isCDATASection } from './cdata-section.ts';
 import { isCharacterData, setData, wordsOf } from './character-data.ts';
 import { classAttribute, classListOf, setClassAttribute } from './class-list.ts';
@@ -12,6 +13,8 @@ import { required } from './dom-error.ts';
 import { marksHover } from './elements.ts';
 import { dispatch, listen, unlisten, type Heard } from './events.ts';
 import { isField } from './field.ts';
+import { frameCreated } from './frame.ts';
+import { setFrameView } from './frame-view.ts';
 import { inDocument, isInDocument, lastInDocument } from './in-document.ts';
 import { announcesDisabled, listenNatively, hasCapture, topLevel } from './listen.ts';
 import { observing, removingAttribute, settingAttribute, together } from './mutation-observer.ts';
@@ -23,10 +26,13 @@ import {
   checkAttributeName,
   nameRecordOf,
   noteAttributeName,
+  SVG,
   XHTML,
 } from './qualified-name.ts';
 import { BY_ELEMENT, GLOBAL } from './reflected-attributes.ts';
 import { setStyleAttribute, styleOf } from './style-declaration.ts';
+import { isKeptOnShape, isShape, writtenAttributes } from './svg.ts';
+import { boxOf } from './svg-box.ts';
 import { engineOf } from './window.ts';
 
 /** A node as a library holds one: an engine node with the members below on it. */
@@ -90,10 +96,19 @@ const asWritten = (name: string, value: boolean): string =>
  */
 const written = new WeakMap<EngineNode, Map<string, string>>();
 
+/** The names a script wrote that were attributes already: each keeps the place it had. */
+const placed = new WeakMap<EngineNode, Set<string>>();
+
 export function noteWritten(node: EngineNode, name: string, value: string | null): void {
   let all = written.get(node);
-  if (value === null) return void all?.delete(name);
+  if (value === null) {
+    placed.get(node)?.delete(name);
+    return void all?.delete(name);
+  }
   if (!all) written.set(node, (all = new Map()));
+  if (!all.has(name) && hasAttribute(node, name)) {
+    placed.set(node, (placed.get(node) ?? new Set()).add(name));
+  }
   all.set(name, value);
 }
 
@@ -101,18 +116,44 @@ export function noteWritten(node: EngineNode, name: string, value: string | null
 export function copyWritten(from: EngineNode, to: EngineNode): void {
   const all = written.get(from);
   if (all) written.set(to, new Map(all));
+  const placedThere = placed.get(from);
+  if (placedThere) placed.set(to, new Set(placedThere));
+  // A copy of an iframe is a frame of its own, which a copy is not made as: see `frame.ts`.
+  frameCreated(to, engineOf(to));
+  const kept = taken.get(from);
+  if (!kept) return;
+  taken.set(to, new Map(kept));
+  // And its view is shown by what the one it is a copy of took.
+  for (const [name, value] of kept) setFrameView(to, name, value, engineOf(to));
+}
+
+/**
+ * Each attribute an element's own view took, which is no prop to read it back from: an iframe's
+ * `width`, which its web view is sized by, and its `src`, which it is shown as. Kept as written.
+ */
+const taken = new WeakMap<EngineNode, Map<string, string>>();
+
+/** An attribute set as something else, or `null` for one taken away: see `taken`. */
+export function keepTaken(node: EngineNode, name: string, value: unknown): void {
+  const all = taken.get(node);
+  if (value == null || value === false) return void all?.delete(name);
+  if (all) all.set(name, String(value));
+  else taken.set(node, new Map([[name, String(value)]]));
 }
 
 /**
  * Names in the order they were set: those set some other way first, a template's, as they come,
- * then those a script wrote, in the order it first wrote them.
+ * then those a script wrote, in the order it first wrote them. One a script wrote again where it
+ * was set already keeps its place, as a browser keeps an attribute's.
  */
 function inWrittenOrder(node: EngineNode, names: readonly string[]): string[] {
   const all = written.get(node);
   if (!all) return [...names];
+  const kept = placed.get(node);
+  const added = (name: string) => all.has(name) && !kept?.has(name);
   return [
-    ...names.filter((name) => !all.has(name)),
-    ...[...all.keys()].filter((name) => names.includes(name)),
+    ...names.filter((name) => !added(name)),
+    ...[...all.keys()].filter((name) => names.includes(name) && added(name)),
   ];
 }
 
@@ -125,6 +166,10 @@ function setAsWritten(node: EngineNode, name: string, value: unknown): void {
   if (!renderer) engine.setProp(node, propOf(name), value);
 }
 
+/** The attributes an element keeps as written, where the props it is drawn by are another thing. */
+const keptAttributes = (node: EngineNode): Readonly<Record<string, string>> =>
+  node.tag === 'canvas' ? canvasAttributes(node) : writtenAttributes(node);
+
 /** Whether an element has an attribute. */
 function hasAttribute(node: EngineNode, name: string): boolean {
   if (name === 'class') return classAttribute(node) !== null;
@@ -134,13 +179,21 @@ function hasAttribute(node: EngineNode, name: string): boolean {
 
 /**
  * Whether a prop is a state this package gives an element, which is no attribute of it: the
- * `aria-disabled` a `disabled` announces, and the `data-hover` a pointer over it gives (see
- * `giveRole`).
+ * `aria-disabled` a `disabled` announces, the `data-hover` a pointer over it gives (see
+ * `giveRole`), and the view box a canvas is drawn by (see `canvas.ts`).
  */
 function isEngineState(node: EngineNode, key: string): boolean {
+  if (isCanvasBox(node, key)) return true;
   if (key === 'aria-disabled') return announcesDisabled(node);
   return key === 'data-hover' && marksHover(node);
 }
+
+/**
+ * An attribute kept as written, where the prop it is set as is another thing: one an iframe's web
+ * view took, or a shape's.
+ */
+const keptAs = (node: EngineNode, name: string): string | undefined =>
+  taken.get(node)?.get(name) ?? keptAttributes(node)[name];
 
 /** An attribute as `getAttribute` answers it: the text written, or what the prop says. */
 function attributeOf(node: EngineNode, name: string): string | null {
@@ -148,7 +201,7 @@ function attributeOf(node: EngineNode, name: string): string | null {
   const text = written.get(node)?.get(name);
   if (name === 'style') return text ?? null;
   if (text === undefined && isEngineState(node, name)) return null;
-  const value = node.props[propOf(name)];
+  const value = keptAs(node, name) ?? node.props[propOf(name)];
   if (value == null) return null;
   if (typeof value !== 'boolean') return String(value);
   // A boolean prop is what the text was coerced to: the text itself is what was written.
@@ -196,17 +249,27 @@ const isElement = (node: EngineNode): boolean => node.nodeKind === 'element' && 
  */
 function domName(node: EngineNode): string {
   const name = nameRecordOf(node);
-  if (!name) return nameOf(node, engineOf(node)).toUpperCase();
+  if (!name) return isDrawn(node) ? ownName(node) : ownName(node).toUpperCase();
   const qualified = name.prefix === null ? name.localName : `${name.prefix}:${name.localName}`;
   return name.namespace === XHTML && !inXmlDocument(node) ? asciiUpper(qualified) : qualified;
 }
 
-/** The namespace of an element: the one it was made in, or HTML's for what a template makes. */
+/**
+ * The namespace of an element: the one it was made in, or for what a template makes, SVG's for
+ * what is written in an `<svg>` and HTML's for the rest.
+ */
 function namespaceOf(node: EngineNode): string | null {
   if (!isElement(node)) return null;
   const name = nameRecordOf(node);
-  return name ? name.namespace : XHTML;
+  if (name) return name.namespace;
+  return isDrawn(node) ? SVG : XHTML;
 }
+
+/** Whether an element is a drawing's, which the renderer made in SVG's namespace. */
+const isDrawn = (node: EngineNode): boolean => node.namespace === 'svg';
+
+/** The name an element was written as: the one a stylesheet reads, where it is kept by another. */
+const ownName = (node: EngineNode): string => node.typeName ?? nameOf(node, engineOf(node));
 
 /**
  * A name written as a native view's prop is: a capital after a small letter, `testID` or
@@ -254,13 +317,20 @@ function isNativeOnly(node: EngineNode, key: string): boolean {
 /** An element's attribute names, `class` and `style` among them, in the order they were set. */
 function attributeNames(node: EngineNode): string[] {
   if (!isElement(node)) return [];
+  // A shape's are kept as written, and its props are what it is drawn by.
   const names = Object.keys(node.props)
+    .filter((key) => !(isShape(node) || node.tag === 'svg') || isKeptOnShape(key))
     .filter((key) => key !== 'style' && node.props[key] != null && !isNativeOnly(node, key))
     .map((key) => (key === 'nativeID' ? 'id' : key));
+  const drawn = Object.keys(keptAttributes(node)).filter((name) => !names.includes(name));
   const all = [
     ...(classAttribute(node) === null ? [] : ['class']),
     ...(written.get(node)?.has('style') ? ['style'] : []),
     ...names,
+    ...drawn,
+    ...[...(taken.get(node)?.keys() ?? [])].filter(
+      (name) => !names.includes(name) && !drawn.includes(name),
+    ),
   ];
   return inWrittenOrder(node, all);
 }
@@ -315,6 +385,12 @@ function attachNatively(node: EngineNode, type: string, heard: Heard, core: Core
 /** The event types core's own `addEventListener` attaches, for `@defer`, but for a click. */
 const DEFER_TRIGGERS = new Set(['keydown', 'mouseenter', 'focusin']);
 
+/** The elements a script draws pictures from, by what `Object.prototype.toString` says of them. */
+const PICTURE_TAGS: Readonly<Record<string, string>> = {
+  canvas: 'HTMLCanvasElement',
+  img: 'HTMLImageElement',
+};
+
 const get = (read: (this: Dom) => unknown, write?: (this: Dom, value: unknown) => void) => ({
   get: read,
   set: write,
@@ -344,7 +420,7 @@ export const nodeMembers = (core: CoreNode): PropertyDescriptorMap => ({
   }),
   localName: get(function () {
     if (!isElement(this)) return null;
-    return nameRecordOf(this)?.localName ?? nameOf(this, engineOf(this));
+    return nameRecordOf(this)?.localName ?? ownName(this);
   }),
   prefix: get(function () {
     return isElement(this) ? (nameRecordOf(this)?.prefix ?? null) : null;
@@ -410,6 +486,27 @@ export const nodeMembers = (core: CoreNode): PropertyDescriptorMap => ({
     return attributeNames(this).length > 0;
   }),
 
+  // What a shape in a drawing takes up, and how long a text in one is: see `svg-box.ts`.
+  getBBox: method(function () {
+    return boxOf(this);
+  }),
+  getComputedTextLength: method(function () {
+    return boxOf(this).width;
+  }),
+  // The drawing a shape is in: the nearest `<svg>` above it, and none for the drawing itself.
+  ownerSVGElement: get(function () {
+    for (let at = this.parent; at; at = at.parent) if (at.tag === 'svg') return at;
+    return null;
+  }),
+  createSVGRect: method(() => ({ x: 0, y: 0, width: 0, height: 0 })),
+
+  // What a chart library tells a picture it draws from an object by: see `canvas-picture.ts`.
+  // A method, as the engine's members are named by strings and not by `Symbol.toStringTag`.
+  toString: method(function () {
+    const tag = Object.hasOwn(PICTURE_TAGS, this.tag) ? PICTURE_TAGS[this.tag] : undefined;
+    return tag ? `[object ${tag}]` : Object.prototype.toString.call(this);
+  }),
+
   // A library disables a control by the property as often as by the attribute: one is the other.
   // A form control's own is HTML's, in `reflected-attributes.ts`.
   disabled: get(
@@ -442,9 +539,11 @@ export const nodeMembers = (core: CoreNode): PropertyDescriptorMap => ({
       classListOf(this).value = String(value);
     },
   ),
+  // A drawing's element has its classes as an object, which a chart library reads `baseVal` of.
   className: get(
     function () {
-      return classAttribute(this) ?? '';
+      const classes = classAttribute(this) ?? '';
+      return isDrawn(this) ? { baseVal: classes, animVal: classes } : classes;
     },
     function (value) {
       setClassAttribute(this, String(value));

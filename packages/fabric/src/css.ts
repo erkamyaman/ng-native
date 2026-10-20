@@ -192,6 +192,11 @@ export interface Conditions {
    */
   readonly fontScale?: number;
   /**
+   * The screen's pixels in a point: `PixelRatio.get()`. Nothing in the engine reads it; a
+   * package answering a page's `devicePixelRatio` does. Optional, and 1 when absent.
+   */
+  readonly pixelRatio?: number;
+  /**
    * The direction the app is laid out in, which is the device's unless the app forced one:
    * `I18nManager.isRTL`. Optional, and left to right when absent. It decides which physical
    * corner or edge a logical one is, where an element has both and no `direction` of its own.
@@ -688,6 +693,8 @@ export interface StyleTarget {
   readonly nodeKind?: string;
   readonly classes: ReadonlySet<string> | null;
   readonly props: Readonly<Record<string, unknown>>;
+  /** Attributes a package keeps apart from props, for selectors alone: see `attributeOf`. */
+  readonly keptAttributes?: Readonly<Record<string, string>>;
   /**
    * Whether `props.style` sets a property children inherit, kept by whoever sets the style so the
    * resolver reads the style only where it can matter. Absent is false.
@@ -959,13 +966,20 @@ const attributeText = (actual: unknown, test: AttributeTest): string =>
  * is the element's class list, as the attribute would spell it.
  */
 function matchesAttribute(node: StyleTarget, test: AttributeTest): boolean {
-  const actual = test.name === 'class' ? classAttribute(node) : node.props[test.name];
+  const actual = test.name === 'class' ? classAttribute(node) : attributeOf(node, test.name);
   if (actual === undefined || actual === null || actual === false) return false;
   if (test.operator === undefined) return true;
   // `^=`, `$=`, `*=` and `~=` with an empty value match nothing, as Selectors 4 says.
   if (test.value === '' && !EMPTY_MATCHES.has(test.operator)) return false;
   return matchesValue(attributeText(actual, test), test.operator, test.value!);
 }
+
+/**
+ * A node's attribute as a selector reads it: the one a package keeps for it apart from its props,
+ * where it keeps one by that name, and otherwise its prop. See `Engine.keepAttribute`.
+ */
+export const attributeOf = (node: StyleTarget, name: string): unknown =>
+  node.keptAttributes?.[name] ?? node.props[name];
 
 /** The classes of a node in the order they were set, one space between each; none is absent. */
 const classAttribute = (node: StyleTarget): string | undefined =>
@@ -2539,11 +2553,15 @@ function reachUnder(node: StyleTarget, take: (key: string) => void): void {
 
 /** The buckets of the attributes a node has: a prop of its own that is set. */
 function reachByAttribute(node: StyleTarget, take: (key: string) => void): void {
+  const kept = node.keptAttributes;
   for (const name in node.props) {
     const value = node.props[name];
     // As `matchesAttribute` has it: a prop that is false is an attribute that is not there.
     if (value !== undefined && value !== null && value !== false) take(`attr:${name}`);
+    else if (kept?.[name] !== undefined) take(`attr:${name}`);
   }
+  // One kept by no prop's name: a prop's is taken above.
+  if (kept) for (const name in kept) if (!(name in node.props)) take(`attr:${name}`);
 }
 
 /**
