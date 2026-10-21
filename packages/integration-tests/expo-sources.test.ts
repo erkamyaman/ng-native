@@ -21,6 +21,7 @@ import { afterEach, describe, it } from 'node:test';
 import { Battery } from '@ng-native/expo/battery';
 import { Clipboard } from '@ng-native/expo/clipboard';
 import { FileSystem } from '@ng-native/expo/file-system';
+import { Foldable } from '@ng-native/expo/foldable';
 import { LanguageModel } from '@ng-native/expo/language-model';
 import { Network } from '@ng-native/expo/network';
 import { AppleSignIn } from '@ng-native/expo/apple-sign-in';
@@ -376,6 +377,60 @@ describe('the storage sources', () => {
   it('is inert with no expo-secure-store installed', () => {
     const store = withModules({}, () => defaultSource(SecureStorage));
     assert.equal(store.signal('token', '')(), '');
+  });
+});
+
+describe('the expo-hinge source', () => {
+  function expoHingeModule() {
+    const added: { event: string; remove: () => void }[] = [];
+    const module = {
+      isAvailable: true,
+      getHinge: () => ({ angle: 120, status: 'partiallyOpen' }),
+      addListener(event: string, listener: (event: unknown) => void) {
+        listener({ hinge: null });
+        const subscription = { event, remove: () => added.splice(added.indexOf(subscription), 1) };
+        added.push(subscription);
+        return subscription;
+      },
+    };
+    const core = {
+      requireOptionalNativeModule: (name: string) => (name === 'ExpoHinge' ? module : null),
+    };
+    return { core, added };
+  }
+
+  it("reads expo-hinge's native module, without loading expo-hinge itself", () => {
+    const { core, added } = expoHingeModule();
+    const hinge = withModules({ 'expo-modules-core': core }, () => defaultSource(Foldable.HINGE));
+    assert.deepEqual(hinge?.getHinge(), { angle: 120, status: 'partiallyOpen' });
+    const events: unknown[] = [];
+    const subscription = hinge?.addHingeListener((event) => events.push(event));
+    assert.deepEqual(events, [{ hinge: null }]);
+    assert.deepEqual(
+      added.map(({ event }) => event),
+      ['hingeChange'],
+    );
+    subscription?.remove();
+    assert.equal(added.length, 0);
+  });
+
+  it('is null where the app has no expo-hinge, so expo-foldables answers', () => {
+    const core = { requireOptionalNativeModule: () => null };
+    assert.equal(
+      withModules({ 'expo-modules-core': core }, () => defaultSource(Foldable.HINGE)),
+      null,
+    );
+    assert.equal(
+      withModules({}, () => defaultSource(Foldable.HINGE)),
+      null,
+    );
+  });
+
+  it('answers no hinge from a module that lacks a method, rather than throwing', () => {
+    const core = { requireOptionalNativeModule: () => ({}) };
+    const hinge = withModules({ 'expo-modules-core': core }, () => defaultSource(Foldable.HINGE));
+    assert.equal(hinge?.getHinge(), null);
+    assert.doesNotThrow(() => hinge?.addHingeListener(() => {}).remove());
   });
 });
 
