@@ -195,10 +195,6 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * succeeds: one that fails leaves the stack as it was.
    */
   private superseded: { entries: StackEntry[]; navigation: number } | null = null;
-  /**
-   * How far back through history a plain navigation to a screen kept further down goes once it
-   * succeeds, as `popTo()` does: past the entries of the screens it took off, and its own.
-   */
 
   protected readonly fill = { flex: 1 };
 
