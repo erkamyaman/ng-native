@@ -1,53 +1,88 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { ErrorHandler } from '@angular/core';
-import { makeAnchorNode, makeTextNode } from './dom-node.ts';
+import { makeAnchorNode, makeTextNode, nodeOf } from './dom-node.ts';
 import { installJsdomEnvironment } from './jsdom-env.ts';
 import type { MountResult } from './mount.ts';
+import type { DeferTriggersApp } from './defer-triggers-app.ts';
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+const isElement = (target: unknown): boolean =>
+  /Element\]$/.test(Object.prototype.toString.call(target));
+
+interface Entry {
+  readonly target: unknown;
+  readonly isIntersecting: boolean;
+}
 
 /** A browser's `IntersectionObserver`: it watches real elements only, and refuses anything else. */
 class BrowserIntersectionObserver {
   static readonly made: BrowserIntersectionObserver[] = [];
-  readonly callback: (entries: unknown[], observer: unknown) => void;
+  readonly callback: (entries: Entry[], observer: unknown) => void;
   readonly targets = new Set<Element>();
+  private pending: Entry[] = [];
 
-  constructor(callback: (entries: unknown[], observer: unknown) => void) {
+  constructor(callback: (entries: Entry[], observer: unknown) => void) {
     this.callback = callback;
     BrowserIntersectionObserver.made.push(this);
   }
 
   observe(target: unknown): void {
-    if (!/Element\]$/.test(Object.prototype.toString.call(target))) {
+    if (!isElement(target)) {
       throw new TypeError("Failed to execute 'observe': parameter 1 is not of type 'Element'.");
     }
     this.targets.add(target as Element);
   }
 
-  unobserve(target: Element): void {
-    this.targets.delete(target);
+  unobserve(target: unknown): void {
+    if (!isElement(target)) {
+      throw new TypeError("Failed to execute 'unobserve': parameter 1 is not of type 'Element'.");
+    }
+    this.targets.delete(target as Element);
   }
 
   disconnect(): void {
     this.targets.clear();
   }
 
-  takeRecords(): unknown[] {
-    return [];
+  takeRecords(): Entry[] {
+    const records = this.pending;
+    this.pending = [];
+    return records;
+  }
+
+  /** Whether any observer still watches `target`. */
+  static watches(target: Element): boolean {
+    return BrowserIntersectionObserver.made.some((observer) => observer.targets.has(target));
   }
 
   /** What the browser does once `target` scrolls into view. */
   static show(target: Element): void {
     for (const observer of BrowserIntersectionObserver.made) {
       if (!observer.targets.has(target)) continue;
-      observer.callback(
-        [{ target, isIntersecting: true, intersectionRatio: 1, time: 0 }],
-        observer,
-      );
+      observer.callback([{ target, isIntersecting: true }], observer);
+    }
+  }
+
+  /** An entry for `target` the browser has found but not yet delivered. */
+  static queue(target: Element): void {
+    for (const observer of BrowserIntersectionObserver.made) {
+      if (observer.targets.has(target)) observer.pending.push({ target, isIntersecting: true });
     }
   }
 }
+
+/**
+ * Listeners added with Angular's options for `@defer` triggers (`passive` and `capture`, which no
+ * listener of this package uses), on each DOM element, so a test can see them come and go.
+ */
+const deferListeners = new Map<EventTarget, Set<string>>();
+const isDeferOptions = (options: unknown): boolean =>
+  typeof options === 'object' &&
+  options !== null &&
+  (options as AddEventListenerOptions).passive === true &&
+  (options as AddEventListenerOptions).capture === true;
 
 describe('@defer on a trigger element, on the web', () => {
   const scope = globalThis as { IntersectionObserver?: unknown };
@@ -56,9 +91,27 @@ describe('@defer on a trigger element, on the web', () => {
   let document: Document;
   let root: HTMLElement;
   let mounted: MountResult;
+  let restoreListeners = () => {};
 
   before(async () => {
     ({ document } = installJsdomEnvironment());
+    const target = document.defaultView!.EventTarget.prototype;
+    const { addEventListener: add, removeEventListener: remove } = target;
+    target.addEventListener = function (this: EventTarget, type, listener, options) {
+      if (isDeferOptions(options)) {
+        const types = deferListeners.get(this) ?? new Set();
+        deferListeners.set(this, types.add(type));
+      }
+      add.call(this, type, listener, options);
+    };
+    target.removeEventListener = function (this: EventTarget, type, listener, options) {
+      if (isDeferOptions(options)) deferListeners.get(this)?.delete(type);
+      remove.call(this, type, listener, options);
+    };
+    restoreListeners = () => {
+      target.addEventListener = add;
+      target.removeEventListener = remove;
+    };
     scope.IntersectionObserver = BrowserIntersectionObserver;
     const [{ mount }, { DeferTriggersApp }] = await Promise.all([
       import('./mount.ts'),
@@ -75,11 +128,17 @@ describe('@defer on a trigger element, on the web', () => {
   });
 
   after(() => {
-    mounted.destroy();
-    scope.IntersectionObserver = original;
+    try {
+      mounted.destroy();
+    } finally {
+      scope.IntersectionObserver = original;
+      restoreListeners();
+    }
   });
 
   const text = () => root.textContent?.replace(/\s+/g, ' ') ?? '';
+  const byId = (id: string) => document.getElementById(id)!;
+  const listenersOn = (el: Element) => [...(deferListeners.get(el) ?? [])].sort();
 
   it('registers every trigger without an error', () => {
     assert.deepEqual(errors.map(String), []);
@@ -96,24 +155,101 @@ describe('@defer on a trigger element, on the web', () => {
     assert.ok(!({} instanceof Element));
   });
 
-  it('loads on interaction when the trigger is clicked', async () => {
-    document.getElementById('trigger')!.dispatchEvent(new Event('click', { bubbles: true }));
+  it('loads on interaction when the trigger is clicked, and stops listening', async () => {
+    const trigger = byId('trigger');
+    assert.deepEqual(listenersOn(trigger), ['click', 'keydown']);
+    trigger.dispatchEvent(new Event('click', { bubbles: true }));
     await settle();
     assert.match(text(), /interaction loaded/);
     assert.doesNotMatch(text(), /interaction waiting/);
+    assert.deepEqual(listenersOn(trigger), []);
   });
 
   it('loads on hover when the pointer enters the placeholder', async () => {
-    document.getElementById('hover-target')!.dispatchEvent(new Event('mouseenter'));
+    const target = byId('hover-target');
+    assert.deepEqual(listenersOn(target), ['focusin', 'mouseenter', 'mouseover']);
+    target.dispatchEvent(new Event('mouseenter'));
     await settle();
     assert.match(text(), /hover loaded/);
+    assert.deepEqual(listenersOn(target), []);
   });
 
   it('loads on viewport once the placeholder is in view, and not before', async () => {
+    const spot = byId('spot');
     assert.match(text(), /viewport waiting/);
-    BrowserIntersectionObserver.show(document.getElementById('spot')!);
+    assert.ok(BrowserIntersectionObserver.watches(spot));
+    BrowserIntersectionObserver.show(spot);
     await settle();
     assert.match(text(), /viewport loaded/);
+    assert.ok(!BrowserIntersectionObserver.watches(spot));
     assert.deepEqual(errors.map(String), []);
+  });
+
+  it('names the node it was given in an entry, and a real element as itself', () => {
+    const node = mounted.componentRef.location.nativeElement as { el: Element };
+    const el = document.createElement('div');
+    const delivered: unknown[] = [];
+    const Observer = scope.IntersectionObserver as new (
+      callback: (entries: Entry[]) => void,
+    ) => BrowserIntersectionObserver;
+    const observer = new Observer((entries) => delivered.push(...entries.map((e) => e.target)));
+    observer.observe(node);
+    observer.observe(el);
+    BrowserIntersectionObserver.queue(node.el);
+    BrowserIntersectionObserver.queue(el);
+    assert.deepEqual(
+      observer.takeRecords().map((entry) => entry.target),
+      [node, el],
+    );
+    BrowserIntersectionObserver.show(node.el);
+    BrowserIntersectionObserver.show(el);
+    assert.deepEqual(delivered, [node, el]);
+    observer.unobserve(node);
+    assert.ok(!BrowserIntersectionObserver.watches(node.el));
+    observer.disconnect();
+
+    // Given the node's element rather than the node, an observer reports the element.
+    const direct = new Observer(() => {});
+    direct.observe(node.el);
+    BrowserIntersectionObserver.queue(node.el);
+    assert.deepEqual(
+      direct.takeRecords().map((entry) => entry.target),
+      [node.el],
+    );
+    direct.disconnect();
+  });
+
+  it('keeps a trigger whose field is swapped for a multiline one', async () => {
+    const [oldField, oldSeen] = [byId('field'), byId('seen')];
+    (mounted.componentRef.instance as DeferTriggersApp).multiline.set(true);
+    await settle();
+    const [field, seen] = [byId('field'), byId('seen')];
+    assert.equal(field.tagName, 'TEXTAREA');
+    assert.deepEqual(listenersOn(oldField), []);
+    assert.ok(!BrowserIntersectionObserver.watches(oldSeen));
+
+    field.dispatchEvent(new Event('click', { bubbles: true }));
+    BrowserIntersectionObserver.show(seen);
+    await settle();
+    assert.match(text(), /field loaded/);
+    assert.match(text(), /seen loaded/);
+    assert.deepEqual(listenersOn(field), []);
+    assert.ok(!BrowserIntersectionObserver.watches(seen));
+    assert.deepEqual(errors.map(String), []);
+
+    // Nothing that stopped, by Angular or by hand, starts again on the next swap.
+    const node = nodeOf(seen)!;
+    const Observer = scope.IntersectionObserver as typeof BrowserIntersectionObserver;
+    const unobserved = new Observer(() => {});
+    unobserved.observe(node);
+    unobserved.unobserve(node);
+    const disconnected = new Observer(() => {});
+    disconnected.observe(node);
+    disconnected.disconnect();
+    (mounted.componentRef.instance as DeferTriggersApp).multiline.set(false);
+    await settle();
+    assert.equal(byId('field').tagName, 'INPUT');
+    assert.deepEqual(listenersOn(byId('field')), []);
+    assert.ok(!BrowserIntersectionObserver.watches(byId('seen')));
   });
 });
