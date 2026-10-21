@@ -73,12 +73,15 @@ export class SafeAreaProvider {
       (event: { nativeEvent?: InsetsChange }) => {
         const change = event?.nativeEvent;
         if (!change || !this.reportInsets()) return;
-        area.report(change.insets, change.frame);
+        area.report(change.insets, change.frame, this);
         // Also published to the stylesheet, where a padding that clears the home indicator
         // belongs. `env()` on the web; a seeded custom property here.
         engine?.updateTokens(insetTokens(change.insets));
       },
     );
-    inject(DestroyRef).onDestroy(stop);
+    inject(DestroyRef).onDestroy(() => {
+      stop();
+      if (area.withdraw(this)) engine?.updateTokens(insetTokens(area.insets()));
+    });
   }
 }

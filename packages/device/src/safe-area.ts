@@ -35,6 +35,7 @@ const NOTHING: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
 export class SafeArea {
   private readonly current = signal<Insets>(NOTHING);
   private readonly measured = signal<Frame | null>(null);
+  private reporter: object | null = null;
 
   /** What the system occupies on each edge, in points. */
   readonly insets: Signal<Insets> = this.current.asReadonly();
@@ -44,7 +45,7 @@ export class SafeArea {
    *
    * On Android 15 that includes the system bars, because the app draws behind them - which is why
    * `Screen.window` reads this rather than `Dimensions`. Null until the provider has laid out,
-   * one frame after the app mounts.
+   * one frame after the app mounts, and again once that provider is destroyed.
    */
   readonly frame: Signal<Frame | null> = this.measured.asReadonly();
 
@@ -55,8 +56,21 @@ export class SafeArea {
    * Called by `<safe-area-provider>` when native reports. Not for apps: an inset written from
    * anywhere else is a number that stops matching the screen the moment the device rotates.
    */
-  report(insets: Insets, frame: Frame): void {
+  report(insets: Insets, frame: Frame, from?: object): void {
     this.current.set(insets);
     this.measured.set(frame);
+    this.reporter = from ?? null;
+  }
+
+  /**
+   * Called by `<safe-area-provider>` as it goes: forgets its report, unless another came since.
+   * True when it did.
+   */
+  withdraw(from: object): boolean {
+    if (this.reporter !== from) return false;
+    this.reporter = null;
+    this.current.set(NOTHING);
+    this.measured.set(null);
+    return true;
   }
 }
