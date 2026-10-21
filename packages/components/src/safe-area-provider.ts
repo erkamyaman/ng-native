@@ -22,6 +22,7 @@
  * `[reportInsets]="false"`, so its geometry stays out of the app-wide `SafeArea` while it is up.
  */
 import {
+  ApplicationRef,
   Component,
   DestroyRef,
   ElementRef,
@@ -67,6 +68,7 @@ export class SafeAreaProvider {
 
     const area = inject(SafeArea);
     const engine = inject(Engine, { optional: true });
+    const app = inject(ApplicationRef);
     const stop = inject(Renderer2).listen(
       host,
       'insetsChange',
@@ -81,6 +83,9 @@ export class SafeAreaProvider {
     );
     inject(DestroyRef).onDestroy(() => {
       stop();
+      // The whole app going takes `SafeArea` and the stylesheet with it: a restyle and a commit
+      // of a tree on its way out would be all this did.
+      if (app.injector.destroyed) return;
       if (area.withdraw(this)) engine?.updateTokens(insetTokens(area.insets()));
     });
   }

@@ -35,6 +35,8 @@ const NOTHING: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
 export class SafeArea {
   private readonly current = signal<Insets>(NOTHING);
   private readonly measured = signal<Frame | null>(null);
+  /** What each provider still up last reported, the latest last. */
+  private readonly reports = new Map<object, { insets: Insets; frame: Frame }>();
   private reporter: object | null = null;
 
   /** What the system occupies on each edge, in points. */
@@ -45,7 +47,7 @@ export class SafeArea {
    *
    * On Android 15 that includes the system bars, because the app draws behind them - which is why
    * `Screen.window` reads this rather than `Dimensions`. Null until the provider has laid out,
-   * one frame after the app mounts, and again once that provider is destroyed.
+   * one frame after the app mounts, and again once every provider that reported is destroyed.
    */
   readonly frame: Signal<Frame | null> = this.measured.asReadonly();
 
@@ -60,17 +62,23 @@ export class SafeArea {
     this.current.set(insets);
     this.measured.set(frame);
     this.reporter = from ?? null;
+    if (!from) return;
+    this.reports.delete(from);
+    this.reports.set(from, { insets, frame });
   }
 
   /**
-   * Called by `<safe-area-provider>` as it goes: forgets its report, unless another came since.
-   * True when it did.
+   * Called by `<safe-area-provider>` as it goes: forgets its report. When that report was the
+   * latest, what a provider still up last reported takes its place, or nothing when none is.
+   * True when the values changed.
    */
   withdraw(from: object): boolean {
+    this.reports.delete(from);
     if (this.reporter !== from) return false;
-    this.reporter = null;
-    this.current.set(NOTHING);
-    this.measured.set(null);
+    const [previous] = [...this.reports].slice(-1);
+    this.reporter = previous?.[0] ?? null;
+    this.current.set(previous?.[1].insets ?? NOTHING);
+    this.measured.set(previous?.[1].frame ?? null);
     return true;
   }
 }

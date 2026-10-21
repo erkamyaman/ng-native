@@ -225,4 +225,55 @@ describe('a safe-area provider going away', () => {
     assert.equal(area.insets().top, 59);
     assert.equal(screen.getByTestId('floating').props['marginBottom'], 34);
   });
+
+  it('goes back to what a provider still up last reported when the newer one goes', async () => {
+    // A second provider that reports, inside a screen that is then popped, over the root one.
+    const area = app.componentRef.injector.get(SafeArea);
+    app.instance.second.set(true);
+    await app.detectChanges();
+    await fireEvent(screen.getByTestId('first'), 'insetsChange', {
+      insets: NOTCH,
+      frame: PORTRAIT,
+    });
+    await fireEvent(screen.getByTestId('second'), 'insetsChange', {
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
+      frame: { x: 0, y: 0, width: 402, height: 600 },
+    });
+
+    app.instance.second.set(false);
+    await app.detectChanges();
+
+    assert.ok(screen.queryByText('402x874'), 'the frame of the provider still up');
+    assert.deepEqual(area.insets(), NOTCH);
+    assert.equal(screen.getByTestId('floating').props['marginBottom'], 34);
+  });
+
+  it('puts back the latest report of the providers still up, never one that went', () => {
+    const area = app.componentRef.injector.get(SafeArea);
+    const [a, b, c] = [{}, {}, {}];
+    const frame = (height: number) => ({ x: 0, y: 0, width: 402, height });
+    area.report(NOTCH, frame(1), a);
+    area.report(NOTCH, frame(2), b);
+    area.report(NOTCH, frame(3), a);
+    area.report(NOTCH, frame(4), c);
+
+    assert.equal(area.withdraw(c), true);
+    assert.equal(area.frame()?.height, 3, 'what a reported last, after b');
+    assert.equal(area.withdraw(b), false, 'not the latest, so nothing changes');
+    assert.equal(area.frame()?.height, 3);
+    assert.equal(area.withdraw(a), true);
+    assert.equal(area.frame(), null, 'b went before, so nothing is left');
+  });
+
+  it('commits nothing more as the app it reported in is destroyed', async () => {
+    await fireEvent(screen.getByTestId('first'), 'insetsChange', {
+      insets: NOTCH,
+      frame: PORTRAIT,
+    });
+    const commits = app.fabric.calls.completeRoot;
+
+    app.unmount();
+
+    assert.equal(app.fabric.calls.completeRoot, commits, 'no restyle of a tree on its way out');
+  });
 });
