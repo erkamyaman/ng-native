@@ -88,102 +88,55 @@ function unwrap(target: unknown): unknown {
   return made.has(target as object) ? (target as BrowserNode).el : target;
 }
 
-/** What an observer watching an element node does when `rebindElement` swaps its element. */
-interface Rebound {
-  moved(node: BrowserNode, from: Element, to: Element): void;
-}
-
-/** The observers given each element node, so a swapped element is watched in place of the old. */
-const observers = new WeakMap<BrowserNode, Set<Rebound>>();
-
 function letBrowserNodesBeObserved(): void {
   const scope = globalThis as { IntersectionObserver?: typeof IntersectionObserver };
   const Native = scope.IntersectionObserver;
   if (typeof Native !== 'function' || answered.has(Native)) return;
-  class Observer extends Native implements Rebound {
-    private watching = new WeakSet<BrowserNode>();
+  const asSeen = (wrapped: WeakMap<Element, BrowserNode>, entry: IntersectionObserverEntry) => {
+    const node = wrapped.get(entry.target);
+    if (!node) return entry;
+    return {
+      time: entry.time,
+      rootBounds: entry.rootBounds,
+      boundingClientRect: entry.boundingClientRect,
+      intersectionRect: entry.intersectionRect,
+      intersectionRatio: entry.intersectionRatio,
+      isIntersecting: entry.isIntersecting,
+      target: node,
+    } as unknown as IntersectionObserverEntry;
+  };
+  class Observer extends Native {
+    private readonly wrapped: WeakMap<Element, BrowserNode>;
 
     constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-      super((entries, observer) => callback(entries.map(this.asSeen), observer), options);
+      const wrapped = new WeakMap<Element, BrowserNode>();
+      super(
+        (entries, observer) =>
+          callback(
+            entries.map((entry) => asSeen(wrapped, entry)),
+            observer,
+          ),
+        options,
+      );
+      this.wrapped = wrapped;
     }
 
     override observe(target: Element): void {
-      if (made.has(target)) {
-        const node = target as unknown as BrowserNode;
-        this.watching.add(node);
-        const set = observers.get(node) ?? new Set();
-        observers.set(node, set.add(this));
-      }
-      super.observe(unwrap(target) as Element);
+      const el = unwrap(target) as Element;
+      if (el !== target) this.wrapped.set(el, target as unknown as BrowserNode);
+      super.observe(el);
     }
 
     override unobserve(target: Element): void {
-      if (made.has(target)) this.watching.delete(target as unknown as BrowserNode);
       super.unobserve(unwrap(target) as Element);
     }
 
-    override disconnect(): void {
-      this.watching = new WeakSet();
-      super.disconnect();
-    }
-
     override takeRecords(): IntersectionObserverEntry[] {
-      return super.takeRecords().map(this.asSeen);
+      return super.takeRecords().map((entry) => asSeen(this.wrapped, entry));
     }
-
-    moved(node: BrowserNode, from: Element, to: Element): void {
-      if (!this.watching.has(node)) {
-        observers.get(node)?.delete(this);
-        return;
-      }
-      super.unobserve(from);
-      super.observe(to);
-    }
-
-    /** An entry for an element node's element names the node, as the node is what was observed. */
-    private readonly asSeen = (entry: IntersectionObserverEntry): IntersectionObserverEntry => {
-      const node = nodeOf(entry.target);
-      if (!node || !this.watching.has(node)) return entry;
-      return {
-        time: entry.time,
-        rootBounds: entry.rootBounds,
-        boundingClientRect: entry.boundingClientRect,
-        intersectionRect: entry.intersectionRect,
-        intersectionRatio: entry.intersectionRatio,
-        isIntersecting: entry.isIntersecting,
-        target: node,
-      } as unknown as IntersectionObserverEntry;
-    };
   }
   answered.add(Observer);
   scope.IntersectionObserver = Observer;
-}
-
-/** A listener added through an element node, so a swapped element takes it over. */
-interface Forwarded {
-  readonly type: string;
-  readonly listener: EventListenerOrEventListenerObject;
-  /** What the element was given: `listener`, or for a `once` one, a wrapper that forgets it. */
-  readonly registered: EventListenerOrEventListenerObject;
-  readonly options: AddEventListenerOptions | boolean | undefined;
-}
-
-const forwarded = new WeakMap<BrowserNode, Forwarded[]>();
-
-const capturing = (options: EventListenerOptions | boolean | undefined): boolean =>
-  typeof options === 'boolean' ? options : options?.capture === true;
-
-/** Where `list` holds the listener the DOM would take as the same one: type, function and phase. */
-function indexOf(
-  list: readonly Forwarded[],
-  type: string,
-  listener: EventListenerOrEventListenerObject,
-  options: EventListenerOptions | boolean | undefined,
-): number {
-  const capture = capturing(options);
-  return list.findIndex(
-    (f) => f.type === type && f.listener === listener && capturing(f.options) === capture,
-  );
 }
 
 function addEventListener(
@@ -192,26 +145,7 @@ function addEventListener(
   listener: EventListenerOrEventListenerObject,
   options?: AddEventListenerOptions | boolean,
 ): void {
-  const list = forwarded.get(this) ?? [];
-  if (indexOf(list, type, listener, options) >= 0) return;
-  forwarded.set(this, list);
-  // A `once` listener the element has fired and dropped must not come back on a swapped element.
-  const entry: Forwarded = {
-    type,
-    listener,
-    options,
-    registered:
-      typeof options === 'object' && options.once
-        ? (event: Event) => {
-            const at = list.indexOf(entry);
-            if (at >= 0) list.splice(at, 1);
-            if (typeof listener === 'function') listener.call(event.currentTarget, event);
-            else listener.handleEvent(event);
-          }
-        : listener,
-  };
-  list.push(entry);
-  this.el.addEventListener(type, entry.registered, options);
+  this.el.addEventListener(type, listener, options);
 }
 
 function removeEventListener(
@@ -220,10 +154,7 @@ function removeEventListener(
   listener: EventListenerOrEventListenerObject,
   options?: EventListenerOptions | boolean,
 ): void {
-  const list = forwarded.get(this);
-  const at = list ? indexOf(list, type, listener, options) : -1;
-  this.el.removeEventListener(type, at >= 0 ? list![at]!.registered : listener, options);
-  if (at >= 0) list!.splice(at, 1);
+  this.el.removeEventListener(type, listener, options);
 }
 
 /**
@@ -334,20 +265,11 @@ export function makeAnchorNode(comment: Comment): BrowserNode {
   return node;
 }
 
-/**
- * Puts `el` in place of the element `node` wraps, so `nodeOf` finds the node from either. The
- * listeners added through the node, and the observers watching it, move to `el` with it.
- */
+/** Puts `el` in place of the element `node` wraps, so `nodeOf` finds the node from either. */
 export function rebindElement(node: BrowserNode, el: Element): void {
-  const old = node.el as Element;
-  registry.delete(old);
+  registry.delete(node.el);
   (node as { el: Element | Text | Comment }).el = el;
   registry.set(el, node);
-  for (const { type, registered, options } of forwarded.get(node) ?? []) {
-    old.removeEventListener(type, registered, options);
-    el.addEventListener(type, registered, options);
-  }
-  for (const observer of observers.get(node) ?? []) observer.moved(node, old, el);
 }
 
 /** The `BrowserNode` a real DOM node was created with, or `null` for one this package did not make. */

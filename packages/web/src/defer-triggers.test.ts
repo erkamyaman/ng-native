@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { ErrorHandler } from '@angular/core';
-import { makeAnchorNode, makeTextNode, nodeOf } from './dom-node.ts';
+import { makeAnchorNode, makeTextNode } from './dom-node.ts';
 import { installJsdomEnvironment } from './jsdom-env.ts';
 import type { MountResult } from './mount.ts';
-import type { DeferTriggersApp } from './defer-triggers-app.ts';
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -217,59 +216,5 @@ describe('@defer on a trigger element, on the web', () => {
       [node.el],
     );
     direct.disconnect();
-  });
-
-  it('keeps a trigger whose field is swapped for a multiline one', async () => {
-    const [oldField, oldSeen] = [byId('field'), byId('seen')];
-    const heard: string[] = [];
-    const fieldNode = nodeOf(oldField) as unknown as EventTarget;
-    fieldNode.addEventListener('ping', () => heard.push('fired once'), { once: true });
-    fieldNode.addEventListener('ping', { handleEvent: () => heard.push('kept') });
-    oldField.dispatchEvent(new Event('ping'));
-    const removed = () => heard.push('removed');
-    fieldNode.addEventListener('zap', removed, { once: true });
-    fieldNode.removeEventListener('zap', removed);
-    oldField.dispatchEvent(new Event('zap'));
-    fieldNode.addEventListener(
-      'pong',
-      { handleEvent: () => heard.push('waiting once') },
-      {
-        once: true,
-      },
-    );
-    (mounted.componentRef.instance as DeferTriggersApp).multiline.set(true);
-    await settle();
-    const [field, seen] = [byId('field'), byId('seen')];
-    assert.equal(field.tagName, 'TEXTAREA');
-    field.dispatchEvent(new Event('ping'));
-    field.dispatchEvent(new Event('pong'));
-    field.dispatchEvent(new Event('pong'));
-    assert.deepEqual(heard, ['fired once', 'kept', 'kept', 'waiting once']);
-    assert.deepEqual(listenersOn(oldField), []);
-    assert.ok(!BrowserIntersectionObserver.watches(oldSeen));
-
-    field.dispatchEvent(new Event('click', { bubbles: true }));
-    BrowserIntersectionObserver.show(seen);
-    await settle();
-    assert.match(text(), /field loaded/);
-    assert.match(text(), /seen loaded/);
-    assert.deepEqual(listenersOn(field), []);
-    assert.ok(!BrowserIntersectionObserver.watches(seen));
-    assert.deepEqual(errors.map(String), []);
-
-    // Nothing that stopped, by Angular or by hand, starts again on the next swap.
-    const node = nodeOf(seen)!;
-    const Observer = scope.IntersectionObserver as typeof BrowserIntersectionObserver;
-    const unobserved = new Observer(() => {});
-    unobserved.observe(node);
-    unobserved.unobserve(node);
-    const disconnected = new Observer(() => {});
-    disconnected.observe(node);
-    disconnected.disconnect();
-    (mounted.componentRef.instance as DeferTriggersApp).multiline.set(false);
-    await settle();
-    assert.equal(byId('field').tagName, 'INPUT');
-    assert.deepEqual(listenersOn(byId('field')), []);
-    assert.ok(!BrowserIntersectionObserver.watches(byId('seen')));
   });
 });
