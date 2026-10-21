@@ -88,6 +88,11 @@ function unwrap(target: unknown): unknown {
   return made.has(target as object) ? (target as BrowserNode).el : target;
 }
 
+const observedBy = new WeakMap<
+  BrowserNode,
+  Set<{ moveTo(node: BrowserNode, from: Element, to: Element): boolean }>
+>();
+
 function letBrowserNodesBeObserved(): void {
   const scope = globalThis as { IntersectionObserver?: typeof IntersectionObserver };
   const Native = scope.IntersectionObserver;
@@ -106,38 +111,70 @@ function letBrowserNodesBeObserved(): void {
     } as unknown as IntersectionObserverEntry;
   };
   class Observer extends Native {
-    private readonly wrapped: WeakMap<Element, BrowserNode>;
+    private wrapped = new WeakMap<Element, BrowserNode>();
 
     constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-      const wrapped = new WeakMap<Element, BrowserNode>();
       super(
         (entries, observer) =>
           callback(
-            entries.map((entry) => asSeen(wrapped, entry)),
+            entries.map((entry) => asSeen((observer as Observer).wrapped, entry)),
             observer,
           ),
         options,
       );
-      this.wrapped = wrapped;
     }
 
     override observe(target: Element): void {
       const el = unwrap(target) as Element;
-      if (el !== target) this.wrapped.set(el, target as unknown as BrowserNode);
+      if (el !== target) {
+        const node = target as unknown as BrowserNode;
+        this.wrapped.set(el, node);
+        let observers = observedBy.get(node);
+        if (!observers) observedBy.set(node, (observers = new Set()));
+        observers.add(this);
+      }
       super.observe(el);
     }
 
     override unobserve(target: Element): void {
-      super.unobserve(unwrap(target) as Element);
+      const el = unwrap(target) as Element;
+      this.wrapped.delete(el);
+      super.unobserve(el);
+    }
+
+    override disconnect(): void {
+      this.wrapped = new WeakMap();
+      super.disconnect();
     }
 
     override takeRecords(): IntersectionObserverEntry[] {
       return super.takeRecords().map((entry) => asSeen(this.wrapped, entry));
     }
+
+    moveTo(node: BrowserNode, from: Element, to: Element): boolean {
+      if (this.wrapped.get(from) !== node) return false;
+      this.unobserve(from);
+      this.observe(to);
+      this.wrapped.set(to, node);
+      return true;
+    }
   }
   answered.add(Observer);
   scope.IntersectionObserver = Observer;
 }
+
+interface Added {
+  readonly type: string;
+  readonly listener: EventListenerOrEventListenerObject;
+  readonly options: AddEventListenerOptions | boolean | undefined;
+  readonly capture: boolean;
+  readonly forget: () => void;
+}
+
+const addedTo = new WeakMap<BrowserNode, Added[]>();
+
+const captures = (options: EventListenerOptions | boolean | undefined) =>
+  typeof options === 'boolean' ? options : options?.capture === true;
 
 function addEventListener(
   this: BrowserNode,
@@ -146,6 +183,26 @@ function addEventListener(
   options?: AddEventListenerOptions | boolean,
 ): void {
   this.el.addEventListener(type, listener, options);
+  const capture = captures(options);
+  let added = addedTo.get(this);
+  if (!added) addedTo.set(this, (added = []));
+  if (added.some((a) => a.type === type && a.listener === listener && a.capture === capture)) {
+    return;
+  }
+  const once = typeof options === 'object' && options.once === true;
+  const signal = typeof options === 'object' ? options.signal : undefined;
+  if (signal?.aborted) return;
+  const list = added;
+  const forget = () => {
+    const at = list.indexOf(entry);
+    if (at !== -1) list.splice(at, 1);
+    signal?.removeEventListener('abort', forget);
+    if (once) this.el.removeEventListener(type, forget, capture);
+  };
+  const entry: Added = { type, listener, options, capture, forget };
+  list.push(entry);
+  signal?.addEventListener('abort', forget);
+  if (once) this.el.addEventListener(type, forget, { capture, once: true });
 }
 
 function removeEventListener(
@@ -155,6 +212,11 @@ function removeEventListener(
   options?: EventListenerOptions | boolean,
 ): void {
   this.el.removeEventListener(type, listener, options);
+  const capture = captures(options);
+  addedTo
+    .get(this)
+    ?.find((a) => a.type === type && a.listener === listener && a.capture === capture)
+    ?.forget();
 }
 
 /**
@@ -265,11 +327,27 @@ export function makeAnchorNode(comment: Comment): BrowserNode {
   return node;
 }
 
-/** Puts `el` in place of the element `node` wraps, so `nodeOf` finds the node from either. */
+/**
+ * Puts `el` in place of the element `node` wraps, so `nodeOf` finds the node from either, and moves
+ * the listeners and observations added through `node` from the old element to `el`.
+ */
 export function rebindElement(node: BrowserNode, el: Element): void {
-  registry.delete(node.el);
+  const old = node.el as Element;
+  registry.delete(old);
   (node as { el: Element | Text | Comment }).el = el;
   registry.set(el, node);
+  for (const added of addedTo.get(node) ?? []) {
+    old.removeEventListener(added.type, added.listener, added.capture);
+    el.addEventListener(added.type, added.listener, added.options);
+    if (typeof added.options === 'object' && added.options.once) {
+      old.removeEventListener(added.type, added.forget, added.capture);
+      el.addEventListener(added.type, added.forget, { capture: added.capture, once: true });
+    }
+  }
+  const observers = observedBy.get(node);
+  for (const observer of observers ?? []) {
+    if (!observer.moveTo(node, old, el)) observers!.delete(observer);
+  }
 }
 
 /** The `BrowserNode` a real DOM node was created with, or `null` for one this package did not make. */

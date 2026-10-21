@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { ErrorHandler } from '@angular/core';
-import { makeAnchorNode, makeTextNode } from './dom-node.ts';
+import { letBrowserNodesPassAsDomNodes, makeAnchorNode, makeTextNode } from './dom-node.ts';
+import type { BrowserEngine as Engine } from './browser-engine.ts';
 import { installJsdomEnvironment } from './jsdom-env.ts';
 import type { MountResult } from './mount.ts';
 
@@ -115,5 +116,95 @@ describe('@defer on a trigger element, on the web', () => {
     await settle();
     assert.match(text(), /viewport loaded/);
     assert.deepEqual(errors.map(String), []);
+  });
+});
+
+describe('a text-input that a trigger listens to or watches, when multiline swaps its element', () => {
+  const scope = globalThis as { IntersectionObserver?: unknown };
+  const original = scope.IntersectionObserver;
+  let document: Document;
+  let BrowserEngine: typeof Engine;
+
+  before(async () => {
+    ({ document } = installJsdomEnvironment());
+    scope.IntersectionObserver = BrowserIntersectionObserver;
+    letBrowserNodesPassAsDomNodes();
+    ({ BrowserEngine } = await import('./browser-engine.ts'));
+  });
+
+  after(() => {
+    scope.IntersectionObserver = original;
+  });
+
+  function field() {
+    const engine = new BrowserEngine(document);
+    const node = engine.createElementNode('text-input');
+    document.body.append(node.el);
+    const multiline = (on: boolean) => engine.setProp(node, 'multiline', on);
+    return { node, multiline };
+  }
+
+  const click = (el: Element | Text | Comment) =>
+    el.dispatchEvent(new (document.defaultView as unknown as typeof globalThis).Event('click'));
+
+  it('moves a listener added through the node to the new element, and off the old one', () => {
+    const { node, multiline } = field();
+    const old = node.el as Element;
+    const clicks: unknown[] = [];
+    const listener = () => clicks.push(1);
+    (node as unknown as Element).addEventListener('click', listener);
+    multiline(true);
+    assert.notEqual(node.el, old);
+    click(node.el);
+    assert.equal(clicks.length, 1, 'fires for the textarea');
+    click(old);
+    assert.equal(clicks.length, 1, 'no longer fires for the input it replaced');
+
+    (node as unknown as Element).removeEventListener('click', listener);
+    click(node.el);
+    assert.equal(clicks.length, 1, 'removed through the node after the swap');
+    multiline(false);
+    click(node.el);
+    assert.equal(clicks.length, 1, 'and not put back by a later swap');
+    (node.el as Element).remove();
+  });
+
+  it('does not bring back a once listener that fired or one whose signal aborted', () => {
+    const { node, multiline } = field();
+    const wrapper = node as unknown as Element;
+    const calls: string[] = [];
+    const controller = new (document.defaultView as unknown as typeof globalThis).AbortController();
+    wrapper.addEventListener('click', () => calls.push('fired once'), { once: true });
+    wrapper.addEventListener('click', () => calls.push('aborted'), { signal: controller.signal });
+    click(node.el);
+    controller.abort();
+    calls.length = 0;
+    wrapper.addEventListener('click', () => calls.push('after'), { once: true });
+    multiline(true);
+    click(node.el);
+    click(node.el);
+    assert.deepEqual(calls, ['after']);
+    (node.el as Element).remove();
+  });
+
+  it('moves an observation made through the node to the new element, and off the old one', () => {
+    const { node, multiline } = field();
+    const old = node.el as Element;
+    const seen: unknown[] = [];
+    const Observer = scope.IntersectionObserver as typeof IntersectionObserver;
+    const observer = new Observer((entries) => seen.push(...entries.map((e) => e.target)));
+    observer.observe(node as unknown as Element);
+    multiline(true);
+    const stub = BrowserIntersectionObserver.made.at(-1)!;
+    assert.ok(stub.targets.has(node.el as Element), 'watches the textarea');
+    assert.ok(!stub.targets.has(old), 'no longer holds the input it replaced');
+    BrowserIntersectionObserver.show(node.el as Element);
+    assert.deepEqual(seen, [node], 'its entry names the node');
+
+    observer.unobserve(node as unknown as Element);
+    multiline(false);
+    assert.equal(stub.targets.size, 0, 'unobserved through the node, and not put back by a swap');
+    observer.disconnect();
+    (node.el as Element).remove();
   });
 });
