@@ -38,6 +38,13 @@ anybody wants it, and the answer decides what happens next. `handle(handler)` re
 unsubscribe. React Native runs the most recently added handler first, so a screen that subscribes on
 mount outranks the one below it.
 
+A handler subscribed in a screen's injection context, as from its constructor above, is asked only
+while that screen is in front (see `SCREEN_IN_FRONT`). While another screen is pushed over it,
+presented over it as a sheet or a modal, or its tab is not the selected one, the press goes past it
+to whatever is in front, so the form above does not stop a back on a screen it opened. It is asked
+again once its screen is back in front. A handler subscribed outside an injection context, or where
+no screen is provided, such as an app's root component or a service, is asked whatever is showing.
+
 `@ng-native/router`'s outlets already call this: the back button pops the stack in front, and at
 the root of a tab goes to the first tab (see [Tabs](/packages/router/tabs)). An app's own overlay
 layer is the other typical caller, to close the topmost dialog or sheet
