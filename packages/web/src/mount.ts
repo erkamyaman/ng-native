@@ -35,6 +35,7 @@
  */
 import {
   APP_BOOTSTRAP_LISTENER,
+  ApplicationInitStatus,
   ApplicationRef,
   DOCUMENT,
   PLATFORM_ID,
@@ -281,6 +282,7 @@ function mountAlone(
     ],
     platformInjector as EnvironmentInjector,
   );
+  runInitializers(injector);
   setLocaleId(injector.get(LOCALE_ID) || 'en-US');
 
   const componentRef = createComponent(component, {
@@ -318,6 +320,12 @@ function mountAlone(
       applicationRef.destroy();
     },
   };
+}
+
+function runInitializers(injector: EnvironmentInjector): void {
+  const status = injector.get(ApplicationInitStatus);
+  (status as unknown as { runInitializers(): void }).runInitializers();
+  status.donePromise.catch((error: unknown) => injector.get(ErrorHandler).handleError(error));
 }
 
 /**
