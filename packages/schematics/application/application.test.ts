@@ -87,9 +87,9 @@ describe('ng add', () => {
     // offers to install into the project if expo, react or react-native is missing.
     const manifest = json(tree, 'projects/native/package.json');
     assert.equal(manifest.main, 'src/main.ts');
-    assert.equal(manifest.dependencies['react-native'], '0.86.3');
-    assert.equal(manifest.dependencies['react-native-safe-area-context'], '~5.7.0');
-    assert.equal(manifest.dependencies['expo-status-bar'], '~57.0.1');
+    assert.equal(manifest.dependencies['react-native'], '0.88.0');
+    assert.equal(manifest.dependencies['react-native-safe-area-context'], '~5.10.1');
+    assert.equal(manifest.dependencies['expo-status-bar'], '~58.0.3');
   });
 
   it('registers the project with targets that run Expo and the tests', () => {
@@ -170,8 +170,8 @@ describe('ng add', () => {
 
   it("adds the app's dependencies and keeps every version the workspace already had", async () => {
     const manifest = json(tree, 'package.json');
-    assert.equal(manifest.dependencies.expo, '~57.0.26');
-    assert.equal(manifest.dependencies['react-native'], '0.86.3');
+    assert.equal(manifest.dependencies.expo, '~58.0.16');
+    assert.equal(manifest.dependencies['react-native'], '0.88.0');
     assert.equal(manifest.dependencies['@ng-native/platform'], version);
     assert.equal(manifest.devDependencies['@ng-native/testing'], version);
 

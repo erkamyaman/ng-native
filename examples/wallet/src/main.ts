@@ -14,7 +14,7 @@ import tailwind from '../.angular-native/app.tailwind.js';
 
 registerPlatformComponents(Platform.OS);
 
-AppRegistry.registerRunnable('main', ({ rootTag }: { rootTag: number | string }) => {
+AppRegistry.registerRunnable('main', ({ rootTag }) => {
   const app = mount(Number(rootTag), App, getFabricUIManager(), {
     processColor,
     globalStyles: tailwind,

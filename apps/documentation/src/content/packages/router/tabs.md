@@ -96,9 +96,9 @@ On iOS 27 not on the tab's first visit, though: the outlet builds a tab's screen
 activates it, after native has selected the tab, so that first time the field is shown but not
 focused. Every later visit focuses it. iOS 26 focuses it on the first visit too.
 
-Both need iOS 26.1 and react-native-screens 4.29 or later, beyond the 4.26 Expo SDK 57 installs;
-older ones ignore them, and Android has no such tab. Native reads the role once, as the tab is
-created, so bind a value that does not change, and a bar has one search tab at most.
+Both need iOS 26.1 and react-native-screens 4.29 or later, which Expo SDK 58 installs and SDK 57
+does not; older ones ignore them, and Android has no such tab. Native reads the role once, as the
+tab is created, so bind a value that does not change, and a bar has one search tab at most.
 
 Which build the app is decides whether the role is needed at all. Linked against the iOS 26 SDK,
 as Expo Go and an app built with Xcode 26 are, UIKit keeps its older behavior and a plain

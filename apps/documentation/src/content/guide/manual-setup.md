@@ -18,17 +18,17 @@ Angular CLI and Nx generators perform this setup and integrate workspace command
 **Create a blank project:**
 
 ```sh
-npx create-expo-app my-app --template blank-typescript@sdk-57
+npx create-expo-app my-app --template blank-typescript@sdk-58
 cd my-app
 rm App.tsx index.ts
 npm pkg set main=src/main.ts
 ```
 
-The packages support Expo SDK 57 and 58. `@sdk-57` starts the app on SDK 57, the SDK the template
+The packages support Expo SDK 57 and 58. `@sdk-58` starts the app on SDK 58, the SDK the template
 is on; without it, `create-expo-app` takes the newest SDK.
 
 **For an existing app:** it has to be on SDK 57 or 58. An app on an older SDK moves with
-`npx expo install expo@^57.0.0`, then `npx expo install --fix`. Remove its entry point, `App.tsx`
+`npx expo install expo@^58.0.0`, then `npx expo install --fix`. Remove its entry point, `App.tsx`
 and `index.ts` or `index.js`, and run `npm pkg set main=src/main.ts`, so Expo starts from the
 `src/main.ts` below. Keep the dependencies, native configuration and assets.
 
@@ -96,7 +96,7 @@ the `MainApplication.kt` that `expo prebuild` writes.
 ```json
 // tsconfig.json
 {
-  "extends": "expo/tsconfig.base",
+  "extends": "expo/tsconfig.base.json",
   "compilerOptions": {
     "strict": true,
     "allowImportingTsExtensions": true
@@ -107,6 +107,10 @@ the `MainApplication.kt` that `expo prebuild` writes.
 `allowImportingTsExtensions` is required. These packages ship TypeScript with `.ts` imports so
 Metro's Angular compiler processes library and app components together. Without this setting,
 `tsc` reports errors for files in `node_modules`.
+
+`extends` names Expo's file with its `.json`. From SDK 58 `expo` has an exports map, and Vitest
+finds `expo/tsconfig.base` without the extension nowhere: every test file fails to load with
+`Failed to load tsconfig 'expo/tsconfig.base'`. `tsc` accepts either name.
 
 ### Checking templates
 

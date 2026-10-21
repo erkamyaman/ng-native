@@ -11,7 +11,7 @@ import { appConfig } from './app/app.config.ts';
 
 registerPlatformComponents(Platform.OS);
 
-AppRegistry.registerRunnable('main', ({ rootTag }: { rootTag: number | string }) => {
+AppRegistry.registerRunnable('main', ({ rootTag }) => {
   const app = mount(Number(rootTag), App, getFabricUIManager(), {
     processColor,
     conditions: currentConditions(),
