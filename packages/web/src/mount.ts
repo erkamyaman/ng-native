@@ -322,6 +322,11 @@ function mountAlone(
   };
 }
 
+/**
+ * The app initializers, before the root component exists, as the native `mount()` runs them (see
+ * its `runInitializers` for why through `ApplicationInitStatus`): a promise is started, not awaited,
+ * and a failed one reaches the `ErrorHandler`. A copy, as this package cannot import the platform.
+ */
 function runInitializers(injector: EnvironmentInjector): void {
   const status = injector.get(ApplicationInitStatus);
   (status as unknown as { runInitializers(): void }).runInitializers();

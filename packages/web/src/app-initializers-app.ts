@@ -16,4 +16,6 @@ export class Greeting {
 })
 export class InitializedApp {
   protected readonly greeting = inject(Greeting);
+  /** What the greeting said when the root component was created, before its first render. */
+  readonly textAtCreation = this.greeting.text();
 }

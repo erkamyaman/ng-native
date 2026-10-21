@@ -44,6 +44,8 @@ describe('mount() runs the app initializers', () => {
     });
 
     assert.deepEqual(seen, [0], 'ran once, before the root component');
+    const app = mounted.componentRef.instance as InstanceType<typeof InitializedApp>;
+    assert.equal(app.textAtCreation, 'loaded', 'ran before the root component was created');
     assert.equal(root.textContent?.trim(), 'loaded');
     assert.equal(mounted.componentRef.injector.get(ApplicationInitStatus).done, true);
   });
