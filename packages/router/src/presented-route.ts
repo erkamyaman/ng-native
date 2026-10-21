@@ -136,7 +136,10 @@ function presentedCopy(chain: readonly Route[]): Route {
  */
 export async function presentedCommands(router: Router, path: string): Promise<unknown[] | null> {
   const segments = path.split('/').filter(Boolean);
-  const chain = await chainTo(router.config, segments);
+  const config = router.config;
+  const chain = await chainTo(config, segments);
+  // Routes reset while lazy children loaded: the copy is made from the routes the router has.
+  if (router.config !== config) return presentedCommands(router, path);
   if (!chain || chain === STOP) return null;
   const copy = presentedCopy(chain);
   const copied = router.config.some(
