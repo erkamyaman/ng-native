@@ -28,7 +28,7 @@ import {
   type RendererFactory2,
 } from '@angular/core';
 import { reportUnboundFormsInput } from '@ng-native/fabric';
-import { letBrowserNodesPassAsNodes, type BrowserNode } from './dom-node.ts';
+import { letBrowserNodesPassAsDomNodes, type BrowserNode } from './dom-node.ts';
 import type { BrowserEngine } from './browser-engine.ts';
 import { dashCase } from './css-units.ts';
 import { writeStyleKey } from './native-style.ts';
@@ -293,7 +293,7 @@ export class BrowserRendererFactory implements RendererFactory2 {
     this.engine = engine;
     this.document = document;
     this.renderer = new BrowserRenderer(engine, document);
-    letBrowserNodesPassAsNodes();
+    letBrowserNodesPassAsDomNodes();
   }
 
   /**

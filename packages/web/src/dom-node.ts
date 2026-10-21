@@ -62,17 +62,99 @@ const answered = new WeakSet<object>();
 
 type Constructor = abstract new (...args: never[]) => object;
 
-export function letBrowserNodesPassAsNodes(): void {
-  const node = (globalThis as { Node?: Constructor }).Node;
-  if (typeof node !== 'function' || answered.has(node)) return;
-  answered.add(node);
-  const own = node[Symbol.hasInstance];
-  Object.defineProperty(node, Symbol.hasInstance, {
+export function letBrowserNodesPassAsDomNodes(): void {
+  const scope = globalThis as { Node?: Constructor; Element?: Constructor };
+  letPass(scope.Node, (value) => made.has(value as object));
+  letPass(
+    scope.Element,
+    (value) => made.has(value as object) && (value as BrowserNode).nodeKind === 'element',
+  );
+  letBrowserNodesBeObserved();
+}
+
+function letPass(target: Constructor | undefined, ours: (value: unknown) => boolean): void {
+  if (typeof target !== 'function' || answered.has(target)) return;
+  answered.add(target);
+  const own = target[Symbol.hasInstance];
+  Object.defineProperty(target, Symbol.hasInstance, {
     configurable: true,
     value(this: Constructor, value: unknown): boolean {
-      return (this === node && made.has(value as object)) || own.call(this, value);
+      return (this === target && ours(value)) || own.call(this, value);
     },
   });
+}
+
+function unwrap(target: unknown): unknown {
+  return made.has(target as object) ? (target as BrowserNode).el : target;
+}
+
+function letBrowserNodesBeObserved(): void {
+  const scope = globalThis as { IntersectionObserver?: typeof IntersectionObserver };
+  const Native = scope.IntersectionObserver;
+  if (typeof Native !== 'function' || answered.has(Native)) return;
+  const asSeen = (wrapped: WeakMap<Element, BrowserNode>, entry: IntersectionObserverEntry) => {
+    const node = wrapped.get(entry.target);
+    if (!node) return entry;
+    return {
+      time: entry.time,
+      rootBounds: entry.rootBounds,
+      boundingClientRect: entry.boundingClientRect,
+      intersectionRect: entry.intersectionRect,
+      intersectionRatio: entry.intersectionRatio,
+      isIntersecting: entry.isIntersecting,
+      target: node,
+    } as unknown as IntersectionObserverEntry;
+  };
+  class Observer extends Native {
+    private readonly wrapped: WeakMap<Element, BrowserNode>;
+
+    constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+      const wrapped = new WeakMap<Element, BrowserNode>();
+      super(
+        (entries, observer) =>
+          callback(
+            entries.map((entry) => asSeen(wrapped, entry)),
+            observer,
+          ),
+        options,
+      );
+      this.wrapped = wrapped;
+    }
+
+    override observe(target: Element): void {
+      const el = unwrap(target) as Element;
+      if (el !== target) this.wrapped.set(el, target as unknown as BrowserNode);
+      super.observe(el);
+    }
+
+    override unobserve(target: Element): void {
+      super.unobserve(unwrap(target) as Element);
+    }
+
+    override takeRecords(): IntersectionObserverEntry[] {
+      return super.takeRecords().map((entry) => asSeen(this.wrapped, entry));
+    }
+  }
+  answered.add(Observer);
+  scope.IntersectionObserver = Observer;
+}
+
+function addEventListener(
+  this: BrowserNode,
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  options?: AddEventListenerOptions | boolean,
+): void {
+  this.el.addEventListener(type, listener, options);
+}
+
+function removeEventListener(
+  this: BrowserNode,
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  options?: EventListenerOptions | boolean,
+): void {
+  this.el.removeEventListener(type, listener, options);
 }
 
 /**
@@ -80,7 +162,10 @@ export function letBrowserNodesPassAsNodes(): void {
  * property (NG0303) unless `name in element` is true, and every binding on an element here goes to
  * `setProperty`, whatever its name.
  */
-const anyProperty = new Proxy({}, { has: (_, name) => typeof name === 'string' });
+const anyProperty = new Proxy(
+  { addEventListener, removeEventListener },
+  { has: (_, name) => typeof name === 'string' },
+);
 
 /**
  * The SVG names whose `fill`/`stroke` need a seeded `props` entry from the moment they are
