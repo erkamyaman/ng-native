@@ -221,10 +221,30 @@ describe('@defer on a trigger element, on the web', () => {
 
   it('keeps a trigger whose field is swapped for a multiline one', async () => {
     const [oldField, oldSeen] = [byId('field'), byId('seen')];
+    const heard: string[] = [];
+    const fieldNode = nodeOf(oldField) as unknown as EventTarget;
+    fieldNode.addEventListener('ping', () => heard.push('fired once'), { once: true });
+    fieldNode.addEventListener('ping', { handleEvent: () => heard.push('kept') });
+    oldField.dispatchEvent(new Event('ping'));
+    const removed = () => heard.push('removed');
+    fieldNode.addEventListener('zap', removed, { once: true });
+    fieldNode.removeEventListener('zap', removed);
+    oldField.dispatchEvent(new Event('zap'));
+    fieldNode.addEventListener(
+      'pong',
+      { handleEvent: () => heard.push('waiting once') },
+      {
+        once: true,
+      },
+    );
     (mounted.componentRef.instance as DeferTriggersApp).multiline.set(true);
     await settle();
     const [field, seen] = [byId('field'), byId('seen')];
     assert.equal(field.tagName, 'TEXTAREA');
+    field.dispatchEvent(new Event('ping'));
+    field.dispatchEvent(new Event('pong'));
+    field.dispatchEvent(new Event('pong'));
+    assert.deepEqual(heard, ['fired once', 'kept', 'kept', 'waiting once']);
     assert.deepEqual(listenersOn(oldField), []);
     assert.ok(!BrowserIntersectionObserver.watches(oldSeen));
 

@@ -163,6 +163,8 @@ function letBrowserNodesBeObserved(): void {
 interface Forwarded {
   readonly type: string;
   readonly listener: EventListenerOrEventListenerObject;
+  /** What the element was given: `listener`, or for a `once` one, a wrapper that forgets it. */
+  readonly registered: EventListenerOrEventListenerObject;
   readonly options: AddEventListenerOptions | boolean | undefined;
 }
 
@@ -190,10 +192,26 @@ function addEventListener(
   listener: EventListenerOrEventListenerObject,
   options?: AddEventListenerOptions | boolean,
 ): void {
-  this.el.addEventListener(type, listener, options);
   const list = forwarded.get(this) ?? [];
-  if (indexOf(list, type, listener, options) < 0) list.push({ type, listener, options });
+  if (indexOf(list, type, listener, options) >= 0) return;
   forwarded.set(this, list);
+  // A `once` listener the element has fired and dropped must not come back on a swapped element.
+  const entry: Forwarded = {
+    type,
+    listener,
+    options,
+    registered:
+      typeof options === 'object' && options.once
+        ? (event: Event) => {
+            const at = list.indexOf(entry);
+            if (at >= 0) list.splice(at, 1);
+            if (typeof listener === 'function') listener.call(event.currentTarget, event);
+            else listener.handleEvent(event);
+          }
+        : listener,
+  };
+  list.push(entry);
+  this.el.addEventListener(type, entry.registered, options);
 }
 
 function removeEventListener(
@@ -202,9 +220,9 @@ function removeEventListener(
   listener: EventListenerOrEventListenerObject,
   options?: EventListenerOptions | boolean,
 ): void {
-  this.el.removeEventListener(type, listener, options);
   const list = forwarded.get(this);
   const at = list ? indexOf(list, type, listener, options) : -1;
+  this.el.removeEventListener(type, at >= 0 ? list![at]!.registered : listener, options);
   if (at >= 0) list!.splice(at, 1);
 }
 
@@ -325,9 +343,9 @@ export function rebindElement(node: BrowserNode, el: Element): void {
   registry.delete(old);
   (node as { el: Element | Text | Comment }).el = el;
   registry.set(el, node);
-  for (const { type, listener, options } of forwarded.get(node) ?? []) {
-    old.removeEventListener(type, listener, options);
-    el.addEventListener(type, listener, options);
+  for (const { type, registered, options } of forwarded.get(node) ?? []) {
+    old.removeEventListener(type, registered, options);
+    el.addEventListener(type, registered, options);
   }
   for (const observer of observers.get(node) ?? []) observer.moved(node, old, el);
 }
