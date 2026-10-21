@@ -205,7 +205,24 @@ describe('@defer on a trigger element, on the web', () => {
     assert.deepEqual(delivered, [node, el]);
     observer.unobserve(node);
     assert.ok(!BrowserIntersectionObserver.watches(node.el));
+
+    // Given the element after the node, by the same observer, it names the element.
+    observer.observe(node.el);
+    BrowserIntersectionObserver.queue(node.el);
+    assert.deepEqual(
+      observer.takeRecords().map((entry) => entry.target),
+      [node.el],
+    );
     observer.disconnect();
+    const regiven = new Observer(() => {});
+    regiven.observe(node);
+    regiven.observe(node.el);
+    BrowserIntersectionObserver.queue(node.el);
+    assert.deepEqual(
+      regiven.takeRecords().map((entry) => entry.target),
+      [node.el],
+    );
+    regiven.disconnect();
 
     // Given the node's element rather than the node, an observer reports the element.
     const direct = new Observer(() => {});

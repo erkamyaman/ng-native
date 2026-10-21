@@ -124,6 +124,7 @@ function letBrowserNodesBeObserved(): void {
     override observe(target: Element): void {
       const el = unwrap(target) as Element;
       if (el !== target) this.wrapped.set(el, target as unknown as BrowserNode);
+      else this.wrapped.delete(el);
       super.observe(el);
     }
 
