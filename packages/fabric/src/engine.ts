@@ -416,6 +416,7 @@ const VIEW_EVENT_OPT_IN_PROPS: Record<string, Record<string, string>> = {
     topContentSizeChange: 'onContentSizeChange',
     topScroll: 'onScroll',
     topKeyPress: 'onKeyPress',
+    topSelectionChange: 'onSelectionChange',
   },
 };
 
