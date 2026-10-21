@@ -75,11 +75,11 @@ function fakeExpoHinge(initial: ExpoHingeReading | null) {
   };
 }
 
-function foldableWith(native: NativeHinge | null, expoHinge?: ExpoHinge | null) {
+function foldableWith(native: NativeHinge | null, expoHinge: ExpoHinge | null = null) {
   const injector = Injector.create({
     providers: [
       { provide: Foldable.SOURCE, useValue: native },
-      ...(expoHinge === undefined ? [] : [{ provide: Foldable.HINGE, useValue: expoHinge }]),
+      { provide: Foldable.HINGE, useValue: expoHinge },
     ],
   });
   const foldable = runInInjectionContext(injector, () => new Foldable());
@@ -249,6 +249,15 @@ describe('Foldable, reading expo-hinge', () => {
     assert.equal(foldable.angle(), 60);
     hinge.change(null);
     assert.equal(foldable.angle(), 127, "expo-foldables' angle, followed all along");
+  });
+
+  it("takes expo-foldables' posture while expo-hinge cannot say", () => {
+    const hinge = fakeExpoHinge({ angle: 3, status: 'unknown' });
+    const foldables = fakeHinge({ state: { posture: 'closed' } });
+    const { foldable } = foldableWith(foldables.native, hinge.source);
+    assert.deepEqual([foldable.posture(), foldable.angle()], ['closed', 3]);
+    hinge.change({ angle: 100, status: 'partiallyOpen' });
+    assert.equal(foldable.posture(), 'partially-open');
   });
 
   it('stops listening to both modules when the app is destroyed', () => {

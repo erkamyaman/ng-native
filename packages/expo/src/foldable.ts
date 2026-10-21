@@ -123,7 +123,7 @@ export class Foldable {
   });
 
   private readonly native = inject(Foldable.SOURCE);
-  private readonly expoHinge = inject(Foldable.HINGE, { optional: true });
+  private readonly expoHinge = inject(Foldable.HINGE);
   private readonly state = signal<HingeState | undefined>(undefined);
   private readonly reading = signal<ExpoHingeReading | null>(null);
   private readonly angleState = signal<number | null>(null);
@@ -133,9 +133,13 @@ export class Foldable {
   readonly available: Signal<boolean> = computed(
     () => this.reading() !== null || this.state() !== undefined,
   );
+  /**
+   * `expo-foldables`' posture wherever `expo-hinge` cannot say, as on Android while the window does
+   * not span the fold: `expo-foldables` works a closed device out from its angle.
+   */
   readonly posture: Signal<HingePosture> = computed(() => {
-    const reading = this.reading();
-    return reading ? (POSTURES[reading.status] ?? 'unknown') : (this.known()?.posture ?? 'unknown');
+    const posture = POSTURES[this.reading()?.status ?? 'unknown'] ?? 'unknown';
+    return posture === 'unknown' ? (this.known()?.posture ?? 'unknown') : posture;
   });
   /**
    * Where the fold crosses the window, in window coordinates: a view that does not start at the

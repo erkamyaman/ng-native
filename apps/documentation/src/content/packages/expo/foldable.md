@@ -30,7 +30,8 @@ The posture and the angle come from `expo-hinge` when it is installed and report
 `separating`, `book` and `tabletop` come from `expo-foldables` only; with `expo-hinge` alone they
 are null or false. `expo-hinge` reports a hinge on Android 11 or newer, and on iOS 27.1 or newer in
 an app built with the iOS 27.1 SDK. On Android it never reports `'closed'`: a closed device has an
-`angle` near `0`.
+`angle` near `0`, and while the window does not span the fold the posture comes from
+`expo-foldables`, which reads a closed device from its angle.
 
 On iOS both need Xcode 27.1 or newer, for the iPhone Duo's `UIHinge`. Expo Go can't load them, so
 use a development build.
