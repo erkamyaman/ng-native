@@ -130,9 +130,6 @@ function presentedCopy(chain: readonly Route[]): Route {
   };
 }
 
-/** The copies each router has, by the path they match. */
-const copies = new WeakMap<Router, Set<string>>();
-
 /**
  * The commands that present the page at `path` in the root's presented outlet, having given its
  * route a copy there, or null when the config is not one this follows.
@@ -142,12 +139,10 @@ export async function presentedCommands(router: Router, path: string): Promise<u
   const chain = await chainTo(router.config, segments);
   if (!chain || chain === STOP) return null;
   const copy = presentedCopy(chain);
-  const known = copies.get(router) ?? new Set<string>();
-  copies.set(router, known);
-  if (!known.has(copy.path!)) {
-    known.add(copy.path!);
-    router.config.push(copy);
-  }
+  const copied = router.config.some(
+    (route) => route.outlet === PRESENTED && route.path === copy.path,
+  );
+  if (!copied) router.config.push(copy);
   return [{ outlets: { [PRESENTED]: segments } }];
 }
 

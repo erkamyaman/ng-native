@@ -68,3 +68,20 @@ describe('the tab under a presented screen', () => {
     assert.equal(home.inFront(), true);
   });
 });
+
+describe('a page of another tab presented after the routes are reset', () => {
+  it('is presented over home again, its route copied into the new config', async () => {
+    const { router, navigation } = await boot();
+    await navigation.present('/library/7', { as: 'formSheet' });
+    await settle();
+    navigation.back();
+    await settle();
+    await settle();
+    assert.equal(router.url, '/home');
+
+    router.resetConfig(mod['routes'] as Routes);
+    await navigation.present('/library/8', { as: 'formSheet' });
+    await settle();
+    assert.equal(router.url, '/home(presented:library/8)');
+  });
+});
