@@ -879,6 +879,28 @@ function settleUnsidedBorder(own: Record<string, unknown>): void {
 }
 
 /**
+ * `settleUnsidedBorder` again, on the props of an element with a style of its own: its inline
+ * style, `inline`, and what it binds from a token, `bound`, which can give the sides a width or
+ * colour the cascade's unsided one no longer agrees with. The unsided width and colour the element
+ * does not set itself are worked out again from what it is committed with, so a dashed border
+ * from a stylesheet stays dashed on Android under inline sides that agree.
+ */
+export function unsidedOverOwn(
+  style: Record<string, unknown>,
+  inline: Readonly<Record<string, unknown>>,
+  bound: ReadonlyMap<string, unknown> | undefined,
+): void {
+  // As `settleUnsidedBorder` asks it: most views have no border.
+  if (style['borderTopWidth'] === undefined && style['borderWidth'] === undefined) return;
+  for (const key of UNSIDED_BORDER) {
+    if (inline[key] == null && !bound?.has(key)) delete style[key];
+  }
+  settleUnsidedBorder(style);
+}
+
+const UNSIDED_BORDER = ['borderWidth', 'borderColor'] as const;
+
+/**
  * What the four sides of a border are, each read as native reads it, where they are the same,
  * a colour held in an object by what is in it. A logical side, which a direction makes left or
  * right, leaves it unsaid.
@@ -4297,7 +4319,8 @@ export class StyleResolver {
       this.applyDeferred(result.deferred, own, tokens, parentInherited, result.important);
     }
     settleBorders(own);
-    settleUnsidedBorder(own);
+    // An element with a style of its own has it settled once that is merged: `unsidedOverOwn`.
+    if (!inline && !bound) settleUnsidedBorder(own);
     // `pointer-events: inherit` won the cascade: what the parent hands down stands.
     if (own['pointerEvents'] === 'inherit') delete own['pointerEvents'];
     const style = { ...parentInherited, ...own };

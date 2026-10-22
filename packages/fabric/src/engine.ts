@@ -21,6 +21,7 @@ import {
   handsDownPaint,
   StyleResolver,
   underOwnShorthands,
+  unsidedOverOwn,
   usesActive,
   elementsAtEnd,
   hasAbove,
@@ -11207,10 +11208,12 @@ export class Engine implements HostEngine {
     const style = boundTransform(node, Object.assign(props, inline), cascaded);
     // What an element sets itself, inline or bound from a token, over the cascade's other forms of
     // it: the logical or physical side (`overOtherForms`) and the sides a shorthand covers
-    // (`underOwnShorthands`). Asked here, not in a method of its own: it is asked of every node.
+    // (`underOwnShorthands`), and then the unsided border its sides agree on (`unsidedOverOwn`).
+    // Asked here, not in a method of its own: it is asked of every node.
     if (inline !== NO_STYLE) this.styles.overOtherForms(inline, style);
     if (inline !== NO_STYLE || node.boundByProp?.size) {
       underOwnShorthands(style, inline, node.boundByProp, node.styleCache?.important);
+      unsidedOverOwn(style, inline, node.boundByProp);
     }
     nativePointerEvents(node, style, resolved);
     // Before an image's own size: `fit-content` is no size, so the image's is what it gets.
