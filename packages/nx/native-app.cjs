@@ -33,7 +33,7 @@ const { dependencies, devDependencies, accepted } = shared;
  */
 const expoCompanions = {
   'react-dom': dependencies.react,
-  '@expo/cli': '^58.1.13',
+  '@expo/cli': '^58.1.14',
   '@babel/runtime': '^7.20.0',
   '@babel/core': devDependencies['@babel/core'],
   '@expo/metro': '~58.0.0',

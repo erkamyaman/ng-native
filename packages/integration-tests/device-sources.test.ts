@@ -295,6 +295,49 @@ describe('the keyboard source', () => {
     stop();
     assert.deepEqual(removed.sort(), ['keyboardDidHide', 'keyboardDidShow']);
   });
+
+  it('says where the window views are measured in starts, below the top of the screen', () => {
+    // React Native reports the keyboard's screenY from the top of the screen, and on Android
+    // measures a view from below the status bar unless its edge-to-edge flag is on, which Expo Go
+    // leaves off while drawing under the bar.
+    const windowTop = (os: string, isEdgeToEdge: boolean) => {
+      const native = {
+        Platform: { OS: os },
+        TurboModuleRegistry: {
+          get: (name: string) =>
+            name === 'DeviceInfo' ? { getConstants: () => ({ isEdgeToEdge }) } : null,
+        },
+        StatusBar: { currentHeight: 33.8 },
+        Keyboard: { dismiss: () => {}, addListener: () => ({ remove: () => {} }) },
+      };
+      return withNative(native, () => keyboardSource()).windowTop;
+    };
+
+    assert.equal(windowTop('android', false), 33.8, 'a status bar below the top of the screen');
+    assert.equal(windowTop('android', true), 0, 'at the top of the screen, edge to edge');
+    assert.equal(windowTop('ios', false), 0, 'iOS measures from where it reports the keyboard');
+  });
+
+  it('reads the status bar inset again each time, as React Native measures with the current one', () => {
+    // StatusBar.currentHeight is the height at startup; the module's constant follows the bar
+    // being hidden or shown, and a rotation.
+    let height: number | undefined = 33.8;
+    const native = {
+      Platform: { OS: 'android' },
+      TurboModuleRegistry: {
+        get: (name: string) =>
+          name === 'StatusBarManager' ? { getConstants: () => ({ HEIGHT: height }) } : null,
+      },
+      StatusBar: { currentHeight: 33.8 },
+      Keyboard: { dismiss: () => {}, addListener: () => ({ remove: () => {} }) },
+    };
+    const source = withNative(native, () => keyboardSource());
+    assert.equal(source.windowTop, 33.8);
+    height = 0;
+    assert.equal(source.windowTop, 0, 'the bar hidden since');
+    height = 24;
+    assert.equal(source.windowTop, 24, 'rotated, with a shorter bar');
+  });
 });
 
 describe('the status bar source', () => {

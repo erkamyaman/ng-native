@@ -121,13 +121,19 @@ export function watchConditions<Node>(
     resize({ width: window.width, height: window.height, pixelRatio: pixelRatio() }, fontScale()),
   );
   const scheme = colors.subscribe((colorScheme) => push({ colorScheme }));
+  let heardReduceMotion = false;
   const settings = accessibility.subscribe((change) => {
     if (change.fontScale !== undefined && change.fontScale !== scale) resize({}, change.fontScale);
-    if (change.reduceMotion !== undefined) push({ reducedMotion: change.reduceMotion });
+    if (change.reduceMotion !== undefined) {
+      heardReduceMotion = true;
+      push({ reducedMotion: change.reduceMotion });
+    }
   });
   void accessibility
     .current()
-    .then(({ reduceMotion }) => reduceMotion && push({ reducedMotion: true }));
+    .then(
+      ({ reduceMotion }) => !heardReduceMotion && reduceMotion && push({ reducedMotion: true }),
+    );
 
   return () => {
     sizes();

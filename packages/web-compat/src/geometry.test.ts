@@ -54,6 +54,9 @@ async function page() {
   /** Native says an element that scrolls has been scrolled. */
   const scrolled = async (element: Dom, x: number, y: number) => {
     element.setAttribute('testID', idOf(element));
+    // Committed now, rather than left to `settle`, which gives up after a few frames on a busy
+    // machine and leaves the view unnamed for the query below.
+    engine.commit();
     await settle();
     app.fabric.emit(screen.getByTestId(idOf(element)), 'topScroll', { contentOffset: { x, y } });
   };
@@ -646,7 +649,9 @@ describe('ResizeObserver', () => {
     const shown = async () => {
       await settle();
       const layout = { x: 0, y: 0, width: 50, height: 20 };
-      app.fabric.emit(screen.getByTestId('watched'), 'topLayout', { layout });
+      // Laid out though it is not seen yet, as what is put over the app is not for a frame.
+      const watched = screen.getByTestId('watched', { includeHiddenElements: true });
+      app.fabric.emit(watched, 'topLayout', { layout });
       await nextFrame();
     };
     const seen: number[] = [];
@@ -698,7 +703,8 @@ describe('ResizeObserver', () => {
     );
     observer.observe(box);
     const layout = { x: 0, y: 0, width: 60, height: 20 };
-    app.fabric.emit(screen.getByTestId('again'), 'topLayout', { layout });
+    const again = screen.getByTestId('again', { includeHiddenElements: true });
+    app.fabric.emit(again, 'topLayout', { layout });
     await nextFrame();
     observer.unobserve(box);
     // Laid out again while nothing heard it.
@@ -751,6 +757,34 @@ describe('IntersectionObserver', () => {
     assert.throws(make({ rootMargin: '1px 1px 1px 1px 1px' }), { name: 'SyntaxError' });
     assert.throws(make({ root: 'root' }), TypeError);
     assert.throws(() => plain.observe('foo'), TypeError);
+  });
+
+  it("looks at the next app's elements at once, where the app before went with a look still owed", async () => {
+    // A host that runs one page after another clears the timers the page before left, so a look
+    // it asked for never comes. The next page's first was passed over as already asked for, and
+    // its observers heard nothing for a second.
+    const before = await page();
+    const gone = before.div();
+    await settle();
+    const lost = () => 0;
+    const own = { frame: globals.requestAnimationFrame, timer: globals.setTimeout };
+    globals.requestAnimationFrame = lost;
+    globals.setTimeout = lost;
+    try {
+      new globals.IntersectionObserver(() => {}).observe(gone);
+    } finally {
+      globals.requestAnimationFrame = own.frame;
+      globals.setTimeout = own.timer;
+    }
+    cleanup();
+    const { place, div } = await page();
+    const target = div();
+    await settle();
+    place(target, { x: 10, y: 10, width: 20, height: 20 });
+    const calls: Dom[][] = [];
+    new globals.IntersectionObserver((entries: Dom[]) => calls.push(entries)).observe(target);
+    await nextFrame();
+    assert.equal(calls.length, 1);
   });
 
   it('tells of each element the first time it is looked at, in sight or not', async () => {

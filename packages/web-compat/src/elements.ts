@@ -139,6 +139,30 @@ const BLOCKS = new Set([
 const BLOCK = { ...CONTENT_BOX, display: 'block' };
 const SIZED_WHOLE = new Set(['button', 'select', 'table']);
 
+/** A table's row: its cells side by side. */
+export const ROW = { ...CONTENT_BOX, flexDirection: 'row' };
+
+/**
+ * A cell before its table's columns are counted: see `table.ts`. A block to what it holds, set
+ * in the middle of its height, as a browser has a cell, and an even share of its row. Its
+ * padding is inside the width its column gives it, as a column's is.
+ */
+export const CELL = {
+  display: 'block',
+  boxSizing: 'border-box',
+  flexGrow: 1,
+  flexShrink: 1,
+  flexBasis: '0%',
+  alignContent: 'center',
+};
+
+/** A table's rows and cells, which are no blocks and are laid out by `table.ts`. */
+const TABLE_PARTS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
+  tr: ROW,
+  td: CELL,
+  th: CELL,
+};
+
 /**
  * What a browser's own stylesheet gives an HTML element of this one's name, in an app that asked
  * for this package. None for an element of a drawing, which SVG sizes itself, nor one a script
@@ -148,18 +172,37 @@ export function defaultsOf(node: EngineNode, engine: Engine): Record<string, unk
   if (node.namespace !== undefined || !isHtml(node.tag) || !documentOf(engine)) return undefined;
   const record = nameRecordOf(node);
   if (record && record.namespace !== XHTML) return undefined;
-  return SIZED_WHOLE.has(node.tag) ? WHOLE : BLOCKS.has(node.tag) ? BLOCK : CONTENT_BOX;
+  if (SIZED_WHOLE.has(node.tag)) return WHOLE;
+  return BLOCKS.has(node.tag) ? BLOCK : (TABLE_PARTS[node.tag] ?? CONTENT_BOX);
 }
 
 /**
  * Give an element what `defaultsOf` says, where it says anything: one made, and a copy
  * `cloneNode` makes, which is given it by its name and not by what the element has now: a
  * field's and a select's own defaults are added to it.
+ *
+ * And whether a browser lays it out inline: one of HTML's that is no block, a span, a label, a
+ * button or a field, always; a library's custom element until it holds a block. The engine sets
+ * what such an element holds on its line, and gives it a line in the block it is in (see
+ * `setInline`). A custom element that is a flex item is laid out the same way inside, as a
+ * browser makes it a block there.
  */
 export function giveDefaults(node: EngineNode, engine: Engine): void {
   const style = defaultsOf(node, engine);
-  if (style) engine.setDefaultStyle(node, style);
+  if (!style) return;
+  engine.setDefaultStyle(node, style);
+  if (node.tag.includes('-')) engine.setInline(node, 'unless-block');
+  else if (style !== BLOCK && !NOT_INLINE.has(node.tag)) engine.setInline(node, 'always');
 }
+
+/**
+ * HTML's elements that are no block and not inline either: a table's, what is not drawn, and a
+ * line break, which ends the line it is in and is laid out as a block among inline boxes is.
+ */
+const NOT_INLINE = new Set([
+  ...['table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'br'],
+  ...UNDRAWN,
+]);
 
 /**
  * Have an element made in an app that asked for this package scroll what overflows it where its

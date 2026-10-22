@@ -521,7 +521,8 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
    * screen's stack answers instead.
    */
   private goBack(): boolean {
-    const first = this.entries[0];
+    const key = this.declared()[0]?.path();
+    const first = this.entries.find((entry) => entry.key === key);
     const selected = this.selected;
     if (!first || !selected || selected === first || !this.router) return false;
     if (!this.isActivated || !isShowing(this.router, selected.route)) return false;

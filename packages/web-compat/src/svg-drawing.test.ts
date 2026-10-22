@@ -221,6 +221,44 @@ describe('@ng-native/web-compat svg by element name', () => {
   });
 });
 
+/** A drawing with a link round some of its shapes, as the SVG logo has. */
+@Component({
+  selector: 'x-linked',
+  template: `
+    <svg viewBox="0 0 100 100" width="80" height="80">
+      <a testID="link" href="https://www.w3.org/Graphics/SVG/">
+        <rect testID="inside" width="100" height="100" fill="#ff9900" />
+      </a>
+    </svg>
+  `,
+})
+class Linked {}
+
+describe('@ng-native/web-compat svg link', () => {
+  it('draws a link in a drawing as a group of what it holds, as an <a> by its name', async () => {
+    const app = await render(Linked, { providers: [provideWebCompat()] });
+    await settle();
+    // A drawing holds nothing but its own views: a plain view in it draws nothing at all.
+    assert.equal(screen.getByTestId('link').viewName, 'RNSVGGroup');
+    assert.equal(screen.getByTestId('inside').viewName, 'RNSVGRect');
+    const document = (globalThis as unknown as { document: Dom }).document;
+    assert.equal(document.querySelector('svg a')?.localName, 'a');
+    // One markup builds, as a picture fetched for an <img> is.
+    const svg = document.querySelector('svg');
+    svg.innerHTML = '<a href="#b"><circle r="5" /></a>';
+    await settle();
+    assert.equal(svg.firstChild.localName, 'a');
+    const drawing = (nodes: readonly FakeFabricNode[]): FakeFabricNode | undefined =>
+      nodes.find((node) => node.viewName === 'RNSVGSvgView') ??
+      nodes.map((node) => drawing(node.children)).find(Boolean);
+    const [link] = drawing(app.fabric.committed)!.children;
+    assert.deepEqual(
+      [link!.viewName, link!.children.map((child) => child.viewName)],
+      ['RNSVGGroup', ['RNSVGCircle']],
+    );
+  });
+});
+
 describe('@ng-native/web-compat svg attributes in a selector', () => {
   /** A page with a sheet a script writes into it, and a box to put a drawing in. */
   const page = async (css: string) => {
@@ -316,6 +354,17 @@ describe('@ng-native/web-compat svg attributes in a selector', () => {
 })
 class ForeignLabel {}
 
+@Component({
+  selector: 'x-foreign-bare',
+  template: `
+    <svg viewBox="0 0 200 100">
+      <foreignObject testID="bare"><p>Germany</p></foreignObject>
+      <foreignObject testID="partial" x="10" width="50%"><p>Spain</p></foreignObject>
+    </svg>
+  `,
+})
+class ForeignBare {}
+
 describe('@ng-native/web-compat svg foreignObject', () => {
   it('draws the HTML it holds where it says in the drawing, as a card label is', async () => {
     await render(ForeignLabel, { providers: [provideWebCompat()] });
@@ -325,6 +374,25 @@ describe('@ng-native/web-compat svg foreignObject', () => {
     const { x, y, width, height } = foreign.props;
     assert.deepEqual([x, y, width, height].map(String), ['10', '20', '120', '40']);
     assert.ok(screen.getByText('Germany'));
+  });
+});
+
+describe('@ng-native/web-compat svg foreignObject area', () => {
+  it('is the whole drawing where the markup says none, and each side it does not say', async () => {
+    await render(ForeignBare, { providers: [provideWebCompat()] });
+    await settle();
+    const area = (id: string) => {
+      const { x, y, width, height } = screen.getByTestId(id).props;
+      return [x, y, width, height].map(String);
+    };
+    assert.deepEqual(area('bare'), ['0%', '0%', '100%', '100%']);
+    assert.deepEqual(area('partial'), ['10', '0%', '50%', '100%']);
+  });
+
+  it('is nothing the package gave it in an app that did not ask for the package', async () => {
+    await render(ForeignBare);
+    await settle();
+    assert.equal(screen.getByTestId('bare').props['width'], undefined);
   });
 });
 
@@ -826,6 +894,28 @@ describe('@ng-native/web-compat svg definitions', () => {
     assert.ok(Math.abs(middle.y - 91) < 0.5, JSON.stringify(middle));
   });
 
+  it("counts a text's characters, and measures a run of them as its whole is measured", async () => {
+    // Highcharts cuts a label short with an ellipsis by these, a character at a time.
+    await render(Clipped, { providers: [provideWebCompat()] });
+    await settle();
+    const title: Dom = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    title.setAttribute('font-size', '19.2');
+    title.setAttribute('font-weight', 'bold');
+    title.textContent = 'Where time goes';
+    document.querySelector('svg')!.append(title);
+    await settle();
+    assert.equal(title.getNumberOfChars(), 15);
+    const whole = title.getComputedTextLength();
+    assert.equal(title.getSubStringLength(0, 15), whole);
+    // Chrome's, on a Mac, where the font is the one iOS draws in.
+    assert.ok(Math.abs(whole / 153.64 - 1) < 0.01, `${whole} is not near 153.64`);
+    const [start, rest] = [title.getSubStringLength(0, 5), title.getSubStringLength(5, 10)];
+    assert.ok(start > 0 && start < whole && Math.abs(start + rest - whole) < 0.01);
+    // A run past the end is cut at the end, and one starting past it is no run at all.
+    assert.equal(title.getSubStringLength(10, 99), title.getSubStringLength(10, 5));
+    assert.throws(() => title.getSubStringLength(15, 1), { name: 'IndexSizeError' });
+  });
+
   it('measures each span of a text by its own font, and its lines by where they are set', async () => {
     // A Highcharts tooltip: a small first line, then a bullet, words and a bold value. Measured
     // all at the text's size and weight, the box was narrower and taller than its words.
@@ -868,6 +958,18 @@ describe('@ng-native/web-compat svg definitions', () => {
       );
     near(tip.getBBox(), [8, 8, 74.58, 28]);
     near(plain.getBBox(), [0, 21, 61.08, 23]);
+    // Its characters each in the font of the span they are in, a run of spaces as one.
+    assert.equal(plain.getNumberOfChars(), 9);
+    const whole = plain.getComputedTextLength();
+    assert.ok(Math.abs(plain.getSubStringLength(0, 9) - whole) < 0.01);
+    const big = plain.getSubStringLength(6, 3);
+    assert.ok(Math.abs(plain.getSubStringLength(0, 6) + big - whole) < 0.01);
+    assert.ok(big > plain.getSubStringLength(0, 3), 'bold at 20 is wider than plain at 12');
+    const spaced: Dom = document.createElementNS(SVG, 'text');
+    spaced.textContent = 'a   b';
+    drawing.append(spaced);
+    await settle();
+    assert.equal(spaced.getNumberOfChars(), 3);
   });
 
   it('anchors a text by the path it is set along, as a sunburst centres its labels on an arc', async () => {

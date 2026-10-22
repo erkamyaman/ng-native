@@ -311,6 +311,8 @@ export const DIRECT_EVENTS: ReadonlySet<string> = new Set([
   'topWillDisappear',
   'topDisappear',
   'topHeaderHeightChange',
+  // Sent on the screen whose arrow it is: one bubbling to the screen a stack sits in pops that too.
+  'topHeaderBackButtonClicked',
   'topTransitionProgress',
   'topFinishTransitioning',
   // The tabs host reports its own selection, and only the host it happened in wants to know.
@@ -451,6 +453,7 @@ const VIEW_EVENT_OPT_IN_PROPS: Record<string, Record<string, string>> = {
     topContentSizeChange: 'onContentSizeChange',
     topScroll: 'onScroll',
     topKeyPress: 'onKeyPress',
+    topSelectionChange: 'onSelectionChange',
   },
 };
 
@@ -618,6 +621,8 @@ export interface EngineNode extends HostNode {
    * on, or the root. Unset on every node that is not fixed.
    */
   fixedTo?: EngineNode;
+  /** Set by `markPage`: a `position: fixed` box inside this node is placed against it. */
+  page?: true;
   /**
    * Set once a child of this node has had an `order`: its children are then committed in that
    * order, which Yoga has no property for. Left set, since sorting children with none is nothing.
@@ -763,6 +768,8 @@ export interface EngineNode extends HostNode {
    * keeps it for the dismissal animation. See `Engine.withheld`.
    */
   presented?: true;
+  /** Committed and not to be seen or touched yet: see `Engine.hold`. */
+  held?: true;
   /** This node's own props changed. */
   propsDirty: boolean;
   /** This node's child list changed. */
@@ -864,6 +871,18 @@ export function declareNativeProps(elementName: string, props: Iterable<string>)
  */
 export function claimHost(node: HostNode): void {
   node.claimed = true;
+}
+
+/**
+ * Make a view the page of what is inside it: a `position: fixed` box there is placed against this
+ * view and not the screen, as it is against a screen of a stack, and follows it as it is given
+ * another size. For a layer that is the window to what it holds and need not be the size of the
+ * screen. Marked before anything fixed is put in it: it is for as long as the view is. Not for
+ * a view that scrolls its overflow: what is fixed in it is committed in what scrolls, and would
+ * scroll with it.
+ */
+export function markPage(node: EngineNode): void {
+  node.page = true;
 }
 
 /**
@@ -2394,8 +2413,18 @@ function sharesRow(node: EngineNode): boolean {
  * the flow is a share of a box it has no part in the width of, a focus ring over a chip.
  */
 function sharesWidth(node: EngineNode): boolean {
-  if (!isShare(readStyle(node, 'width')) && !isShare(readStyle(node, 'minWidth'))) return false;
-  return !OUT_OF_FLOW.has(readStyle(node, 'position') as string);
+  const share =
+    isShare(readStyle(node, 'width')) || isShare(readStyle(node, 'minWidth')) || basisOfRow(node);
+  return share && !OUT_OF_FLOW.has(readStyle(node, 'position') as string);
+}
+
+/**
+ * Whether a box's basis is a share of the row it is an item of, which is a share of its width
+ * as a percentage width is: a chip's cell, `flex-basis: 100%` in the chip.
+ */
+function basisOfRow(node: EngineNode): boolean {
+  const row = node.parent;
+  return row?.nodeKind === 'element' && isShare(readStyle(node, 'flexBasis')) && isRow(row);
 }
 
 /** A percentage: of the box a node is in, for a width or the least it may be. */
@@ -2471,11 +2500,15 @@ const sameEntries = (a: unknown, b: readonly unknown[]): boolean =>
 
 /**
  * Take off what is read here and is no style of a native view: `order`, by the container in
- * `inOrder`, and `justify-self`, by the block a box is in.
+ * `inOrder`, `justify-self`, by the block a box is in, `table-layout`, by what lays a table out,
+ * and the band a library's sheet clips a box to, by what draws an image through it. The band is
+ * `clipBand`: `clipPath` is the clip path a react-native-svg shape names, which reaches native.
  */
 function notNative(props: Record<string, unknown>): void {
   if (props['order'] !== undefined) delete props['order'];
   if (props['justifySelf'] !== undefined) delete props['justifySelf'];
+  if (props['tableLayout'] !== undefined) delete props['tableLayout'];
+  if (props['clipBand'] !== undefined) delete props['clipBand'];
 }
 
 /**
@@ -2782,9 +2815,16 @@ const SIZE_KEYS = new Set([
 ]);
 /**
  * What only the engine reads, whatever it is set to: no native view lays out by any of them, or
- * draws by `visibility` or a clip to nothing (`seenByCss`).
+ * draws by `visibility`, a clip to nothing (`seenByCss`) or a clip to a band (`notNative`).
  */
-const LAID_OUT_HERE = new Set([...GRID_KEYS, 'order', 'visibility', 'clipped']);
+const LAID_OUT_HERE = new Set([
+  ...GRID_KEYS,
+  'order',
+  'visibility',
+  'clipped',
+  'tableLayout',
+  'clipBand',
+]);
 const POSITIONS_HERE = new Set(['static', 'fixed', 'sticky']);
 
 /** What a declaration can ask of the engine that an app of plain flex does not: see `asks`. */
@@ -2840,11 +2880,11 @@ const SHARES_OF: Record<string, number> = {
   minWidth: SHARED_WIDTHS,
   height: SHARED_HEIGHTS,
   minHeight: SHARED_HEIGHTS,
-  flexBasis: SHARED_HEIGHTS,
+  // Of a column's height, or of a row's width: which, the box it is in says.
+  flexBasis: SHARED_HEIGHTS | SHARED_WIDTHS,
 };
 
-const heightShare = (key: string): number =>
-  SHARES_OF[key] === SHARED_HEIGHTS ? SHARED_HEIGHTS : 0;
+const heightShare = (key: string): number => (SHARES_OF[key] ?? 0) & SHARED_HEIGHTS;
 
 /** What a size asks for: a share of its box, an automatic minimum, or a keyword of CSS's. */
 function asksBySize(key: string, value: string): number {
@@ -3373,7 +3413,7 @@ function lineStrut(
   first: EngineNode,
   fontScale: number | undefined,
 ): LineStrut {
-  if (risenLine(container, first)) return RISEN;
+  if (risenLine(container, first) || emptyLine(container, first)) return RISEN;
   const under = underLine(container, first);
   const above = strutOf(inherited).above * textScale(inherited, fontScale);
   return { minHeight: Math.round((above + under) * 1000) / 1000, alignContent: 'flex-end' };
@@ -3426,6 +3466,59 @@ const risenLine = (container: EngineNode, first: EngineNode): boolean =>
   container.flow?.plan.lines.get(first)?.boxes.some((box) => container.flow?.rises?.has(box)) ===
   true;
 const RISEN: LineStrut = { minHeight: 0, alignContent: 'flex-start' };
+
+/** A block whose lines have nothing on them: no room is kept for any. */
+function nothingOnLines(flow: Flow): void {
+  flow.lifts = new Map();
+  flow.unders = new Map();
+  flow.rises = new Map();
+  flow.risen = true;
+  if (flow.plan.kind === 'lines') flow.under = 0;
+}
+
+/** A line among blocks with nothing on it: see `addsNothing`. */
+const emptyLine = (container: EngineNode, first: EngineNode): boolean =>
+  container.flow?.plan.lines.get(first)?.boxes.every(addsNothing) === true;
+
+/**
+ * Whether a box puts nothing on a line: an element a browser lays out inline that holds
+ * nothing, or only more such elements, with no size, padding, border or margin of its own. A
+ * line of nothing else has no height (CSS 2.2, 9.4.2): a component's empty host after a field,
+ * a datepicker's, which draws in an overlay, adds no strut under the field.
+ */
+function addsNothing(node: EngineNode): boolean {
+  if (!node.inlineLevel) return false;
+  // A display of its own, an inline-block written in a sheet, is a box on the line however
+  // empty: only the one the engine gives an inline element is not.
+  if (ownStyle(node, 'display') != null) return false;
+  // Nothing in it but more of the same, and text of no length.
+  for (const child of node.childList) {
+    if (child.nodeKind === 'text' ? child.nodeText !== '' : !emptyOrNotABox(child)) return false;
+  }
+  return BOX_KEYS.every((key) => {
+    const value = readStyle(node, key);
+    return value == null || value === 0 || value === 'auto';
+  });
+}
+
+/** Whether a node in an inline element adds nothing to its line: see `addsNothing`. */
+const emptyOrNotABox = (node: EngineNode): boolean =>
+  node.nodeKind !== 'element' || addsNothing(node);
+
+/** What gives a box a size on a line, whatever it holds. */
+const BOX_KEYS = [
+  ...['width', 'height', 'minWidth', 'minHeight', 'flexBasis', 'aspectRatio'],
+  ...['padding', 'paddingHorizontal', 'paddingVertical', 'paddingTop', 'paddingBottom'],
+  ...['paddingLeft', 'paddingRight', 'paddingStart', 'paddingEnd'],
+  ...['margin', 'marginHorizontal', 'marginVertical', 'marginTop', 'marginBottom'],
+  ...['marginLeft', 'marginRight', 'marginStart', 'marginEnd'],
+  ...['borderWidth', 'borderTopWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderRightWidth'],
+  ...['borderStartWidth', 'borderEndWidth'],
+  ...['paddingBlock', 'paddingBlockStart', 'paddingBlockEnd'],
+  ...['paddingInline', 'paddingInlineStart', 'paddingInlineEnd'],
+  ...['marginBlock', 'marginBlockStart', 'marginBlockEnd'],
+  ...['marginInline', 'marginInlineStart', 'marginInlineEnd'],
+];
 
 /** The room under the baseline of a line among blocks, by its first box. */
 const underLine = (container: EngineNode, first: EngineNode): number =>
@@ -3782,7 +3875,11 @@ function strutted(node: EngineNode, props: Record<string, unknown>): boolean {
   // Between two insets an out-of-flow box is as tall as they leave it.
   const held =
     OUT_OF_FLOW.has(props['position'] as string) && isSet(props['top']) && isSet(props['bottom']);
-  return !tall && !held && !holdsText(node);
+  if (tall || held || holdsText(node)) return false;
+  // No line at all, in a block that holds nothing, or lines with nothing on them: see
+  // `addsNothing`.
+  const boxes = node.childList.filter((child) => child.nodeKind === 'element');
+  return !boxes.every(addsNothing);
 }
 
 /**
@@ -3833,6 +3930,11 @@ function styleKey(value: unknown, key: string): unknown {
 
 /** What a node's own style says for `key`, as `ownLayout` answers it, without an allocation. */
 function readStyle(node: EngineNode, key: string): unknown {
+  return ownStyle(node, key) ?? node.defaultStyle?.[key];
+}
+
+/** The same, without the default an element is given for its name or by the engine. */
+function ownStyle(node: EngineNode, key: string): unknown {
   const props = node.props;
   // Asked of most nodes more than once a commit, and most have neither of the first two.
   const over = props[STYLE_OVERRIDE];
@@ -3847,8 +3949,7 @@ function readStyle(node: EngineNode, key: string): unknown {
         ? (inline as Record<string, unknown>)[key]
         : styleKey(inline, key)) ??
     props[key] ??
-    node.styleCache?.style[key] ??
-    node.defaultStyle?.[key]
+    node.styleCache?.style[key]
   );
 }
 
@@ -4996,6 +5097,16 @@ const oneRun = (child: EngineNode): boolean =>
   child.nodeKind === 'text' || (child.nodeKind === 'element' && TEXT_ELEMENTS.has(child.tag));
 
 /**
+ * The node whose view native has a node's view in, through a line box it is committed in, or
+ * the node it is in where it is not committed.
+ */
+function drawnIn(node: EngineNode): EngineNode | null {
+  const under = node.committedUnder;
+  if (!under) return node.parent;
+  return 'nodeKind' in under ? under : under.in;
+}
+
+/**
  * The view a node is committed as: `viewNameOf`, but for a text element that aligns its text, and
  * for the content view of a horizontal scroll view on Android, which RN commits as a view of its
  * own. That one is a plain view in every other respect, so only the commit names it: a scroll
@@ -5191,6 +5302,10 @@ function laidByNative(node: EngineNode, key: string): boolean {
   if (eased?.laid && !eased.done) return true;
   return node.playing?.laid === true && node.playing.tracks.has(key);
 }
+
+/** Whether an animation stays at its last frame once it has ended: by its fill, or held there. */
+const fillsForwards = (running: RunningAnimation): boolean =>
+  running.held === true || running.spec.fill === 'forwards' || running.spec.fill === 'both';
 
 /** Whether an animation plays once through, forwards, with no wait before it. */
 const playedOnce = (spec: AnimationSpec): boolean =>
@@ -5692,6 +5807,7 @@ const ENGINE_NODE_FIELDS = {
   resolved: true,
   sticky: true,
   fixedTo: true,
+  page: true,
   ordered: true,
   fit: true,
   fitMin: true,
@@ -5735,6 +5851,7 @@ const ENGINE_NODE_FIELDS = {
   oneWord: true,
   raised: true,
   presented: true,
+  held: true,
   propsDirty: true,
   structureDirty: true,
   subtreeDirty: true,
@@ -6511,7 +6628,8 @@ export class Engine implements HostEngine {
   private readonly styles: StyleResolver;
   /** Whether to run the development checks, which a release build skips. */
   readonly dev: boolean;
-  private readonly now: () => number;
+  /** The clock transitions and animations run on, which a script reads where one has got to. */
+  readonly now: () => number;
   private onDirty: (() => void) | undefined;
   private onError: ((error: unknown, topLevelType: string) => void) | undefined;
   /** Nodes with at least one transition in flight, so a frame walks those and nothing else. */
@@ -7064,6 +7182,32 @@ export class Engine implements HostEngine {
     return node;
   }
 
+  /**
+   * Commit a node without it being seen or touched, or let it be again. A browser paints nothing
+   * until a task and its animation frame are over, and native draws each commit as it comes: what
+   * a library inserts, measures and only then styles is held for the frame between. Over every
+   * opacity and `pointerEvents` it has, an eased one included, which it is committed with again
+   * once let go. Nothing it matches changes, so nothing is styled again.
+   */
+  hold(node: EngineNode, held: boolean): void {
+    if ((node.held === true) === held) return;
+    if (held) node.held = true;
+    else delete node.held;
+    this.markProps(node, false);
+  }
+
+  /**
+   * Stop showing the last frame of a node's finished `@keyframes` animation, where nothing holds
+   * it there any more: script took its hold away after it ended. The node is what the cascade
+   * gives it again with the next commit.
+   */
+  releaseFinished(node: EngineNode): void {
+    const running = node.playing;
+    if (!running?.done || fillsForwards(running)) return;
+    running.values = {};
+    this.markProps(node, false);
+  }
+
   addClass(node: EngineNode, name: string): void {
     const was = this.classAttribute(node);
     (node.classes ??= new Set()).add(name);
@@ -7379,6 +7523,8 @@ export class Engine implements HostEngine {
     const at = target.childList.indexOf(child);
     if (at < 0) return;
     this.carryHoists(child);
+    if (this.holdsMoves) this.holdMove(target, child, at);
+    if (this.heldMoves.size) this.releaseHeldUnder(child);
     target.childList.splice(at, 1);
     child.parent = null;
     this.outSince.set(child, this.classesAbove);
@@ -7531,6 +7677,8 @@ export class Engine implements HostEngine {
   /** Forget the committed views of each node removed since the last commit that is still out. */
   private forgetDetached(): void {
     for (const node of this.removedSinceCommit) {
+      // One a finger is on goes once the finger lifts: see `holdMove`.
+      if (this.heldMoves.has(node)) continue;
       if (node.committed && this.topOf(node) !== this.root) this.forgetCommitted(node);
     }
     this.removedSinceCommit.clear();
@@ -7556,6 +7704,8 @@ export class Engine implements HostEngine {
     // an `@if` is, and its children's views would then be handed to the view it is made again
     // as. Native gives a view one parent for its life, and aborts on a second.
     if (node.committed) this.forgetCommitted(node);
+    // Destroyed, it is held no longer: it is gone from native with its parent's next commit.
+    this.heldMoves.delete(node);
     this.stopEased(node);
     node.transitions = undefined;
     if (node.playing) this.stopNative(node, node.playing);
@@ -8369,6 +8519,7 @@ export class Engine implements HostEngine {
     this.placesMarked.clear();
     this.placesMarkedAfter.clear();
     if (!this.root.structureDirty && !this.root.subtreeDirty) return false;
+    if (this.heldMoves.size) this.markHolders();
 
     const started = now();
     // Faces registered before the walk, the global sheet's among them, reach every node in it.
@@ -8846,6 +8997,108 @@ export class Engine implements HostEngine {
   /** Boxes that became fixed or absolute with the finger on them, left under their parents. */
   private readonly fixedUnderFinger = new Set<EngineNode>();
 
+  /** Whether a node moved with a finger on it waits for the finger to lift: `holdMovesUnderFinger`. */
+  private holdsMoves = false;
+  /**
+   * The nodes taken out of the parent they are committed under with a finger on them, each with
+   * that parent and the element that came after it there, which it stays before.
+   */
+  private readonly heldMoves = new Map<
+    EngineNode,
+    { readonly under: EngineNode; readonly before: EngineNode | null }
+  >();
+
+  /**
+   * Have a node that is moved to another parent, or taken out, while the first finger down is on
+   * it or on something in it stay committed where it was until the last finger lifts, and then
+   * go where it is. A native view moved to another parent is a view made again, which loses the
+   * touch on it: a web library that drags an element moves it as the drag begins, out of its list
+   * and on to the body, and its drag stopped there. The tree is moved at once, so what reads it
+   * finds the node where it was put, and only what native is told waits. Off, what is held goes
+   * where it is with the next commit.
+   */
+  holdMovesUnderFinger(on: boolean): void {
+    this.holdsMoves = on;
+    if (!on && this.heldMoves.size) this.releaseMoves();
+  }
+
+  /** A node is taken out of `parent` from `at`: held there, where a finger is on it. */
+  private holdMove(parent: EngineNode, child: EngineNode, at: number): void {
+    if (this.heldMoves.has(child) || child.committed === null) return;
+    // Under the root it is one of the root's handles, which hold no node from elsewhere.
+    if (child.committedUnder !== parent || parent === this.root) return;
+    if (!isWithin(this.fingerOn, child)) return;
+    const before = parent.childList.slice(at + 1).find((next) => next.nodeKind === 'element');
+    this.heldMoves.set(child, { under: parent, before: before ?? null });
+  }
+
+  /** Whether a node is held under a parent other than the one it is in now. */
+  private heldElsewhere(child: EngineNode): boolean {
+    const held = this.heldMoves.get(child);
+    return held !== undefined && held.under !== child.parent;
+  }
+
+  /**
+   * Add to a node's child handles each node held under it that has gone from it, before the
+   * element it came before where that is still there: reconciled where it is in the tree, so it
+   * is drawn as it is styled, and as it was last committed once it is out of the tree.
+   */
+  private heldHandles(node: EngineNode, handles: FabricNode[]): void {
+    for (const [child, held] of this.heldMoves) {
+      if (held.under !== node || child.parent === node) continue;
+      const handle = child.parent ? this.reconcileUnder(node, child) : child.committed?.handle;
+      if (!handle) continue;
+      const next = held.before?.committedUnder === node ? held.before.committed : null;
+      const at = next ? handles.indexOf(next.handle) : -1;
+      if (at < 0) handles.push(handle);
+      else handles.splice(at, 0, handle);
+    }
+  }
+
+  /**
+   * Have each parent a node is held under committed with its children again: a change to the node
+   * marks the way up from where it is in the tree, and not from where it is committed.
+   */
+  private markHolders(): void {
+    for (const { under } of this.heldMoves.values()) {
+      for (let at: EngineNode | null = under; at && !at.subtreeDirty; at = at.parent) {
+        at.subtreeDirty = true;
+      }
+    }
+  }
+
+  /**
+   * A node is taken out of the page: each node held under it, or under what it holds, is let go,
+   * as there is nowhere left to draw it where it was. One moved elsewhere is drawn there.
+   */
+  private releaseHeldUnder(removed: EngineNode): void {
+    for (const [node, { under }] of [...this.heldMoves]) {
+      if (node === removed || !isWithin(under, removed)) continue;
+      this.heldMoves.delete(node);
+      if (node.parent) {
+        node.parent.structureDirty = true;
+        this.markPath(node.parent);
+      } else this.removedSinceCommit.add(node);
+    }
+  }
+
+  /** The last finger is up: each node held goes where it is with the next commit. */
+  private releaseMoves(): void {
+    const held = [...this.heldMoves];
+    this.heldMoves.clear();
+    for (const [node, { under }] of held) {
+      under.structureDirty = true;
+      this.markPath(under);
+      if (node.parent) {
+        node.parent.structureDirty = true;
+        this.markPath(node.parent);
+      } else {
+        // Out of the tree, it is let go of as any node taken out is: see `forgetDetached`.
+        this.removedSinceCommit.add(node);
+      }
+    }
+  }
+
   /** Note what a finger comes down on, and once the last has lifted move what waited for it. */
   private trackFinger(target: EngineNode | null, type: string, nativeEvent: unknown): void {
     const fingers = (nativeEvent as { touches?: readonly unknown[] } | null)?.touches?.length ?? 0;
@@ -8853,6 +9106,7 @@ export class Engine implements HostEngine {
     if (type === TOUCH_START && fingers <= 1) this.fingerOn = target;
     if ((type !== 'topTouchEnd' && type !== 'topTouchCancel') || fingers > 0) return;
     this.fingerOn = null;
+    if (this.heldMoves.size) this.releaseMoves();
     for (const node of this.fixedUnderFinger) {
       if (!isWithin(node, this.root)) continue;
       this.refix(node, readStyle(node, 'position'));
@@ -8864,7 +9118,7 @@ export class Engine implements HostEngine {
   /** The page a box is on: the nearest view that holds one, or the root. */
   private pageOf(node: EngineNode): EngineNode | null {
     let page = node.parent;
-    while (page?.parent && !FIXED_BOUNDARIES.has(viewNameOf(page))) {
+    while (page?.parent && !page.page && !FIXED_BOUNDARIES.has(viewNameOf(page))) {
       page = page.parent;
     }
     return page;
@@ -9650,7 +9904,8 @@ export class Engine implements HostEngine {
 
   /**
    * The boxes inside `node` that Yoga sizes from the room on offer and not from their content:
-   * one with a percentage width, and one that takes a share of a row from a basis of nothing.
+   * one with a percentage width or a percentage basis in a row, and one that takes a share of a
+   * row from a basis of nothing.
    * Nothing under a box with a width of its own in points is looked at: that width is its
    * content's room whatever it holds.
    */
@@ -9659,8 +9914,11 @@ export class Engine implements HostEngine {
     for (const child of node.childList) {
       if (child.nodeKind !== 'element') continue;
       const width = readStyle(child, 'width');
+      const basis = readStyle(child, 'flexBasis');
       const shares =
-        typeof readStyle(child, 'flex') === 'number' || isNoBasis(readStyle(child, 'flexBasis'));
+        typeof readStyle(child, 'flex') === 'number' ||
+        isNoBasis(basis) ||
+        (isShare(basis) && isRow(node));
       if (typeof width === 'string' || shares || isShare(readStyle(child, 'minWidth'))) {
         found.push(child);
       }
@@ -10903,8 +11161,12 @@ export class Engine implements HostEngine {
    * return fresh objects, so diffing their output would re-send every image and shadow on every
    * unrelated change.
    */
-  /** What a touch on an element that keeps a drag holds off, while it lasts: see `holdSwipe`. */
+  /**
+   * What a touch on an element that keeps a drag holds off, while it lasts (see `holdSwipe`), and
+   * a node held unseen (see `hold`).
+   */
   private heldFor(node: EngineNode, merged: Record<string, unknown>): void {
+    if (node.held) Object.assign(merged, UNSEEN);
     if (node === this.swipeHeld) merged['gestureResponseDistance'] = NO_SWIPE;
     if (this.scrollHeld.size && this.scrollHeld.has(node)) merged['scrollEnabled'] = false;
   }
@@ -11154,11 +11416,17 @@ export class Engine implements HostEngine {
    * an element is not seen here until the inline form compiles to one.
    */
   private liftLines(node: EngineNode, flow: Flow): void {
-    const runs =
+    const all =
       flow.plan.kind === 'lines'
         ? [this.onLines(node)]
         : [...flow.plan.lines.values()].map((line) => line.boxes);
-    if (!runs.some((boxes) => boxes.length)) return;
+    // A line with nothing on it has no height, and its boxes are given no room: see
+    // `addsNothing`.
+    const runs = all.filter((boxes) => !boxes.every(addsNothing));
+    if (!runs.length) {
+      if (all.some((boxes) => boxes.length)) nothingOnLines(flow);
+      return;
+    }
     const below = this.strutBelow(node);
     const lifts = new Map<EngineNode, number>();
     const unders = new Map<EngineNode, number>();
@@ -11983,8 +12251,7 @@ export class Engine implements HostEngine {
     // One native was laying out goes on from JavaScript, by the clock it started on.
     const reframed: RunningAnimation = { ...current, tracks, inherited, laid: undefined };
     const { values, finished } = sample(reframed, current.pausedAt ?? this.now());
-    const holds = current.spec.fill === 'forwards' || current.spec.fill === 'both';
-    reframed.values = finished && !holds ? {} : values;
+    reframed.values = finished && !fillsForwards(current) ? {} : values;
     this.playedFrames.set(reframed, frames);
     node.playing = reframed;
     // One that had nothing to paint was let go of: with frames that say something it plays on.
@@ -12689,13 +12956,13 @@ export class Engine implements HostEngine {
   }
 
   /**
-   * Whether an animation that has finished goes on holding its last frame. With a forwards fill
-   * it does, for good: without one the element falls back to whatever the cascade gives it, and
-   * 'backwards' fills the start only. Heard, it holds until whoever listens has been told: see
-   * `lettingGo`.
+   * Whether an animation that has finished goes on holding its last frame. With a forwards fill,
+   * or held there by script, it does, for good: without one the element falls back to whatever
+   * the cascade gives it, and 'backwards' fills the start only. Heard, it holds until whoever
+   * listens has been told: see `lettingGo`.
    */
   private keeps(node: EngineNode, running: RunningAnimation): boolean {
-    if (running.spec.fill === 'forwards' || running.spec.fill === 'both') return true;
+    if (fillsForwards(running)) return true;
     // One that listened and has stopped takes its set with it: nobody to hear it.
     if (!node.listeners?.has('topAnimationend')) return false;
     this.lettingGo.add(node);
@@ -12974,6 +13241,7 @@ export class Engine implements HostEngine {
     this.noteBaselineFields(node);
     this.freshBaselines(node);
     const childHandles = this.reconcileChildren(node, viewName, style);
+    if (this.heldMoves.size) this.heldHandles(node, childHandles);
     if (this.fixedIn.size) this.fixedHandles(node, childHandles);
     this.raise(node, viewName);
     noteTouches(node, style);
@@ -13510,6 +13778,8 @@ export class Engine implements HostEngine {
    * when it is shown again, as Modal.js creates it afresh. Committed again, it ignores every touch.
    */
   private withheld(child: EngineNode): boolean {
+    // Moved with a finger on it, it is committed where it was: see `heldHandles`.
+    if (this.heldMoves.size && this.heldElsewhere(child)) return true;
     // A box drawn and then hidden is `display: none`, as any element is.
     if (this.generated !== null && isGenerated(child.tag)) {
       return this.undrawn(child) || this.undisplayed(child);
@@ -14188,6 +14458,16 @@ export class Engine implements HostEngine {
     return this.focusedNode;
   }
 
+  get focusedField(): EngineNode | null {
+    const node = this.focused;
+    return node && TEXT_INPUTS.has(viewNameOf(node)) ? node : null;
+  }
+
+  blurFocused(): void {
+    const field = this.focusedField;
+    if (field) this.dispatchCommand(field, 'blur');
+  }
+
   /** Whether a node is still part of the tree, rather than in a subtree that was removed. */
   private isAttached(node: EngineNode): boolean {
     let current: EngineNode | null = node;
@@ -14530,10 +14810,16 @@ export class Engine implements HostEngine {
    * Stop every scroll view a node is in from scrolling, until the touch ends: one held off hands
    * the drag to the one around it. Telling native who holds the touch does this on Android. On
    * iOS a scroll view is held off only by a responder that is over it, never one inside it, so
-   * each is told not to scroll.
+   * each is told not to scroll. The scroll views are the ones native has the node's view in,
+   * which is where the finger is: an element moved with a finger on it stays there until the
+   * finger lifts (see `holdMove`), and CDK's drag and drop moves the item it drags to the body in
+   * the move whose default it prevents.
    */
   private holdScroll(node: EngineNode): void {
-    for (let up = node.parent; up; up = up.parent) {
+    // Each once: a view's parent native has it in and one it is in since are both followed.
+    const seen = new Set<EngineNode>();
+    for (let up = drawnIn(node); up && !seen.has(up); up = drawnIn(up)) {
+      seen.add(up);
       if (up.nodeKind !== 'element' || !SCROLL_VIEWS.has(committedViewName(up))) continue;
       this.scrollHeld.add(up);
       this.tellScreen(up);

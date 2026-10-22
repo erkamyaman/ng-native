@@ -314,6 +314,7 @@
     "expo-foldables": "^0.1.0",
     "expo-font": "^57.0.0 || ^58.0.0",
     "expo-haptics": "^57.0.0 || ^58.0.0",
+    "expo-hinge": "^58.0.0",
     "expo-image-manipulator": "^57.0.0 || ^58.0.0",
     "expo-image-picker": "^57.0.0 || ^58.0.0",
     "expo-keep-awake": "^57.0.0 || ^58.0.0",
@@ -438,6 +439,9 @@
       "optional": true
     },
     "expo-haptics": {
+      "optional": true
+    },
+    "expo-hinge": {
       "optional": true
     },
     "expo-image-manipulator": {
