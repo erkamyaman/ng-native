@@ -17,9 +17,12 @@
  */
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
-import { Injector } from '@angular/core';
+import { Injector, type ProviderToken, ɵINJECTOR_SCOPE as INJECTOR_SCOPE } from '@angular/core';
+import { registerPlatformComponents } from '@ng-native/fabric';
 import {
   ColorScheme,
+  OS,
+  OS_VERSION,
   StatusBar,
   androidPermission,
   hardwareBackSource,
@@ -1009,5 +1012,50 @@ describe('the window a status bar claims', () => {
     };
     withNative(native, () => onWindowFront(() => {}))();
     assert.equal(listened, false);
+  });
+});
+
+describe('the OS and its version', () => {
+  /*
+   * What a service gates a feature on, and what each reads by default: the factories rather than
+   * a provider, from a root injector with nothing provided.
+   */
+  const fromRoot = <T>(token: ProviderToken<T>) =>
+    Injector.create({ providers: [{ provide: INJECTOR_SCOPE, useValue: 'root' }] }).get(token);
+
+  it('is iOS and its major version on iOS', () => {
+    const native = { Platform: { OS: 'ios', Version: '26.5' } };
+    assert.equal(
+      withNative(native, () => fromRoot(OS)),
+      'ios',
+    );
+    assert.equal(
+      withNative(native, () => fromRoot(OS_VERSION)),
+      26,
+    );
+  });
+
+  it('is Android and its API level on Android, whatever platform the engine was told', () => {
+    // The engine's platform is still iOS here: `Platform.OS` is what the device says it is.
+    const native = { Platform: { OS: 'android', Version: 35 } };
+    assert.equal(
+      withNative(native, () => fromRoot(OS)),
+      'android',
+    );
+    assert.equal(
+      withNative(native, () => fromRoot(OS_VERSION)),
+      35,
+    );
+  });
+
+  it('follows the platform the engine renders as off a device, with no version', () => {
+    assert.equal(fromRoot(OS), 'ios');
+    assert.equal(fromRoot(OS_VERSION), null);
+    registerPlatformComponents('android');
+    try {
+      assert.equal(fromRoot(OS), 'android');
+    } finally {
+      registerPlatformComponents('ios');
+    }
   });
 });

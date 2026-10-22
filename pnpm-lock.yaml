@@ -1974,6 +1974,9 @@ importers:
       '@ng-native/components':
         specifier: workspace:*
         version: link:../components
+      '@ng-native/device':
+        specifier: workspace:*
+        version: link:../device
       '@ng-native/router':
         specifier: workspace:*
         version: link:../router
