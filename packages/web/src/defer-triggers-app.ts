@@ -21,6 +21,7 @@ import { Pressable, Text, View } from '@ng-native/components';
       <view id="hover-target"><text>hover waiting</text></view>
     }
 
+    <view [style]="{ height: 3000 }"></view>
     @defer (on viewport) {
       <text>viewport loaded</text>
     } @placeholder {

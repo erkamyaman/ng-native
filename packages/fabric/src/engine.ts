@@ -311,6 +311,8 @@ export const DIRECT_EVENTS: ReadonlySet<string> = new Set([
   'topWillDisappear',
   'topDisappear',
   'topHeaderHeightChange',
+  // Sent on the screen whose arrow it is: one bubbling to the screen a stack sits in pops that too.
+  'topHeaderBackButtonClicked',
   'topTransitionProgress',
   'topFinishTransitioning',
   // The tabs host reports its own selection, and only the host it happened in wants to know.
@@ -451,6 +453,7 @@ const VIEW_EVENT_OPT_IN_PROPS: Record<string, Record<string, string>> = {
     topContentSizeChange: 'onContentSizeChange',
     topScroll: 'onScroll',
     topKeyPress: 'onKeyPress',
+    topSelectionChange: 'onSelectionChange',
   },
 };
 
@@ -2394,8 +2397,18 @@ function sharesRow(node: EngineNode): boolean {
  * the flow is a share of a box it has no part in the width of, a focus ring over a chip.
  */
 function sharesWidth(node: EngineNode): boolean {
-  if (!isShare(readStyle(node, 'width')) && !isShare(readStyle(node, 'minWidth'))) return false;
-  return !OUT_OF_FLOW.has(readStyle(node, 'position') as string);
+  const share =
+    isShare(readStyle(node, 'width')) || isShare(readStyle(node, 'minWidth')) || basisOfRow(node);
+  return share && !OUT_OF_FLOW.has(readStyle(node, 'position') as string);
+}
+
+/**
+ * Whether a box's basis is a share of the row it is an item of, which is a share of its width
+ * as a percentage width is: a chip's cell, `flex-basis: 100%` in the chip.
+ */
+function basisOfRow(node: EngineNode): boolean {
+  const row = node.parent;
+  return row?.nodeKind === 'element' && isShare(readStyle(node, 'flexBasis')) && isRow(row);
 }
 
 /** A percentage: of the box a node is in, for a width or the least it may be. */
@@ -2840,11 +2853,11 @@ const SHARES_OF: Record<string, number> = {
   minWidth: SHARED_WIDTHS,
   height: SHARED_HEIGHTS,
   minHeight: SHARED_HEIGHTS,
-  flexBasis: SHARED_HEIGHTS,
+  // Of a column's height, or of a row's width: which, the box it is in says.
+  flexBasis: SHARED_HEIGHTS | SHARED_WIDTHS,
 };
 
-const heightShare = (key: string): number =>
-  SHARES_OF[key] === SHARED_HEIGHTS ? SHARED_HEIGHTS : 0;
+const heightShare = (key: string): number => (SHARES_OF[key] ?? 0) & SHARED_HEIGHTS;
 
 /** What a size asks for: a share of its box, an automatic minimum, or a keyword of CSS's. */
 function asksBySize(key: string, value: string): number {
@@ -3373,7 +3386,7 @@ function lineStrut(
   first: EngineNode,
   fontScale: number | undefined,
 ): LineStrut {
-  if (risenLine(container, first)) return RISEN;
+  if (risenLine(container, first) || emptyLine(container, first)) return RISEN;
   const under = underLine(container, first);
   const above = strutOf(inherited).above * textScale(inherited, fontScale);
   return { minHeight: Math.round((above + under) * 1000) / 1000, alignContent: 'flex-end' };
@@ -3426,6 +3439,59 @@ const risenLine = (container: EngineNode, first: EngineNode): boolean =>
   container.flow?.plan.lines.get(first)?.boxes.some((box) => container.flow?.rises?.has(box)) ===
   true;
 const RISEN: LineStrut = { minHeight: 0, alignContent: 'flex-start' };
+
+/** A block whose lines have nothing on them: no room is kept for any. */
+function nothingOnLines(flow: Flow): void {
+  flow.lifts = new Map();
+  flow.unders = new Map();
+  flow.rises = new Map();
+  flow.risen = true;
+  if (flow.plan.kind === 'lines') flow.under = 0;
+}
+
+/** A line among blocks with nothing on it: see `addsNothing`. */
+const emptyLine = (container: EngineNode, first: EngineNode): boolean =>
+  container.flow?.plan.lines.get(first)?.boxes.every(addsNothing) === true;
+
+/**
+ * Whether a box puts nothing on a line: an element a browser lays out inline that holds
+ * nothing, or only more such elements, with no size, padding, border or margin of its own. A
+ * line of nothing else has no height (CSS 2.2, 9.4.2): a component's empty host after a field,
+ * a datepicker's, which draws in an overlay, adds no strut under the field.
+ */
+function addsNothing(node: EngineNode): boolean {
+  if (!node.inlineLevel) return false;
+  // A display of its own, an inline-block written in a sheet, is a box on the line however
+  // empty: only the one the engine gives an inline element is not.
+  if (ownStyle(node, 'display') != null) return false;
+  // Nothing in it but more of the same, and text of no length.
+  for (const child of node.childList) {
+    if (child.nodeKind === 'text' ? child.nodeText !== '' : !emptyOrNotABox(child)) return false;
+  }
+  return BOX_KEYS.every((key) => {
+    const value = readStyle(node, key);
+    return value == null || value === 0 || value === 'auto';
+  });
+}
+
+/** Whether a node in an inline element adds nothing to its line: see `addsNothing`. */
+const emptyOrNotABox = (node: EngineNode): boolean =>
+  node.nodeKind !== 'element' || addsNothing(node);
+
+/** What gives a box a size on a line, whatever it holds. */
+const BOX_KEYS = [
+  ...['width', 'height', 'minWidth', 'minHeight', 'flexBasis', 'aspectRatio'],
+  ...['padding', 'paddingHorizontal', 'paddingVertical', 'paddingTop', 'paddingBottom'],
+  ...['paddingLeft', 'paddingRight', 'paddingStart', 'paddingEnd'],
+  ...['margin', 'marginHorizontal', 'marginVertical', 'marginTop', 'marginBottom'],
+  ...['marginLeft', 'marginRight', 'marginStart', 'marginEnd'],
+  ...['borderWidth', 'borderTopWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderRightWidth'],
+  ...['borderStartWidth', 'borderEndWidth'],
+  ...['paddingBlock', 'paddingBlockStart', 'paddingBlockEnd'],
+  ...['paddingInline', 'paddingInlineStart', 'paddingInlineEnd'],
+  ...['marginBlock', 'marginBlockStart', 'marginBlockEnd'],
+  ...['marginInline', 'marginInlineStart', 'marginInlineEnd'],
+];
 
 /** The room under the baseline of a line among blocks, by its first box. */
 const underLine = (container: EngineNode, first: EngineNode): number =>
@@ -3782,7 +3848,11 @@ function strutted(node: EngineNode, props: Record<string, unknown>): boolean {
   // Between two insets an out-of-flow box is as tall as they leave it.
   const held =
     OUT_OF_FLOW.has(props['position'] as string) && isSet(props['top']) && isSet(props['bottom']);
-  return !tall && !held && !holdsText(node);
+  if (tall || held || holdsText(node)) return false;
+  // No line at all, in a block that holds nothing, or lines with nothing on them: see
+  // `addsNothing`.
+  const boxes = node.childList.filter((child) => child.nodeKind === 'element');
+  return !boxes.every(addsNothing);
 }
 
 /**
@@ -3833,6 +3903,11 @@ function styleKey(value: unknown, key: string): unknown {
 
 /** What a node's own style says for `key`, as `ownLayout` answers it, without an allocation. */
 function readStyle(node: EngineNode, key: string): unknown {
+  return ownStyle(node, key) ?? node.defaultStyle?.[key];
+}
+
+/** The same, without the default an element is given for its name or by the engine. */
+function ownStyle(node: EngineNode, key: string): unknown {
   const props = node.props;
   // Asked of most nodes more than once a commit, and most have neither of the first two.
   const over = props[STYLE_OVERRIDE];
@@ -3847,8 +3922,7 @@ function readStyle(node: EngineNode, key: string): unknown {
         ? (inline as Record<string, unknown>)[key]
         : styleKey(inline, key)) ??
     props[key] ??
-    node.styleCache?.style[key] ??
-    node.defaultStyle?.[key]
+    node.styleCache?.style[key]
   );
 }
 
@@ -9650,7 +9724,8 @@ export class Engine implements HostEngine {
 
   /**
    * The boxes inside `node` that Yoga sizes from the room on offer and not from their content:
-   * one with a percentage width, and one that takes a share of a row from a basis of nothing.
+   * one with a percentage width or a percentage basis in a row, and one that takes a share of a
+   * row from a basis of nothing.
    * Nothing under a box with a width of its own in points is looked at: that width is its
    * content's room whatever it holds.
    */
@@ -9659,8 +9734,11 @@ export class Engine implements HostEngine {
     for (const child of node.childList) {
       if (child.nodeKind !== 'element') continue;
       const width = readStyle(child, 'width');
+      const basis = readStyle(child, 'flexBasis');
       const shares =
-        typeof readStyle(child, 'flex') === 'number' || isNoBasis(readStyle(child, 'flexBasis'));
+        typeof readStyle(child, 'flex') === 'number' ||
+        isNoBasis(basis) ||
+        (isShare(basis) && isRow(node));
       if (typeof width === 'string' || shares || isShare(readStyle(child, 'minWidth'))) {
         found.push(child);
       }
@@ -11154,11 +11232,17 @@ export class Engine implements HostEngine {
    * an element is not seen here until the inline form compiles to one.
    */
   private liftLines(node: EngineNode, flow: Flow): void {
-    const runs =
+    const all =
       flow.plan.kind === 'lines'
         ? [this.onLines(node)]
         : [...flow.plan.lines.values()].map((line) => line.boxes);
-    if (!runs.some((boxes) => boxes.length)) return;
+    // A line with nothing on it has no height, and its boxes are given no room: see
+    // `addsNothing`.
+    const runs = all.filter((boxes) => !boxes.every(addsNothing));
+    if (!runs.length) {
+      if (all.some((boxes) => boxes.length)) nothingOnLines(flow);
+      return;
+    }
     const below = this.strutBelow(node);
     const lifts = new Map<EngineNode, number>();
     const unders = new Map<EngineNode, number>();
@@ -14186,6 +14270,16 @@ export class Engine implements HostEngine {
   get focused(): EngineNode | null {
     if (this.focusedNode && !this.isAttached(this.focusedNode)) this.dropFocus();
     return this.focusedNode;
+  }
+
+  get focusedField(): EngineNode | null {
+    const node = this.focused;
+    return node && TEXT_INPUTS.has(viewNameOf(node)) ? node : null;
+  }
+
+  blurFocused(): void {
+    const field = this.focusedField;
+    if (field) this.dispatchCommand(field, 'blur');
   }
 
   /** Whether a node is still part of the tree, rather than in a subtree that was removed. */

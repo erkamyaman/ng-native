@@ -88,7 +88,8 @@ const NONE: StatusBarSource = {
 /** One per React Native, so every app the runtime mounts claims the same bar. */
 export function statusBarSource(): StatusBarSource {
   const native = reactNative();
-  if (!native) return NONE;
+  // A copy: with no bar to share, each app claims its own.
+  if (!native) return { ...NONE };
   return sharedBySource(statusBarSource, native, () => nativeSource(native));
 }
 

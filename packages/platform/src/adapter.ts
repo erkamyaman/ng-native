@@ -54,6 +54,7 @@ import {
 } from '@ng-native/fabric';
 import { calmLoadingBanner, type LoadingBanner } from './dev-loading-view.ts';
 import { installHotEpoch } from './hot-epoch.ts';
+import { onSurfaceStop } from './surface-stop.ts';
 
 /**
  * Angular `(touchEnd)` -> Fabric `topTouchEnd`.
@@ -1248,6 +1249,19 @@ export function mount(
   for (const [name, value] of Object.entries(inputs)) componentRef.setInput(name, value);
 
   const applicationRef = injector.get(ApplicationRef);
+  // The app goes with the surface it is on, which Fabric stops when, among others, Android
+  // recreates the activity: see `surface-stop.ts`. What its destroy throws goes to its own
+  // `ErrorHandler`, looked up while the app can still answer, rather than into Fabric's call.
+  applicationRef.onDestroy(
+    onSurfaceStop(rootTag, () => {
+      const errors = injector.get(ErrorHandler);
+      try {
+        applicationRef.destroy();
+      } catch (error) {
+        errors.handleError(error);
+      }
+    }),
+  );
 
   // `ApplicationRef.bootstrap()` does all of this; `createComponent` does not, and we
   // deliberately do not use `bootstrap()` because it wants a DOM selector. Order and

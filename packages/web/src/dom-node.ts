@@ -132,7 +132,7 @@ function letBrowserNodesBeObserved(): void {
         let observers = observedBy.get(node);
         if (!observers) observedBy.set(node, (observers = new Set()));
         observers.add(this);
-      }
+      } else this.wrapped.delete(el);
       super.observe(el);
     }
 
