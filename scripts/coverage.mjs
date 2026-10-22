@@ -121,6 +121,26 @@ const SUITES = [
     report: (out) => path.join(out, 'testing.info'),
   },
   {
+    // `@ng-native/web-compat`'s own suite. The native suite loads the package too, for the icons
+    // drawn beside a library's drawing, and reaches little of it.
+    name: 'web-compat',
+    cwd: 'packages/web-compat',
+    command: 'node',
+    args: (destination) => [
+      '--import',
+      '@ng-native/testing/register',
+      '--test',
+      '--experimental-test-coverage',
+      ...EXCLUDE.map((pattern) => `--test-coverage-exclude=${pattern}`),
+      '--test-reporter=lcov',
+      `--test-reporter-destination=${destination}`,
+      '--test-reporter=dot',
+      '--test-reporter-destination=stdout',
+      'src/*.test.ts',
+    ],
+    report: (out) => path.join(out, 'web-compat.info'),
+  },
+  {
     name: 'browser',
     cwd: 'packages/web',
     command: 'pnpm',
@@ -399,6 +419,11 @@ function mergeSuites(suites) {
   return totals;
 }
 
+/** A path relative to the repository, with `/` on every platform so a report reads the same. */
+function relativeToRoot(file) {
+  return path.relative(ROOT, file).split(path.sep).join('/');
+}
+
 /**
  * Whether a measured file is one a package ships. Not only what is under `src`: Metro, the
  * migrations and the Tailwind preset keep their code beside their `package.json`, and a floor
@@ -406,7 +431,7 @@ function mergeSuites(suites) {
  * instrument, and so is the hook a suite is started with.
  */
 function isShipped(file) {
-  const [packages, name] = path.relative(ROOT, file).split(path.sep);
+  const [packages, name] = relativeToRoot(file).split('/');
   return (
     packages === 'packages' &&
     name !== 'integration-tests' &&
@@ -422,8 +447,8 @@ function filesIn(merged) {
       const lines = [...data.lines.values()];
       const branches = [...data.branches.values()];
       return {
-        file: path.relative(ROOT, file),
-        package: path.relative(ROOT, file).split(path.sep)[1],
+        file: relativeToRoot(file),
+        package: relativeToRoot(file).split('/')[1],
         lines: lines.length,
         covered: lines.filter((hits) => hits > 0).length,
         branches: branches.length,

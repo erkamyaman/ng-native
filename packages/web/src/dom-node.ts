@@ -3,15 +3,15 @@
  * `HostEngine` method actually operates on.
  *
  * `packages/fabric/src/engine.ts`'s `EngineNode` is not reusable here (its constructor-free shape
- * still carries Fabric-only bookkeeping - `committed`, `styleCache`, `sheet`...), but the shared
+ * still carries Fabric-only bookkeeping - `committed`, `styleCache`, `templateSheet`...), but the shared
  * packages never ask for that: they ask for `HostNode`'s five fields, plus whatever a component
  * reads directly off `this.node` after `inject(ElementRef).nativeElement as EngineNode` casts it
  * back. Grepping every such read (`view-base.ts`, `pressable.ts`'s `TouchableBase`, `scroll-view.ts`,
- * `select.ts`'s `textOf`) turns up exactly `kind`, `props`, `text`, `children` and `parent` - so a
+ * `select.ts`'s `textOf`) turns up exactly `nodeKind`, `props`, `nodeText`, `childList` and `parent` - so a
  * class that implements `HostNode` honestly, backed by a real DOM node, satisfies every one of
  * them without a cast.
  *
- * `children`/`parent` are maintained by hand rather than read live off the DOM (`el.parentElement`,
+ * `childList`/`parent` are maintained by hand rather than read live off the DOM (`el.parentElement`,
  * `el.childNodes`) for the same reason `Engine` keeps its own tree: a live DOM walk would have to
  * filter out nodes this package did not create (there are none today, but a consumer's own
  * `document.createElement` inside a projected template is not this package's to assume against),
@@ -22,7 +22,7 @@ import type { HostNode } from '@ng-native/fabric';
 export type BrowserNodeKind = 'element' | 'text' | 'anchor';
 
 export interface BrowserNode extends HostNode {
-  readonly kind: BrowserNodeKind;
+  readonly nodeKind: BrowserNodeKind;
   /** The real DOM node this wraps. An `Element` for `element`, a `Text` for `text`. */
   readonly el: Element | Text | Comment;
   /** Lowercase template spelling, e.g. `view`. Mirrors `EngineNode.tag`; never the DOM tag. */
@@ -38,8 +38,8 @@ export interface BrowserNode extends HostNode {
   readonly hasAttribute?: (this: BrowserNode, name: string) => boolean;
   readonly getAttribute?: (this: BrowserNode, name: string) => string | null;
   props: Record<string, unknown>;
-  text: string;
-  children: BrowserNode[];
+  nodeText: string;
+  childList: BrowserNode[];
   parent: BrowserNode | null;
   /**
    * Registered listeners, by top-level type (`topTouchStart`, `topChange`, ...). `null` until
@@ -62,17 +62,100 @@ const answered = new WeakSet<object>();
 
 type Constructor = abstract new (...args: never[]) => object;
 
-export function letBrowserNodesPassAsNodes(): void {
-  const node = (globalThis as { Node?: Constructor }).Node;
-  if (typeof node !== 'function' || answered.has(node)) return;
-  answered.add(node);
-  const own = node[Symbol.hasInstance];
-  Object.defineProperty(node, Symbol.hasInstance, {
+export function letBrowserNodesPassAsDomNodes(): void {
+  const scope = globalThis as { Node?: Constructor; Element?: Constructor };
+  letPass(scope.Node, (value) => made.has(value as object));
+  letPass(
+    scope.Element,
+    (value) => made.has(value as object) && (value as BrowserNode).nodeKind === 'element',
+  );
+  letBrowserNodesBeObserved();
+}
+
+function letPass(target: Constructor | undefined, ours: (value: unknown) => boolean): void {
+  if (typeof target !== 'function' || answered.has(target)) return;
+  answered.add(target);
+  const own = target[Symbol.hasInstance];
+  Object.defineProperty(target, Symbol.hasInstance, {
     configurable: true,
     value(this: Constructor, value: unknown): boolean {
-      return (this === node && made.has(value as object)) || own.call(this, value);
+      return (this === target && ours(value)) || own.call(this, value);
     },
   });
+}
+
+function unwrap(target: unknown): unknown {
+  return made.has(target as object) ? (target as BrowserNode).el : target;
+}
+
+function letBrowserNodesBeObserved(): void {
+  const scope = globalThis as { IntersectionObserver?: typeof IntersectionObserver };
+  const Native = scope.IntersectionObserver;
+  if (typeof Native !== 'function' || answered.has(Native)) return;
+  const asSeen = (wrapped: WeakMap<Element, BrowserNode>, entry: IntersectionObserverEntry) => {
+    const node = wrapped.get(entry.target);
+    if (!node) return entry;
+    return {
+      time: entry.time,
+      rootBounds: entry.rootBounds,
+      boundingClientRect: entry.boundingClientRect,
+      intersectionRect: entry.intersectionRect,
+      intersectionRatio: entry.intersectionRatio,
+      isIntersecting: entry.isIntersecting,
+      target: node,
+    } as unknown as IntersectionObserverEntry;
+  };
+  class Observer extends Native {
+    private readonly wrapped: WeakMap<Element, BrowserNode>;
+
+    constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+      const wrapped = new WeakMap<Element, BrowserNode>();
+      super(
+        (entries, observer) =>
+          callback(
+            entries.map((entry) => asSeen(wrapped, entry)),
+            observer,
+          ),
+        options,
+      );
+      this.wrapped = wrapped;
+    }
+
+    override observe(target: Element): void {
+      const el = unwrap(target) as Element;
+      if (el !== target) this.wrapped.set(el, target as unknown as BrowserNode);
+      else this.wrapped.delete(el);
+      super.observe(el);
+    }
+
+    override unobserve(target: Element): void {
+      super.unobserve(unwrap(target) as Element);
+    }
+
+    override takeRecords(): IntersectionObserverEntry[] {
+      return super.takeRecords().map((entry) => asSeen(this.wrapped, entry));
+    }
+  }
+  answered.add(Observer);
+  scope.IntersectionObserver = Observer;
+}
+
+function addEventListener(
+  this: BrowserNode,
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  options?: AddEventListenerOptions | boolean,
+): void {
+  this.el.addEventListener(type, listener, options);
+}
+
+function removeEventListener(
+  this: BrowserNode,
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  options?: EventListenerOptions | boolean,
+): void {
+  this.el.removeEventListener(type, listener, options);
 }
 
 /**
@@ -80,7 +163,10 @@ export function letBrowserNodesPassAsNodes(): void {
  * property (NG0303) unless `name in element` is true, and every binding on an element here goes to
  * `setProperty`, whatever its name.
  */
-const anyProperty = new Proxy({}, { has: (_, name) => typeof name === 'string' });
+const anyProperty = new Proxy(
+  { addEventListener, removeEventListener },
+  { has: (_, name) => typeof name === 'string' },
+);
 
 /**
  * The SVG names whose `fill`/`stroke` need a seeded `props` entry from the moment they are
@@ -126,15 +212,15 @@ export function makeElementNode(name: string, el: Element): BrowserNode {
     props['stroke'] = undefined;
   }
   const node: BrowserNode = {
-    kind: 'element',
+    nodeKind: 'element',
     el,
     tag: name,
     tagName: name,
     hasAttribute,
     getAttribute,
     props,
-    text: '',
-    children: [],
+    nodeText: '',
+    childList: [],
     parent: null,
     listeners: null,
     optedIn: null,
@@ -147,12 +233,12 @@ export function makeElementNode(name: string, el: Element): BrowserNode {
 
 export function makeTextNode(text: Text): BrowserNode {
   const node: BrowserNode = {
-    kind: 'text',
+    nodeKind: 'text',
     el: text,
     tag: '#text',
     props: {},
-    text: text.data,
-    children: [],
+    nodeText: text.data,
+    childList: [],
     parent: null,
     listeners: null,
     optedIn: null,
@@ -165,12 +251,12 @@ export function makeTextNode(text: Text): BrowserNode {
 /** Angular's `@if`/`@for`/`ViewContainerRef` markers, backed by a real `Comment`. */
 export function makeAnchorNode(comment: Comment): BrowserNode {
   const node: BrowserNode = {
-    kind: 'anchor',
+    nodeKind: 'anchor',
     el: comment,
     tag: '#anchor',
     props: {},
-    text: '',
-    children: [],
+    nodeText: '',
+    childList: [],
     parent: null,
     listeners: null,
     optedIn: null,
