@@ -33,4 +33,31 @@ describe('@defer on a trigger element, in Chromium', () => {
       errors.mockRestore();
     }
   });
+
+  it('loads on a text-input whose element multiline swapped after the trigger was set', async () => {
+    const errors = vi.spyOn(console, 'error');
+    try {
+      await page.viewport(1200, 800);
+      const { root, byId, componentRef } = boot(DeferTriggersApp);
+      await settle();
+      const text = (): string => root.textContent ?? '';
+      const before = [byId('field'), byId('seen')];
+      (componentRef.instance as DeferTriggersApp).multiline.set(true);
+      await settle();
+      expect([byId('field').tagName, byId('seen').tagName]).toEqual(['TEXTAREA', 'TEXTAREA']);
+      expect(before.some((el) => el.isConnected)).toBe(false);
+
+      byId('field').scrollIntoView({ block: 'center' });
+      await userEvent.click(byId('field'));
+      await waitFor(() => text().includes('field loaded'), 'the click to load');
+      await settle();
+      expect(text()).toContain('seen waiting');
+      byId('seen').scrollIntoView();
+      await waitFor(() => text().includes('seen loaded'), 'the scroll to load');
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      window.scrollTo(0, 0);
+      errors.mockRestore();
+    }
+  });
 });

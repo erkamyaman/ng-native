@@ -168,6 +168,8 @@ interface Added {
   readonly listener: EventListenerOrEventListenerObject;
   readonly options: AddEventListenerOptions | boolean | undefined;
   readonly capture: boolean;
+  /** What the element was given: `listener`, or for a `once` one, a wrapper that forgets it. */
+  readonly registered: EventListenerOrEventListenerObject;
   readonly forget: () => void;
 }
 
@@ -182,14 +184,12 @@ function addEventListener(
   listener: EventListenerOrEventListenerObject,
   options?: AddEventListenerOptions | boolean,
 ): void {
-  this.el.addEventListener(type, listener, options);
   const capture = captures(options);
   let added = addedTo.get(this);
   if (!added) addedTo.set(this, (added = []));
   if (added.some((a) => a.type === type && a.listener === listener && a.capture === capture)) {
     return;
   }
-  const once = typeof options === 'object' && options.once === true;
   const signal = typeof options === 'object' ? options.signal : undefined;
   if (signal?.aborted) return;
   const list = added;
@@ -197,12 +197,21 @@ function addEventListener(
     const at = list.indexOf(entry);
     if (at !== -1) list.splice(at, 1);
     signal?.removeEventListener('abort', forget);
-    if (once) this.el.removeEventListener(type, forget, capture);
   };
-  const entry: Added = { type, listener, options, capture, forget };
+  // A `once` listener is forgotten before it runs, so a swap never brings it back: not when it
+  // stops the event, and not when it swaps the element itself.
+  const registered =
+    typeof options === 'object' && options.once === true
+      ? function (this: EventTarget, event: Event) {
+          forget();
+          if (typeof listener === 'function') listener.call(this, event);
+          else listener.handleEvent(event);
+        }
+      : listener;
+  const entry: Added = { type, listener, options, capture, registered, forget };
   list.push(entry);
   signal?.addEventListener('abort', forget);
-  if (once) this.el.addEventListener(type, forget, { capture, once: true });
+  this.el.addEventListener(type, registered, options);
 }
 
 function removeEventListener(
@@ -211,12 +220,12 @@ function removeEventListener(
   listener: EventListenerOrEventListenerObject,
   options?: EventListenerOptions | boolean,
 ): void {
-  this.el.removeEventListener(type, listener, options);
   const capture = captures(options);
-  addedTo
+  const added = addedTo
     .get(this)
-    ?.find((a) => a.type === type && a.listener === listener && a.capture === capture)
-    ?.forget();
+    ?.find((a) => a.type === type && a.listener === listener && a.capture === capture);
+  this.el.removeEventListener(type, added?.registered ?? listener, options);
+  added?.forget();
 }
 
 /**
@@ -337,12 +346,8 @@ export function rebindElement(node: BrowserNode, el: Element): void {
   (node as { el: Element | Text | Comment }).el = el;
   registry.set(el, node);
   for (const added of addedTo.get(node) ?? []) {
-    old.removeEventListener(added.type, added.listener, added.capture);
-    el.addEventListener(added.type, added.listener, added.options);
-    if (typeof added.options === 'object' && added.options.once) {
-      old.removeEventListener(added.type, added.forget, added.capture);
-      el.addEventListener(added.type, added.forget, { capture: added.capture, once: true });
-    }
+    old.removeEventListener(added.type, added.registered, added.capture);
+    el.addEventListener(added.type, added.registered, added.options);
   }
   const observers = observedBy.get(node);
   for (const observer of observers ?? []) {

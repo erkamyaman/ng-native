@@ -305,6 +305,54 @@ describe('a text-input that a trigger listens to or watches, when multiline swap
     (node.el as Element).remove();
   });
 
+  it('does not bring back a once listener that stopped the event or swapped the element itself', () => {
+    const { node, multiline } = field();
+    const wrapper = node as unknown as Element;
+    const calls: string[] = [];
+    wrapper.addEventListener(
+      'click',
+      (event) => {
+        calls.push('stopped');
+        event.stopImmediatePropagation();
+      },
+      { once: true },
+    );
+    wrapper.addEventListener(
+      'pointerdown',
+      { handleEvent: () => (calls.push('swapped'), multiline(true)) },
+      { once: true },
+    );
+    click(node.el);
+    node.el.dispatchEvent(
+      new (document.defaultView as unknown as typeof globalThis).Event('pointerdown'),
+    );
+    multiline(false);
+    click(node.el);
+    node.el.dispatchEvent(
+      new (document.defaultView as unknown as typeof globalThis).Event('pointerdown'),
+    );
+    assert.deepEqual(calls, ['stopped', 'swapped']);
+    (node.el as Element).remove();
+  });
+
+  it('removes a once listener through the node, before and after a swap', () => {
+    const { node, multiline } = field();
+    const wrapper = node as unknown as Element;
+    const calls: string[] = [];
+    const first = () => calls.push('first');
+    const second = () => calls.push('second');
+    wrapper.addEventListener('click', first, { once: true });
+    wrapper.addEventListener('click', second, { once: true, capture: true });
+    wrapper.removeEventListener('click', first);
+    multiline(true);
+    wrapper.removeEventListener('click', second, true);
+    click(node.el);
+    multiline(false);
+    click(node.el);
+    assert.deepEqual(calls, []);
+    (node.el as Element).remove();
+  });
+
   it('moves an observation made through the node to the new element, and off the old one', () => {
     const { node, multiline } = field();
     const old = node.el as Element;
