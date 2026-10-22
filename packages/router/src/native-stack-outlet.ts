@@ -106,6 +106,11 @@ const presented = new WeakMap<object, number>();
  */
 const rewinds = new WeakMap<object, { navigation: number; steps: number }>();
 
+/** The rewind a router's navigation in flight is waiting to make, if any. Exposed for tests. */
+export function pendingRewind(router: object): { navigation: number; steps: number } | undefined {
+  return rewinds.get(router);
+}
+
 /** What every screen needs to fill the stack, the same five keys RNSScreen itself expects. */
 const FILL = { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 } as const;
 
@@ -231,6 +236,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     const navigations = this.router?.events?.subscribe((event) => {
       if (event instanceof NavigationEnd) this.settle(event.id);
       else if (event instanceof NavigationError) this.rollBack(event.id);
+      else if (event instanceof NavigationCancel) this.forgetRewind(event.id);
     });
 
     const carryAll = (claim: SystemBarClaim) => {
@@ -763,6 +769,16 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
   }
 
   /**
+   * A navigation ended without succeeding, failed or cancelled after it took screens off: the
+   * history entries it would have gone back over are left as they are, and its record goes with it.
+   */
+  private forgetRewind(navigation: number): void {
+    if (this.router && rewinds.get(this.router)?.navigation === navigation) {
+      rewinds.delete(this.router);
+    }
+  }
+
+  /**
    * A navigation failed, so the router is back where it started: undo what it did here too.
    *
    * The screen that threw has already gone (`createPage`), but a screen this outlet activated for
@@ -770,6 +786,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * stack inside it. That one goes, with everything in it, and the screen it covered carries on.
    */
   private rollBack(navigation: number): void {
+    this.forgetRewind(navigation);
     if (this.superseded?.navigation === navigation) this.superseded = null;
     for (const entry of this.entries.filter((candidate) => candidate.activatedIn === navigation)) {
       this.remove(entry);
