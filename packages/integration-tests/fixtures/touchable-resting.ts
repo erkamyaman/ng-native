@@ -29,6 +29,9 @@ import { View } from '../../components/src/view.ts';
       <touchable-opacity testID="tailwind" class="opacity-50">
         <text>tailwind</text>
       </touchable-opacity>
+      <touchable-opacity testID="active" [activeOpacity]="0.3" [style]="{ opacity: 0.5 }">
+        <text>active</text>
+      </touchable-opacity>
     </view>
   `,
 })

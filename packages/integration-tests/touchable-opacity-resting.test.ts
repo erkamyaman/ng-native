@@ -118,6 +118,15 @@ describe('touchable-opacity returns to the opacity the cascade gives it', () => 
     });
   }
 
+  it('dims to its own activeOpacity beside an inline [style] opacity', async () => {
+    assert.equal(opacity('active'), 0.5, 'at rest');
+    await pressIn('active');
+    assert.equal(opacity('active'), 0.3, 'pressed');
+    await release('active');
+    const seen = await fadeOut('active');
+    assert.equal(seen.at(-1), 0.5, 'back to rest');
+  });
+
   it('returns to a class that changed while it was pressed', async () => {
     await pressIn('class');
     instance.dim.set('quarter');
