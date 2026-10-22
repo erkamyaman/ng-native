@@ -75,6 +75,7 @@ export interface ReactNative {
     showActionSheetWithOptions(
       options: {
         title?: string;
+        message?: string;
         options: string[];
         cancelButtonIndex: number;
         destructiveButtonIndex?: number;
