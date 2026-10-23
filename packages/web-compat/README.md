@@ -125,7 +125,12 @@ Experimental and partial. It has:
   `error`, and `object-fit` as how the picture fits its box. A picture that is an SVG is fetched
   and drawn as an `<svg>` of its shapes alone. An image a library's sheet or a script clips to a
   band of itself, `clip-path: polygon(a 0, b 0, b 100%, a 100%)`, is drawn through the band, as a
-  before-and-after slider cuts one picture over another.
+  before-and-after slider cuts one picture over another. In a library's sheet an edge can be a
+  token, `var(--position, 50%)`, and the band follows the token as a script sets it.
+- An HTML element starts as a browser's own stylesheet has it: `content-box`, a block where HTML
+  has one, `position: static` (an absolute element is placed against the nearest one that says
+  `relative`), and as a flex item `flex-shrink: 1` down to its content. A button has its label in
+  the middle of its height until a stylesheet lays it out.
 - A `<button>` and an `<a>` with their roles, each taking a press with no listener (`:active`
   while held) and marked `data-hover` while a pointer is over it, a disabled one announced as
   disabled, and a table's and a form's elements as views.
@@ -200,10 +205,22 @@ module.exports = withWebCompat(config, {
 `libraries` are npm packages. `sources` are directories of the app's own sources, relative to the
 project. Every other component in the app stays the native view it is.
 
-`withWebCompat` also gives the window its `addEventListener`, `removeEventListener` and
-`dispatchEvent` before any module runs, for a library that adds a listener as it loads, as the
-CDK does to learn whether one can be passive. What they are given is handed to the window once an
-app is up, so such a library can be imported anywhere in the app, not only on a lazy route.
+`withWebCompat` also gives the window and the document their `addEventListener`,
+`removeEventListener` and `dispatchEvent` before any module runs, for a library that adds a
+listener as it loads: the CDK does so on the window to learn whether one can be passive, and a
+library noting the last touch does so on the document. What the window is given is handed to the
+window once an app is up, and what the document is given to each app's document, so such a library
+can be imported anywhere in the app, not only on a lazy route.
+
+## A library's icons
+
+A library that draws its icons with `NgIcon` from `@ng-icons/core`, as Spartan UI's helm does,
+sets each icon's SVG markup as `innerHTML`, which no native view draws. `withWebCompat` resolves
+`@ng-icons/core` to `@ng-native/web-compat/ng-icons`: the same module, with `NgIcon` the one from
+`@ng-native/icons`, which takes the same inputs and draws the same icons as native shapes. It is
+resolved so for the library and for the app, and `webCompat()` does the same in Vitest. Wrap the
+Metro config with `withWebCompat` last, so a resolver another helper set is the one it goes
+through.
 
 ## A library that asks whether it is in a browser
 

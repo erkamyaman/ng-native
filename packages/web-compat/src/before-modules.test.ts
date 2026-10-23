@@ -86,3 +86,64 @@ it('drops a listener whose signal aborts before an app is up, as a browser does'
   win.dispatchEvent(new Event('picked'));
   assert.deepEqual(heard, ['kept']);
 });
+
+it("hands what a library listened for on the document, as it loaded, to an app's document", async () => {
+  // Metro's `animation-globals.js` gives the runtime a `document` with no listeners of its own:
+  // a library that notes the last touch on it as its module loads threw.
+  const had = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const early = { documentElement: { getAnimations: () => [] } } as Record<string, unknown>;
+  Object.defineProperty(globalThis, 'document', {
+    value: early,
+    configurable: true,
+    writable: true,
+  });
+  try {
+    runBeforeModules();
+    const heard: string[] = [];
+    const listen = early['addEventListener'] as Window['addEventListener'];
+    listen('picked', () => void heard.push('kept'));
+    const removed = () => void heard.push('removed');
+    listen('picked', removed);
+    (early['removeEventListener'] as Window['removeEventListener'])('picked', removed);
+    await render(Page, { providers: [provideWebCompat()] });
+    const document = (globalThis as unknown as { document: Window }).document;
+    assert.notEqual(document, early, "the app's own document");
+    document.dispatchEvent(new Event('picked'));
+    assert.deepEqual(heard, ['kept']);
+    // The library keeps the document it listened on, and takes its listener off that one later,
+    // or listens there again: the app's document follows it.
+    const kept = () => void heard.push('kept');
+    heard.length = 0;
+    listen('later', kept);
+    document.dispatchEvent(new Event('later'));
+    assert.deepEqual(heard, ['kept'], 'a listener added after the app is up is heard');
+    (early['removeEventListener'] as Window['removeEventListener'])('later', kept);
+    document.dispatchEvent(new Event('later'));
+    assert.deepEqual(heard, ['kept'], 'and taken off again');
+
+    // Each app is handed them, a second as the first is up, and one that went is told no more.
+    const second = await render(Page, { providers: [provideWebCompat()] });
+    const other = (globalThis as unknown as { document: Window }).document;
+    assert.notEqual(other, document, "the second app's own document");
+    heard.length = 0;
+    other.dispatchEvent(new Event('picked'));
+    assert.deepEqual(heard, ['kept'], 'the second app hears what was listened for early');
+    const both = () => void heard.push('both');
+    heard.length = 0;
+    listen('later', both);
+    document.dispatchEvent(new Event('later'));
+    other.dispatchEvent(new Event('later'));
+    assert.deepEqual(heard, ['both', 'both'], 'a later listener reaches both');
+    second.unmount();
+    const gone = () => void heard.push('gone');
+    heard.length = 0;
+    listen('after', gone);
+    other.dispatchEvent(new Event('after'));
+    document.dispatchEvent(new Event('after'));
+    assert.deepEqual(heard, ['gone'], 'and not the document of an app that went');
+  } finally {
+    cleanup();
+    if (had) Object.defineProperty(globalThis, 'document', had);
+    else delete (globalThis as { document?: unknown }).document;
+  }
+});

@@ -78,7 +78,8 @@ const metricsOf = (event: NativeKeyboardEvent): KeyboardMetrics => ({
  *
  * On iOS the Will events: they arrive as the keyboard starts to move, carrying its duration and
  * curve, so a layout configured from them moves with the keyboard. The Did events arrive once it
- * has landed, and a layout that waits for them moves after it. `keyboardWillChangeFrame` covers a
+ * has landed, and a layout that waits for them moves after it, so they are heard only until the
+first Will event, for a keyboard already moving when listening starts. `keyboardWillChangeFrame` covers a
  * keyboard that changes size while it is up - the predictive bar, another language's layout - and
  * is ignored while it is down: UIKit posts one beside every show and hide as well, and the one
  * beside a hide is the frame the keyboard leaves by, off the bottom of the screen.
@@ -103,17 +104,26 @@ export function keyboardSource(): KeyboardSource {
       return windowTopOf(native);
     },
     subscribe: (listener) => {
+      // A keyboard already up says nothing until it next moves. `Keyboard.js` keeps the last show
+      // it heard, from whenever React Native first loaded it.
+      const shown = keyboard.metrics?.();
+      const already = shown ? { height: shown.height, screenY: shown.screenY } : null;
       if (Platform?.OS !== 'ios') {
         const subscriptions = [
           keyboard.addListener('keyboardDidShow', (event) => listener(metricsOf(event))),
           keyboard.addListener('keyboardDidHide', () => listener({ height: 0 })),
         ];
+        if (already) listener(already);
         return () => subscriptions.forEach((subscription) => subscription.remove());
       }
-      let up = false;
+      let up = already !== null;
+      // Started while the keyboard moves, the Will event is missed and `Keyboard.js` still holds
+      // where it started from, so the Did event says where it landed. After a Will event, the
+      // Will events say it all: a show a hide interrupts can land after the hide begins.
+      let heard = false;
       const subscriptions = [
         keyboard.addListener('keyboardWillShow', (event) => {
-          up = true;
+          up = heard = true;
           listener(metricsOf(event));
         }),
         keyboard.addListener('keyboardWillChangeFrame', (event) => {
@@ -121,13 +131,37 @@ export function keyboardSource(): KeyboardSource {
         }),
         keyboard.addListener('keyboardWillHide', (event) => {
           up = false;
+          heard = true;
           listener({ height: 0, ...timingOf(event) });
         }),
+        keyboard.addListener('keyboardDidShow', (event) => {
+          if (heard) return;
+          up = true;
+          listener({ height: event.endCoordinates.height, screenY: event.endCoordinates.screenY });
+        }),
+        keyboard.addListener('keyboardDidHide', () => {
+          if (heard) return;
+          up = false;
+          listener({ height: 0 });
+        }),
       ];
+      if (already) listener(already);
       return () => subscriptions.forEach((subscription) => subscription.remove());
     },
     dismiss: () => keyboard.dismiss(),
   };
+}
+
+/**
+ * Require React Native's `Keyboard.js` now, so it records each show and hide from here on.
+ *
+ * It keeps the last one it heard, which `keyboardSource` starts from, but only from when it is
+ * first required. Left to the `Keyboard` service, that is when the first `text-input` appears, and
+ * a keyboard the native header's search bar opened before then reads as down until it next moves.
+ */
+export function recordKeyboard(): void {
+  const native = reactNative();
+  if (native) void native.Keyboard;
 }
 
 /**

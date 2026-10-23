@@ -11,8 +11,15 @@
  * screen pushed over the whole tab bar, is still subscribed, so each answer first checks that
  * its outlet is showing what the router is showing.
  */
-import { Service, inject } from '@angular/core';
-import type { ActivatedRoute, Router } from '@angular/router';
+import { DestroyRef, Service, inject } from '@angular/core';
+import {
+  ChildrenOutletContexts,
+  NavigationError,
+  NavigationStart,
+  Router,
+  type ActivatedRoute,
+  type ActivatedRouteSnapshot,
+} from '@angular/router';
 import { HardwareBack } from '@ng-native/device';
 
 /** What a stack offers `NativeNavigation` beyond a back: going down it several screens at once. */
@@ -177,9 +184,62 @@ export type BackAnswer = (from: 'button' | 'app') => boolean;
 /**
  * Whether a route is part of what the router shows now, rather than a subtree the reuse strategy
  * detached and is keeping for later: a tab behind, or a screen covered by one pushed over it.
+ *
+ * Read from the snapshots: the root route is the same object in every state, and after a failed
+ * navigation its children are still the ones that navigation would have shown.
  */
 export function isShowing(router: Router, route: ActivatedRoute | null): boolean {
   if (!route) return false;
-  const visit = (node: ActivatedRoute): boolean => node === route || node.children.some(visit);
-  return visit(router.routerState.root);
+  const showing = route.snapshot;
+  const visit = (node: ActivatedRouteSnapshot): boolean =>
+    node === showing || node.children.some(visit);
+  return visit(router.routerState.snapshot.root);
+}
+
+/**
+ * Put back the snapshots of the routes showing when a navigation fails, for `isShowing`.
+ *
+ * The router moves each route it keeps, such as the parent of a page that throws, on to the
+ * navigation's snapshot as it activates it, and on a failure puts back only its own state. That
+ * route would then be missing from the snapshots, and its outlet would ignore a Back.
+ */
+export function restoreFailedSnapshots(): void {
+  const router = inject(Router);
+  const contexts = inject(ChildrenOutletContexts);
+  let showing = new Map<ActivatedRoute, ActivatedRouteSnapshot>();
+  const events = router.events.subscribe((event) => {
+    if (event instanceof NavigationStart) showing = showingRoutes(router, contexts);
+    else if (event instanceof NavigationError) {
+      for (const [route, snapshot] of showing) route.snapshot = snapshot;
+    }
+  });
+  inject(DestroyRef).onDestroy(() => events.unsubscribe());
+}
+
+/**
+ * Each route the router shows now, with its snapshot, found through the outlets showing them.
+ *
+ * A route with no component, a `loadChildren` wrapper or a group, has no outlet of its own: the
+ * router activates its children in its parent's outlets, so they are looked up there.
+ */
+function showingRoutes(
+  router: Router,
+  contexts: ChildrenOutletContexts,
+): Map<ActivatedRoute, ActivatedRouteSnapshot> {
+  const state = router.routerState;
+  const found = new Map([[state.root, state.snapshot.root]]);
+  const visit = (node: ActivatedRouteSnapshot, inside: ChildrenOutletContexts) => {
+    for (const child of node.children) {
+      if (!child.component) {
+        visit(child, inside);
+        continue;
+      }
+      const context = inside.getContext(child.outlet);
+      if (!context?.route) continue;
+      found.set(context.route, child);
+      visit(child, context.children);
+    }
+  };
+  visit(state.snapshot.root, contexts);
+  return found;
 }

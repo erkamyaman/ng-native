@@ -208,13 +208,33 @@ export interface Conditions {
 export const CSS_SPACE = /[ \t\n\r\f]+/;
 
 /** A custom property's value, in each form it can legally take. Absent forms are unusable. */
+/**
+ * A colour only the platform resolves, `platform-color(link)` or a system colour, held by its
+ * names, which the engine turns into the shape each platform reads (`Engine.color`). It has no
+ * channels here, so nothing can mix, fade or shade it, or draw it in a gradient or a shadow.
+ */
+export interface PlatformColour {
+  readonly platformColor: readonly string[];
+}
+
+export const isPlatformColour = (value: unknown): value is PlatformColour =>
+  typeof value === 'object' &&
+  value !== null &&
+  Array.isArray((value as Partial<PlatformColour>).platformColor);
+
 export interface TokenValue {
   readonly length?: number | string;
   /** An angle, in degrees whatever unit it was written in. */
   readonly angle?: number;
   /** A time, in milliseconds whatever unit it was written in. */
   readonly time?: number;
-  readonly color?: string;
+  /** A colour, or one only the platform resolves, by name: `platform-color(link)`, `LinkText`. */
+  readonly color?: string | PlatformColour;
+  /**
+   * The token holding a platform colour that one made of others, `color-mix(in srgb, var(--x)
+   * 50%, white)`, was worked out of, which leaves it with no value: what a warning names.
+   */
+  readonly platformColourIn?: string;
   readonly keyword?: string;
   readonly number?: number;
   /** A font weight, as the string `fontWeight` takes. */
@@ -382,6 +402,11 @@ export interface DeferredDeclaration {
    * gradient is not the class that supplies its colours.
    */
   readonly gradient?: GradientTemplate | readonly GradientTemplate[];
+  /**
+   * A band of the box from side to side whose edges are tokens, `clipBand` as a library's sheet
+   * writes it for a slider: each edge a percentage, or a token with the percentage beside it.
+   */
+  readonly band?: readonly BandEdge[];
   /**
    * Arithmetic around the reference, settled at build time. `value * scale + offset`, then no
    * smaller than `floor`. What `calc(var(--x) + 12px)` and `max(var(--x), 16px)` become.
@@ -868,7 +893,7 @@ const BORDER_SIDES = Object.fromEntries(
  * side equals them; given the sides alone it fills each in solid. A border with no width strokes
  * nothing, so preflight's `border: 0 solid` adds nothing to every element.
  */
-function settleUnsidedBorder(own: Record<string, unknown>): void {
+export function settleUnsidedBorder(own: Record<string, unknown>): void {
   // No top width, its own or unsided: no four sides that agree. Most views have no border.
   if (own['borderTopWidth'] === undefined && own['borderWidth'] === undefined) return;
   const width = agreedSides(own, 'Width');
@@ -3537,6 +3562,14 @@ export class StyleResolver {
    */
   onUnreadDisplay: ((name: string, value: string | undefined) => void) | null = null;
 
+  /**
+   * Told of a declaration dropped for working a colour out of a token that holds a platform
+   * colour, which has no channels: a `color-mix()`, a relative colour, a gradient or a shadow.
+   * Set only in development: the compiler says so of a sheet that holds both, but only here is it
+   * known for a token one sheet sets and another reads.
+   */
+  onPlatformColour: ((name: string, props: readonly string[], on?: string) => void) | null = null;
+
   constructor(globalSheet: StyleSheet | null, conditions: Conditions) {
     this.globalSheet = globalSheet;
     this.conditions = conditions;
@@ -4491,9 +4524,7 @@ export class StyleResolver {
         continue;
       }
       const settled = this.settled(declaration, own, parentInherited, tokens);
-      if (settled === undefined && this.onUndefinedToken) {
-        this.reportUndefined(declaration, tokens);
-      }
+      if (settled === undefined) this.reportUnsettled(declaration, tokens);
       const outranked = (prop: string) =>
         !declaration.important && important !== null && prop in important;
       // Said only of a display that is written: an important one wins over the token's.
@@ -4602,6 +4633,15 @@ export class StyleResolver {
     return values;
   }
 
+  /** Why a declaration came to nothing, where something is told: in development. */
+  private reportUnsettled(
+    declaration: DeferredDeclaration,
+    tokens: Readonly<Record<string, TokenValue>>,
+  ): void {
+    if (this.onUndefinedToken) this.reportUndefined(declaration, tokens);
+    if (this.onPlatformColour) this.reportPlatformColour(declaration, tokens);
+  }
+
   /** A reference with nothing defined for it and nothing to fall back to. */
   private reportUndefined(
     declaration: DeferredDeclaration,
@@ -4612,6 +4652,16 @@ export class StyleResolver {
     if (declaration.fallback !== undefined || declaration.fallbackToken) return;
     if (declaration.alternatives?.some((alternative) => alternative in tokens)) return;
     this.onUndefinedToken!(name, declaration.props, declaration.on);
+  }
+
+  /** A colour worked out of a token holding a platform colour, which cannot be. */
+  private reportPlatformColour(
+    declaration: DeferredDeclaration,
+    tokens: Readonly<Record<string, TokenValue>>,
+  ): void {
+    if (declaration.kind !== undefined && !COLOURED_KINDS.has(declaration.kind)) return;
+    const name = platformColourRead(declaration, tokens, new Set());
+    if (name) this.onPlatformColour!(name, declaration.props, declaration.on);
   }
 
   /** A display token set to a value native has no display for. */
@@ -4635,7 +4685,7 @@ export class StyleResolver {
     parentInherited: Record<string, unknown>,
     tokens: Readonly<Record<string, TokenValue>>,
   ): unknown {
-    const filled = this.filledIn(value, declaration, own, parentInherited, tokens);
+    const filled = this.filledIn(value, declaration, own, parentInherited, tokens, true);
     if (filled === UNSETTLED) return undefined;
     // As the compiler drops a shadow nobody can see: Tailwind composes five, four of them nothing.
     return declaration.props.includes('boxShadow') && Array.isArray(filled)
@@ -4643,13 +4693,17 @@ export class StyleResolver {
       : filled;
   }
 
-  /** A structured value with every deferred length and colour inside it settled. */
+  /**
+   * A structured value with every deferred length and colour inside it settled. A platform colour
+   * is settled only as the `whole` value: inside a shadow or a filter native draws from channels.
+   */
   private filledIn(
     value: unknown,
     declaration: DeferredDeclaration,
     own: Record<string, unknown>,
     parentInherited: Record<string, unknown>,
     tokens: Readonly<Record<string, TokenValue>>,
+    whole = false,
   ): unknown {
     if (!needsFilling(value)) return value;
     const fill = (part: unknown) => this.filledIn(part, declaration, own, parentInherited, tokens);
@@ -4661,8 +4715,9 @@ export class StyleResolver {
       return (ownColour ?? parentInherited['color'] ?? 'black') as string;
     };
     const marked = settledMarker(value, tokens, current);
-    if (marked === 'currentcolor') return current();
-    if (marked !== NOT_A_MARKER) return marked ?? UNSETTLED;
+    const settled = marked === 'currentcolor' ? current() : marked;
+    if (isPlatformColour(settled) && !whole) return UNSETTLED;
+    if (marked !== NOT_A_MARKER) return settled ?? UNSETTLED;
     const pending = (value as { __defer?: DeferredDeclaration['compute'] }).__defer;
     if (pending) return this.computed({ ...declaration, compute: pending }, own, parentInherited);
     const out: Record<string, unknown> = {};
@@ -4907,7 +4962,12 @@ function workedOut(
   token: TokenValue,
   tokens: Readonly<Record<string, TokenValue>>,
 ): TokenValue | undefined {
-  return derived(token, tokens) ?? (substitutable(token, tokens) ? INVALID : undefined);
+  const value = derived(token, tokens);
+  if (value) return value;
+  if (!substitutable(token, tokens)) return undefined;
+  // Made of a platform colour, which has no channels: invalid, and kept to say why.
+  const from = platformColourRead(token, tokens, new Set());
+  return from ? { platformColourIn: from } : INVALID;
 }
 
 /** Whether each `var()` in a token made of others names a token that is set, or has a fallback. */
@@ -5076,7 +5136,7 @@ function settle(
   else delete merged[name];
 }
 
-const colourToken = (color: string | undefined): TokenValue | undefined =>
+const colourToken = (color: string | PlatformColour | undefined): TokenValue | undefined =>
   color === undefined ? undefined : { color };
 
 /** A `calc()` token's forms, from the tokens in scope: undefined when it makes neither. */
@@ -5247,6 +5307,7 @@ function referenced(
   tokens: Readonly<Record<string, TokenValue>>,
 ): unknown {
   if (declaration.gradient) return paintLayers(declaration.gradient, tokens);
+  if (declaration.band) return settledBand(declaration.band, tokens);
   // The first token set is substituted, whatever it holds: one of the wrong kind leaves the
   // property unset rather than trying the next, or the fallback.
   const names = [declaration.reference!, ...(declaration.alternatives ?? [])];
@@ -5708,6 +5769,31 @@ function fromChannels(
     : `rgba(${r}, ${g}, ${b}, ${Math.round(opacity * 1000) / 1000})`;
 }
 
+/** An edge of a band: a percentage, or a token with the percentage beside it where one is. */
+type BandEdge = string | { readonly reference: string; readonly fallback?: string };
+
+/**
+ * A band's clip with its edges settled, as `clipBand` is written: none where an edge is a token
+ * that is no percentage of the box, or unset with nothing beside it, as CSS then has no clip.
+ */
+function settledBand(
+  band: readonly BandEdge[],
+  tokens: Readonly<Record<string, TokenValue>>,
+): string | undefined {
+  const [from, to] = band.map((edge) =>
+    percentOf(typeof edge === 'string' ? edge : substitute(edge, tokens, (token) => token.length)),
+  );
+  if (from === undefined || to === undefined) return undefined;
+  return `polygon(${from}% 0%, ${to}% 0%, ${to}% 100%, ${from}% 100%)`;
+}
+
+/** A length as a percentage, 0 and one below it included, or undefined for any other. */
+function percentOf(length: unknown): string | undefined {
+  if (length === 0) return '0';
+  const share = typeof length === 'string' ? /^(-?\d*\.?\d+)%$/.exec(length) : null;
+  return share ? String(Number(share[1])) : undefined;
+}
+
 /** One template, or a layered background of several: every layer painted, or, as CSS would, none. */
 function paintLayers(
   gradient: GradientTemplate | readonly GradientTemplate[],
@@ -5754,6 +5840,8 @@ function paintedStops(
   for (const stop of template.colorStops) {
     const token = stop.colour ? undefined : tokens[stop.reference!];
     const color = stop.colour ? resolveColour(stop.colour, tokens) : token?.color;
+    // A platform colour is no stop: a gradient is drawn from channels, which it has none of.
+    if (isPlatformColour(color)) return undefined;
     // `none` is how the Tailwind flattening writes `via-none`: the stop left out, not invalid.
     if (color === undefined && token && token.keyword !== 'none') return undefined;
     if (color === undefined) continue;
@@ -5812,7 +5900,7 @@ function resolveColour(
   expression: ColourExpression,
   tokens: Readonly<Record<string, TokenValue>>,
   current?: CurrentColour,
-): string | undefined {
+): string | PlatformColour | undefined {
   if ('color' in expression) return expression.color;
   if ('channels' in expression) return channelsColour(expression, tokens);
   if ('hsl' in expression) return resolveHsl(expression.hsl, tokens);
@@ -5827,7 +5915,7 @@ function resolveColour(
 }
 
 /** The colour of the node a value is settled for, worked out only when something asks. */
-type CurrentColour = () => string;
+type CurrentColour = () => string | PlatformColour;
 
 /** A colour inside another: `currentColor` there, written or in a token, is the node's colour. */
 function innerColour(
@@ -5835,13 +5923,28 @@ function innerColour(
   tokens: Readonly<Record<string, TokenValue>>,
   current: CurrentColour | undefined,
 ): string | undefined {
+  return withChannels(colourWithin(expression, tokens, current));
+}
+
+/**
+ * A colour something works another out of, which a platform colour cannot be: it has no channels.
+ * Undefined for one, so what it was in is not settled either, as for a token that is not set.
+ */
+const withChannels = (colour: string | PlatformColour | undefined): string | undefined =>
+  isPlatformColour(colour) ? undefined : colour;
+
+function colourWithin(
+  expression: ColourExpression,
+  tokens: Readonly<Record<string, TokenValue>>,
+  current: CurrentColour | undefined,
+): string | PlatformColour | undefined {
   if (!current) return resolveColour(expression, tokens);
   if ('reference' in expression) {
     const names = [expression.reference, ...(expression.alternatives ?? [])];
     if (isCurrentColour(firstSet(names, tokens))) return current();
   }
   const colour = resolveColour(expression, tokens, current);
-  return colour?.toLowerCase() === 'currentcolor' ? current() : colour;
+  return typeof colour === 'string' && colour.toLowerCase() === 'currentcolor' ? current() : colour;
 }
 
 type Mix = Extract<ColourExpression, { mix: unknown }>['mix'];
@@ -6165,22 +6268,64 @@ function channelsColour(
 function tokenColour(
   expression: Extract<ColourExpression, { reference: string }>,
   tokens: Readonly<Record<string, TokenValue>>,
-): string | undefined {
+): string | PlatformColour | undefined {
   // The first token set is substituted, whatever it holds, as `referenced` reads one.
   const set = firstSet([expression.reference, ...(expression.alternatives ?? [])], tokens);
   if (expression.orInset) return insetOrColour(set);
-  if (set) return formOf(set, 'color') as string | undefined;
+  if (set) return formOf(set, 'color') as string | PlatformColour | undefined;
   const token = expression.fallbackToken;
-  return expression.fallback ?? (token && (formOf(derived(token, tokens), 'color') as string));
+  return (
+    expression.fallback ??
+    (token && (formOf(derived(token, tokens), 'color') as string | PlatformColour | undefined))
+  );
 }
 
 /**
  * A shadow's colour from a token that is the colour or the word `inset`: currentcolor, which the
  * node fills in, when it is `inset` or unset, and nothing, so no shadow, when it is anything else.
  */
-function insetOrColour(token: TokenValue | undefined): string | undefined {
+function insetOrColour(token: TokenValue | undefined): string | PlatformColour | undefined {
   if (!token || token.keyword === 'inset') return 'currentcolor';
-  return formOf(token, 'color') as string | undefined;
+  return formOf(token, 'color') as string | PlatformColour | undefined;
+}
+
+/** The kinds of token a colour is part of. */
+const COLOURED_KINDS: ReadonlySet<TokenKind> = new Set(['color', 'shadow', 'filter']);
+
+/**
+ * The first token a declaration or a token reads, at any depth and through the tokens those read,
+ * that holds a platform colour. Asked only of one that came to nothing, in development.
+ */
+function platformColourRead(
+  value: unknown,
+  tokens: Readonly<Record<string, TokenValue>>,
+  seen: Set<string>,
+): string | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const record = value as Record<string, unknown>;
+  const names = [record['reference'], record['alias'], ...[record['alternatives']].flat()];
+  for (const name of names) {
+    const found = typeof name === 'string' ? platformColourNamed(name, tokens, seen) : undefined;
+    if (found) return found;
+  }
+  for (const part of Object.values(record)) {
+    const found = platformColourRead(part, tokens, seen);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** `platformColourRead` of the token `name`, which is the one when it holds a platform colour. */
+function platformColourNamed(
+  name: string,
+  tokens: Readonly<Record<string, TokenValue>>,
+  seen: Set<string>,
+): string | undefined {
+  if (seen.has(name)) return undefined;
+  seen.add(name);
+  const token = tokens[name];
+  if (isPlatformColour(token?.color)) return name;
+  return token?.platformColourIn ?? platformColourRead(token, tokens, seen);
 }
 
 /** A marker the compiler leaves in a structured value for a colour only the device can settle. */
@@ -6214,7 +6359,9 @@ function withPercent(value: unknown, adjust: NonNullable<DeferredDeclaration['ad
  * the app meant, and turning it into NaN would be a silent layout rather than a visible one.
  */
 function adjusted(value: unknown, adjust: NonNullable<DeferredDeclaration['adjust']>): unknown {
-  if (adjust.alpha !== undefined) return faded(value, adjust.alpha);
+  // A platform colour has no alpha to fade: unset, where it was painted as it stood.
+  if (adjust.alpha !== undefined)
+    return isPlatformColour(value) ? undefined : faded(value, adjust.alpha);
   const em = (value as { __defer?: DeferredEm } | null)?.__defer;
   if (adjust.percent !== undefined) return withPercent(value, adjust);
   if (em && adjust.floor === undefined) return adjustedEm(em, adjust);
