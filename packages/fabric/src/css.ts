@@ -829,10 +829,53 @@ const INHERITED_POINTER_EVENTS = new Set(['none', 'auto']);
 
 /**
  * A shape's paint, which SVG hands down: a path under an `<svg>` with a `fill` has that fill.
- * Inherited only in a library's drawing (`StyleTarget.namespace`). An icon's shapes are left to
- * react-native-svg, which hands a group's paint down itself, from what the shape set as its own.
+ * Handed down through any element, as a browser does, `.btn { fill: currentColor }` to the
+ * icon in the button, and taken only by a library's drawing (`StyleTarget.namespace`). An icon's
+ * shapes are left to react-native-svg, which hands a group's paint down itself, from what the
+ * shape set as its own.
+ *
+ * ponytail: an inline style's paint is handed down by a drawing's node alone (`setsInherited`).
+ * Hand it down from any node as a rule's is if `[style.fill]` on a box around a drawing is seen.
  */
 const SHAPE_PAINT_INHERITED: ReadonlySet<string> = new Set(['fill', 'stroke', 'strokeWidth']);
+
+/**
+ * Whether a node takes the shape's paint it is handed: a node of a library's drawing, or one a
+ * package makes in it, as web-compat makes the span a text's words are drawn by.
+ */
+const takesPaint = (node: StyleTarget): boolean =>
+  node.namespace !== undefined || node.parent?.namespace !== undefined;
+
+/** Whether a node is handed a shape's paint: see `SHAPE_PAINT_INHERITED`. */
+const handedPaint = (inherited: Record<string, unknown>): boolean =>
+  inherited['fill'] !== undefined ||
+  inherited['stroke'] !== undefined ||
+  inherited['strokeWidth'] !== undefined;
+
+/** The styles of nodes outside a drawing with no rules, by the map they inherit: see `unpainted`. */
+const unpaintedStyles = new WeakMap<Record<string, unknown>, Record<string, unknown>>();
+
+/**
+ * A style without the shape's paint it was handed, for a node outside a drawing: it hands the
+ * paint on and takes none, as an icon's shape commits only the paint it was given itself.
+ */
+function unpainted(
+  style: Record<string, unknown>,
+  own: Record<string, unknown> | null,
+): Record<string, unknown> {
+  if (!handedPaint(style)) return style;
+  if (own) {
+    for (const key of SHAPE_PAINT_INHERITED) if (!(key in own)) delete style[key];
+    return style;
+  }
+  let bare = unpaintedStyles.get(style);
+  if (!bare) {
+    bare = { ...style };
+    for (const key of SHAPE_PAINT_INHERITED) delete bare[key];
+    unpaintedStyles.set(style, bare);
+  }
+  return bare;
+}
 
 /** Whether a prop of a shape in a drawing is a paint it hands down: see `inheritFrom`. */
 export const handsDownPaint = (key: string): boolean =>
@@ -3343,7 +3386,7 @@ function inheritFrom(
   const drawing = node?.namespace !== undefined;
   let inherited = drawing ? ownPaint(node!, parentInherited, own) : parentInherited;
   for (const key of Object.keys(own)) {
-    if (!(INHERITED.has(key) || (drawing && SHAPE_PAINT_INHERITED.has(key)))) continue;
+    if (!(INHERITED.has(key) || SHAPE_PAINT_INHERITED.has(key))) continue;
     // `pointer-events: inherit`, which only an inline style on an element no rule matches still
     // holds here: what the parent hands down stands.
     if (key === 'pointerEvents' && own[key] === 'inherit') continue;
@@ -4074,7 +4117,9 @@ export class StyleResolver {
       parentContext,
       scope: scope ?? context,
       parentScope,
-      style: unstyledStyle(parentInherited, inline),
+      style: takesPaint(node)
+        ? unstyledStyle(parentInherited, inline)
+        : unpainted(unstyledStyle(parentInherited, inline), null),
       inherited: handedOn(node, parentInherited, inline, drawing),
       tokens,
     };
@@ -4255,12 +4300,12 @@ export class StyleResolver {
     const drawing = node.namespace !== undefined;
     const inline = node.inlineInherits ? inlineInherited(node.props['style'], drawing) : null;
     // Nor one that takes a value from its parent's own style, which two parents differ in, nor
-    // a node of a drawing, which hands down paint another node with its rules does not.
+    // one that takes a drawing's paint, which another node with its rules does not.
     if (
       node.customProperties ||
       inline ||
       node.boundStyle ||
-      drawing ||
+      takesPaint(node) ||
       matched.some(takesParents)
     ) {
       return this.style(node, matched, parentTokens, parentInherited, inline);
@@ -4334,6 +4379,7 @@ export class StyleResolver {
     // `pointer-events: inherit` won the cascade: what the parent hands down stands.
     if (own['pointerEvents'] === 'inherit') delete own['pointerEvents'];
     const style = { ...parentInherited, ...own };
+    if (!takesPaint(node)) unpainted(style, own);
     settleLineHeight(style);
     const inherited = decorate(style, inheritFrom(parentInherited, own, node), own);
     const rtl = (style['direction'] ?? this.conditions.direction) === 'rtl';
@@ -5377,16 +5423,19 @@ function tokenForm(token: TokenValue, kind: TokenKind): unknown {
   return value === undefined && kind === 'color' && isCurrentColour(token) ? CURRENT_COLOUR : value;
 }
 
-/** A corner's place among four as CSS writes them, before a side's: `borderTopLeftRadius`. */
+/**
+ * A corner's place among four as CSS writes them, before a side's: `borderTopLeftRadius`. A side
+ * may have no box name before it, as an inset's `top` and `left` do.
+ */
 const PLACES: readonly (readonly [RegExp, number])[] = [
   [/TopLeft|TopStart|StartStart/, 0],
   [/TopRight|TopEnd|StartEnd/, 1],
   [/BottomRight|BottomEnd|EndEnd/, 2],
   [/BottomLeft|BottomStart|EndStart/, 3],
-  [/Top/, 0],
-  [/Right|End/, 1],
-  [/Bottom/, 2],
-  [/Left|Start/, 3],
+  [/Top|^top$/, 0],
+  [/Right|End|^right$/, 1],
+  [/Bottom|^bottom$/, 2],
+  [/Left|Start|^left$/, 3],
 ];
 
 /** Where a side or a corner comes in a shorthand of four, whatever order its props are kept in. */
@@ -6333,6 +6382,10 @@ function colourMarker(value: unknown): ColourExpression | undefined {
   return (value as { __colour?: ColourExpression } | null)?.__colour;
 }
 
+/** A percentage, as a token that holds one gives it: `'50%'`. */
+const isShare = (value: unknown): value is string =>
+  typeof value === 'string' && value.endsWith('%');
+
 /**
  * A token added to a percentage, `calc(100% - var(--handle))`: a length in points or a share of
  * the same box adds up to one value. A length of the box's own font does not, here, so the box is
@@ -6340,7 +6393,7 @@ function colourMarker(value: unknown): ColourExpression | undefined {
  */
 function withPercent(value: unknown, adjust: NonNullable<DeferredDeclaration['adjust']>): unknown {
   const percent = adjust.percent!;
-  if (typeof value === 'string' && value.endsWith('%')) {
+  if (isShare(value)) {
     const share = percent + Number.parseFloat(value) * (adjust.scale ?? 1);
     const offset = adjust.offset ?? 0;
     return offset === 0 ? `${share}%` : `calc(${share}% + ${offset}px)`;
@@ -6365,7 +6418,17 @@ function adjusted(value: unknown, adjust: NonNullable<DeferredDeclaration['adjus
   const em = (value as { __defer?: DeferredEm } | null)?.__defer;
   if (adjust.percent !== undefined) return withPercent(value, adjust);
   if (em && adjust.floor === undefined) return adjustedEm(em, adjust);
-  if (typeof value !== 'number') return value;
+  // A share the token holds, `calc(var(--p) - 10px)` with `--p: 50%`: the same sum as one
+  // written beside a percentage, which a property with no box for it does not commit. Not under
+  // a `max()`, whose floor such a sum has no way to keep.
+  if (isShare(value) && adjust.floor === undefined) {
+    return withPercent(value, { ...adjust, percent: 0 });
+  }
+  return typeof value === 'number' ? scaledNumber(value, adjust) : value;
+}
+
+/** A number moved by the arithmetic around its `var()`, kept at or above a `max()`'s floor. */
+function scaledNumber(value: number, adjust: NonNullable<DeferredDeclaration['adjust']>): number {
   const scaled = value * (adjust.scale ?? 1) + (adjust.offset ?? 0);
   return adjust.floor === undefined ? scaled : Math.max(scaled, adjust.floor);
 }
