@@ -26,12 +26,13 @@
  * than views, and they are a later opt-in rather than the primary API.
  */
 import { Component, DestroyRef, ElementRef, computed, effect, inject, input } from '@angular/core';
-import { ColorScheme, OS_VERSION } from '@ng-native/device';
+import { ColorScheme, OS_VERSION, SCREEN_IN_FRONT } from '@ng-native/device';
 import { NATIVE_HEADER_DEFAULTS } from './native-bar-defaults.ts';
 import { NATIVE_HEADER_PALETTE } from './native-header-palette.ts';
 import type { EngineNode } from '@ng-native/fabric';
 import { ownHost } from './own-host.ts';
 import { SCREEN_HEADER } from './screen-header.ts';
+import { TAB_BAR_HIDING } from './tab-bar-hiding.ts';
 import { nativePlatform } from '@ng-native/fabric';
 import { optionalBoolean, optionalNumber } from './transforms.ts';
 
@@ -117,12 +118,26 @@ export class NativeHeader {
   /** Told whether this is a bar the page starts below. See `screen-header.ts`. */
   private readonly above = inject(SCREEN_HEADER, { optional: true });
 
+  /** The tab bar this screen is in, when it is in a tab's own stack. See `tab-bar-hiding.ts`. */
+  private readonly tabBar = inject(TAB_BAR_HIDING, { optional: true });
+
   constructor() {
     ownHost(inject(ElementRef).nativeElement as EngineNode, this.constructor);
+    this.hideTabBarInFront();
     const above = this.above;
     if (!above) return;
     effect(() => above.set(!this.hidden() && !this.isTranslucent()));
     inject(DestroyRef).onDestroy(() => above.set(false));
+  }
+
+  /** Ask the tab bar to hide while this screen is in front and `tabBarHidden` is true. */
+  private hideTabBarInFront(): void {
+    if (!this.tabBar) return;
+    const inFront = inject(SCREEN_IN_FRONT);
+    const withdraw = this.tabBar.hideWhile(
+      computed(() => this.tabBarHidden() === true && inFront()),
+    );
+    inject(DestroyRef).onDestroy(withdraw);
   }
 
   /**
@@ -220,6 +235,14 @@ export class NativeHeader {
   readonly blurEffect = input<BlurEffect>();
   /** Hide the bar entirely, keeping the screen's gestures and safe areas. */
   readonly hidden = input(undefined, { transform: optionalBoolean });
+  /**
+   * Hide the tab bar while this screen is in front, for a page pushed in a tab's own stack, as
+   * UIKit's `hidesBottomBarWhenPushed` does. The bar comes back once the screen is popped or
+   * covered, or another tab is selected. Not animated with the push: react-native-screens hides
+   * the whole bar, at the commit that shows the screen. Not a prop of this header's native view;
+   * a screen in no tab bar ignores it.
+   */
+  readonly tabBarHidden = input(undefined, { transform: optionalBoolean });
   /** Drop the hairline under the bar. */
   readonly hideShadow = input(undefined, { transform: optionalBoolean });
   /** Let content scroll under the bar rather than starting below it. */

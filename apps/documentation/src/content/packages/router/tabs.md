@@ -210,6 +210,40 @@ A scroll view that fills the tab can usually do without: on iOS, with
 included. Android has no equivalent, so there the last rows scroll under the bar unless the
 content is padded.
 
+## Hiding the tab bar for a pushed screen
+
+A detail page pushed in a tab's own stack can hide the bar while it is showing, as UIKit's
+`hidesBottomBarWhenPushed` and SwiftUI's `.toolbar(.hidden, for: .tabBar)` do, with
+`tabBarHidden` on its header:
+
+```ts
+@Component({
+  selector: 'x-customer-detail',
+  imports: [NativeHeader],
+  template: `
+    <native-header title="Customer" tabBarHidden />
+    <!-- the page -->
+  `,
+})
+export class CustomerDetail {}
+```
+
+The bar is hidden while that screen is the one in front, and shown again once it is not: popped,
+covered by a screen pushed over it, or behind another tab. It follows a push, a back, a swipe back,
+a tab switch, a link or a launch straight on the page, and a reset. A screen pushed over the whole
+bar, on the app's own stack, is in no tab and leaves the bar alone. `[barHidden]` on the
+`<native-tabs-outlet>` still hides the bar for every tab, and a screen asking wins over a
+`[barHidden]` of `false`.
+
+react-native-screens has no prop that hides the bar for one screen, so UIKit's per-screen
+behaviour is not what runs: the outlet sets the tabs host's `tabBarHidden`, which hides the whole
+bar at once. Neither platform animates it. iOS 18 and later hide it with
+`setTabBarHidden:animated:NO`, and earlier iOS sets the bar's `hidden`. On Android the bottom
+navigation bar is made not visible. So the bar goes as the screen is pushed rather than sliding
+away with it. A back from code, or Android's back button, shows it again as the pop starts; on
+iOS, a back with the header's back button or a swipe shows it once the pop has finished, when
+UIKit reports the screen gone. `<tab-safe-area-view>` follows the bar either way.
+
 ## Pushing into another tab
 
 `NativeNavigation.push('/items/1')` from another tab selects the Items tab and pushes the page

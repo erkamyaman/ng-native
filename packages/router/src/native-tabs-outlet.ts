@@ -46,6 +46,7 @@ import {
   type AfterContentInit,
   type ComponentRef,
   type EnvironmentInjector,
+  type Signal,
   type Type,
   type WritableSignal,
 } from '@angular/core';
@@ -68,6 +69,7 @@ import { NativeTab, screenKeyOf } from './native-tab.ts';
 import { ownHost } from './own-host.ts';
 import { markTabRoute } from './tab-routes.ts';
 import { IN_TAB, type InTab } from './in-tab.ts';
+import { TAB_BAR_HIDING, type TabBarHiding } from './tab-bar-hiding.ts';
 import { taken, withoutPresented } from './presented-route.ts';
 import { SVG_ICON_HOST } from './svg-icons.ts';
 
@@ -125,7 +127,7 @@ interface TabSelection {
   providers: [{ provide: SVG_ICON_HOST, useFactory: () => inject(ViewContainerRef) }],
   host: {
     '[style]': 'fill',
-    '[tabBarHidden]': 'barHidden()',
+    '[tabBarHidden]': 'tabBarHidden()',
     '[tabBarTintColor]': 'tintColor() ?? defaults().tintColor',
     '[nativeContainerBackgroundColor]': 'backgroundColor() ?? defaults().backgroundColor',
     '[colorScheme]': 'colorScheme() ?? defaults().colorScheme',
@@ -162,9 +164,26 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
 
   protected readonly fill = { flex: 1 };
 
+  /** What the screens in the tabs ask, each true while its screen is in front and wants it. */
+  private readonly hiders = signal<readonly Signal<boolean>[]>([]);
+  private readonly hiding: TabBarHiding = {
+    hideWhile: (hidden) => {
+      this.hiders.update((hiders) => [...hiders, hidden]);
+      return () => this.hiders.update((hiders) => hiders.filter((hider) => hider !== hidden));
+    },
+  };
+
+  /** Hidden while a screen in front asks, and otherwise as the outlet's own `barHidden` says. */
+  protected readonly tabBarHidden = computed(() =>
+    this.hiders().some((hidden) => hidden()) ? true : this.barHidden(),
+  );
+
   // --- the bar itself -----------------------------------------------------
 
-  /** Hide the bar without unmounting the tabs, for a screen that wants the whole window. */
+  /**
+   * Hide the bar without unmounting the tabs, for a screen that wants the whole window. A screen
+   * in a tab's stack can hide it too while it is in front: see `NativeHeader.tabBarHidden`.
+   */
   readonly barHidden = input(undefined, { transform: optionalBoolean });
   /** The colour of the selected item. iOS. */
   readonly tintColor = input<string | number>();
@@ -686,6 +705,7 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
       providers: [
         { provide: SCREEN_IN_FRONT, useValue: computed(() => outer() && entry.inFront()) },
         { provide: IN_TAB, useValue: tab },
+        { provide: TAB_BAR_HIDING, useValue: this.hiding },
         { provide: ActivatedRoute, useValue: route },
         {
           provide: ChildrenOutletContexts,
