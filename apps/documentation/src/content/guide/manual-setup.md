@@ -109,7 +109,7 @@ Metro's Angular compiler processes library and app components together. Without 
 `tsc` reports errors for files in `node_modules`.
 
 `extends` names Expo's file with its `.json`. From SDK 58 `expo` has an exports map, and Vitest
-finds `expo/tsconfig.base` without the extension nowhere: every test file fails to load with
+cannot find `expo/tsconfig.base` without the extension: every test file fails to load with
 `Failed to load tsconfig 'expo/tsconfig.base'`. `tsc` accepts either name.
 
 ### Checking templates
