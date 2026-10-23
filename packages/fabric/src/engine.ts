@@ -2416,9 +2416,9 @@ function gridLayout(node: EngineNode, props: Record<string, unknown>): void {
     // would leave them to whatever further up is positioned.
     if (node.grid && props['position'] === 'static') props['position'] = 'relative';
   }
-  // A transform makes a box what its absolute boxes are placed against, static or not, and Yoga
-  // knows only positions: see `placesItself`.
-  if (props['position'] === 'static' && transformed(props['transform'])) {
+  // A transform, a filter and the rest make a box what its absolute boxes are placed against,
+  // static or not, and Yoga knows only positions: see `placesItself`.
+  if (props['position'] === 'static' && containsAbsolutes((key) => props[key])) {
     props['position'] = 'relative';
     // Still static to what places it: an inset moves no static box, in a grid or out of one.
     for (const key of INSET_SIDES) if (props[key] !== undefined) delete props[key];
@@ -2983,17 +2983,46 @@ const LAID_OUT_HERE = new Set([
 ]);
 /**
  * Whether a box is what an absolute box in it is placed against: one that is not static, or one
- * with a transform, which CSS makes a containing block however it is positioned.
+ * CSS makes a containing block however it is positioned (see `containsAbsolutes`).
  */
 function placesItself(node: EngineNode): boolean {
-  return readStyle(node, 'position') !== 'static' || transformed(readStyle(node, 'transform'));
+  return (
+    readStyle(node, 'position') !== 'static' || containsAbsolutes((key) => readStyle(node, key))
+  );
 }
 
-/** Whether a transform is one: a list or text of one, and not `none`. */
-const transformed = (transform: unknown): boolean =>
-  Array.isArray(transform)
-    ? transform.length > 0
-    : typeof transform === 'string' && transform !== '' && transform !== 'none';
+/**
+ * Whether a style makes its box the containing block of its absolute boxes, positioned or not: a
+ * transform, a filter, a backdrop filter or a perspective other than `none`, a containment of
+ * layout or paint, or a `will-change` naming one of those or `position`.
+ */
+function containsAbsolutes(style: (key: string) => unknown): boolean {
+  if (CONTAINING_KEYS.some((key) => given(style(key)))) return true;
+  const contain = style('contain');
+  if (typeof contain === 'string' && contain.split(/\s+/).some((word) => CONTAINS.has(word)))
+    return true;
+  const willChange = style('willChange');
+  return (
+    typeof willChange === 'string' &&
+    willChange.split(',').some((name) => WILL_CONTAIN.has(name.trim()))
+  );
+}
+
+/** What makes a box a containing block where it is set to anything but `none`. */
+const CONTAINING_KEYS = ['transform', 'filter', 'backdropFilter', 'perspective'];
+/** The containments that make one: of layout or paint, alone or as `strict` or `content`. */
+const CONTAINS = new Set(['layout', 'paint', 'strict', 'content']);
+/** The properties a `will-change` makes one by naming, as Chrome has it. */
+const WILL_CONTAIN = new Set([
+  ...['transform', 'translate', 'rotate', 'scale', 'perspective'],
+  ...['filter', 'backdrop-filter', 'contain', 'position'],
+]);
+
+/** Whether a value is one: a list or text of one, not `none`, or a number. */
+const given = (value: unknown): boolean =>
+  Array.isArray(value)
+    ? value.length > 0
+    : typeof value === 'number' || (typeof value === 'string' && value !== '' && value !== 'none');
 
 const POSITIONS_HERE = new Set(['static', 'fixed', 'sticky']);
 
@@ -4996,8 +5025,11 @@ const FONT_REFRESH_STEP = 0.006;
 /** The views that take a cursor, on either platform. */
 const TEXT_INPUTS = new Set(['TextInput', 'AndroidTextInput']);
 
+/** Whether a view name is a text input's, for a committed view, which has a name and no node. */
+export const isTextInputView = (viewName: string): boolean => TEXT_INPUTS.has(viewName);
+
 /** Whether a node commits as a text input, the view that takes a cursor, on either platform. */
-export const isTextInput = (node: ViewNameNode): boolean => TEXT_INPUTS.has(viewNameOf(node));
+export const isTextInput = (node: ViewNameNode): boolean => isTextInputView(viewNameOf(node));
 
 /**
  * Android's horizontal scroll view and the view that holds its content. RN's `ScrollView.js`
@@ -7427,6 +7459,43 @@ export class Engine implements HostEngine {
     if (!running?.done || fillsForwards(running)) return;
     running.values = {};
     this.markProps(node, false);
+  }
+
+  /**
+   * End a node's `@keyframes` animation now, as a script's `finish()` or `cancel()` does: at its
+   * end, which is its last frame where it fills forwards and its resting style where it does not,
+   * or with no effect of it at all. Native is stopped where it plays it, and what the view is drawn
+   * at set there too (see `endedNatively`). It stays ended while the node asks for the same one.
+   */
+  endPlaying(node: EngineNode, how: 'finish' | 'cancel'): void {
+    const running = node.playing;
+    // One that never ends has no end to go to: a script is refused it first.
+    if (!running || (how === 'finish' && running.spec.iterations === null)) return;
+    if (running.done) {
+      // Ended already, and held at its last frame by its fill: a cancel lets that go.
+      if (how === 'cancel' && Object.keys(running.values).length) {
+        running.values = {};
+        this.markProps(node, false);
+      }
+      return;
+    }
+    const native = running.native !== undefined;
+    this.stopNative(node, running);
+    running.pausedAt = undefined;
+    if (how === 'finish') {
+      const { spec } = running;
+      const end = running.start + spec.delay + spec.duration * (spec.iterations ?? 1);
+      this.advancePlayer(node, Math.max(this.now(), end));
+    } else {
+      running.values = {};
+      running.done = true;
+      this.playing.delete(node);
+      this.markProps(node, false);
+      this.emitTransition(node, 'topAnimationcancel', running.spec.name);
+    }
+    this.commit();
+    const committed = node.committed;
+    if (native && node.owned && committed) this.setOwned(node, RESET_OWNED, committed.props);
   }
 
   addClass(node: EngineNode, name: string): void {

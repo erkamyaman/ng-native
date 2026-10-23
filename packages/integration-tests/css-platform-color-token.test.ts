@@ -544,3 +544,128 @@ describe('a token holding platform-color() in a transition', () => {
     assert.deepEqual(s.committed(a)['color'], { processed: 'rgb(0, 0, 0)' });
   });
 });
+
+/** The colour longhands an element's own style sets as the view reads them. */
+const OWN_COLOUR_PROPERTIES = [
+  'color',
+  'background-color',
+  'border-top-color',
+  'outline-color',
+  'text-decoration-color',
+  'tint-color',
+  'shadow-color',
+];
+
+describe("platform-color() in an element's own style", () => {
+  for (const property of OWN_COLOUR_PROPERTIES) {
+    it(`commits in ${property} what the colour in a stylesheet commits, written and bound`, () => {
+      const s = app(`.direct { ${property}: ${LINK}; }`);
+      const renderer = new NativeRendererFactory(s.engine).createRenderer(null, null);
+      const direct = s.element('direct');
+      const written = s.element('');
+      renderer.setAttribute(written, 'style', `${property}: ${LINK}`);
+      const bound = s.element('');
+      renderer.setStyle(bound, property, LINK);
+      s.engine.commit();
+      const { nativeID: _d, ...expected } = s.committed(direct);
+      const { nativeID: _w, ...fromAttribute } = s.committed(written);
+      const { nativeID: _b, ...fromBinding } = s.committed(bound);
+      assert.ok(Object.keys(expected).length > 0, `${property} commits something in a sheet`);
+      assert.deepEqual(fromAttribute, expected);
+      assert.deepEqual(fromBinding, expected);
+    });
+  }
+
+  it('changes to a colour and back, and sends null when it goes', () => {
+    const s = app('');
+    const renderer = new NativeRendererFactory(s.engine).createRenderer(null, null);
+    const a = s.element('');
+    renderer.setStyle(a, 'color', 'red');
+    s.engine.commit();
+    renderer.setStyle(a, 'color', LINK);
+    s.engine.commit();
+    assert.deepEqual(s.committed(a)['color'], PROCESSED_LINK);
+    renderer.setStyle(a, 'color', 'red');
+    s.engine.commit();
+    assert.deepEqual(s.committed(a)['color'], { processed: 'red' });
+    renderer.setStyle(a, 'color', LINK);
+    s.engine.commit();
+    renderer.removeStyle(a, 'color');
+    s.engine.commit();
+    assert.equal(s.committed(a)['color'], null);
+  });
+
+  it('is the shape Android reads on Android', async () => {
+    const { registerPlatformComponents } = await import('@ng-native/fabric');
+    registerPlatformComponents('android');
+    try {
+      const s = app('');
+      const renderer = new NativeRendererFactory(s.engine).createRenderer(null, null);
+      const a = s.element('');
+      renderer.setAttribute(a, 'style', `background-color: ${LINK}`);
+      s.engine.commit();
+      assert.deepEqual(s.committed(a)['backgroundColor'], {
+        processed: { resource_paths: ['link', '?attr/colorAccent'] },
+      });
+    } finally {
+      registerPlatformComponents('ios');
+    }
+  });
+
+  it('leaves a value that names no platform colour as it is written', () => {
+    const s = app('');
+    const renderer = new NativeRendererFactory(s.engine).createRenderer(null, null);
+    const a = s.element('');
+    renderer.setAttribute(a, 'style', 'color: platform-color(); width: platform-color(link)');
+    s.engine.commit();
+    assert.deepEqual(s.committed(a)['color'], { processed: 'platform-color()' });
+    assert.equal(s.committed(a)['width'], 'platform-color(link)');
+  });
+});
+
+describe('a platform colour written in a text-shadow', () => {
+  /** What a sheet drops as it compiles. */
+  const dropsOf = (css: string): string[] => {
+    const dropped: string[] = [];
+    compileCss(css, 'shadow.css', { onUnsupported: (message) => dropped.push(message) });
+    return dropped;
+  };
+
+  /** The text shadow `shadow` commits, beside what `color: <colour>` commits. */
+  const shadowAndColour = (shadow: string, colour: string) => {
+    const css = `.shadow { text-shadow: ${shadow}; } .colour { color: ${colour}; }`;
+    assert.deepEqual(dropsOf(css), [], 'nothing dropped');
+    const s = app(css);
+    const shadowed = s.element('shadow', 'text');
+    const coloured = s.element('colour', 'text');
+    s.engine.commit();
+    return { shadow: s.committed(shadowed), colour: s.committed(coloured)['color'] };
+  };
+
+  for (const [name, colour] of [
+    ['platform-color()', LINK],
+    ['a system colour', 'LinkText'],
+  ]) {
+    it(`commits ${name} as the shadow's colour, as color commits it`, () => {
+      const { shadow, colour: expected } = shadowAndColour(`0 1px 2px ${colour}`, colour);
+      assert.ok(expected !== undefined);
+      assert.deepEqual(shadow['textShadowColor'], expected);
+      assert.deepEqual(shadow['textShadowOffset'], { width: 0, height: 1 });
+      assert.equal(shadow['textShadowRadius'], 2);
+    });
+
+    it(`commits ${name} as the fallback of an unset token`, () => {
+      const { shadow, colour: expected } = shadowAndColour(
+        `0 1px 2px var(--unset, ${colour})`,
+        colour,
+      );
+      assert.deepEqual(shadow['textShadowColor'], expected);
+      assert.deepEqual(warnings, []);
+    });
+
+    it(`still drops ${name} in a box-shadow, and says so`, () => {
+      assert.equal(dropsOf(`.a { box-shadow: 0 1px 2px ${colour}; }`).length, 1);
+      assert.equal(dropsOf(`.a { box-shadow: 0 1px 2px var(--unset, ${colour}); }`).length, 1);
+    });
+  }
+});

@@ -15,6 +15,7 @@ const {
   shadowsWithColourTokens,
 } = require('./colour-expression.cjs');
 const {
+  calcLength,
   CssUnsupported,
   CURRENT_COLOUR,
   fallbacks,
@@ -2073,11 +2074,26 @@ function addAliased(name, parts, out, deferred, context) {
     deferred.push(deferVar({ propertyId: { property: name }, value: parts }, context));
     return;
   }
-  if (value?.length === undefined) throw unsupported(name, context);
-  if (typeof value.length === 'string' && value.length.endsWith('%') && NO_PERCENT.has(name)) {
+  const declared = { propertyId: { property: name }, value: parts };
+  // A function of a token or an `env()`, `calc(var(--x) * -1)` as Tailwind negates one: worked
+  // out on device, as a longhand lightningcss parses is with one.
+  if (mentionsVar(withEnvAsVar(declared, context).value)) {
+    addUnparsed({ property: 'unparsed', value: declared }, out, deferred, context);
+    return;
+  }
+  const settled = value?.length ?? calcLength(parts, context);
+  if (NO_PERCENT.has(name) && mentionsPercent(parts)) {
     throw new CssUnsupported(`${context}: '${name}' takes a length, not a percentage`);
   }
-  for (const prop of propsFor(name)) out[prop] = value.length;
+  if (settled === undefined) throw unsupported(name, context);
+  for (const prop of propsFor(name)) out[prop] = settled;
+}
+
+/** Whether unparsed terms hold a percentage, inside a function or not. */
+function mentionsPercent(parts) {
+  return (parts ?? []).some(
+    (part) => part?.value?.type === 'percentage' || mentionsPercent(part?.value?.arguments),
+  );
 }
 
 /**
@@ -2212,6 +2228,13 @@ function addCustomWord(name, parts, out, context) {
   if (word === null) throw unsupported(name, context);
   translate(name, word, out, context);
 }
+
+/** Whether a raw value is a `text-shadow` with `platform-color()` written in it. */
+const writtenPlatformShadow = (value) =>
+  value?.propertyId?.property === 'text-shadow' &&
+  (value.value ?? []).some(
+    (part) => part?.type === 'function' && part.value?.name === PLATFORM_COLOR,
+  );
 
 /**
  * Whether a raw value has nothing in it for the device to settle. One side of a light-dark() may
@@ -2356,7 +2379,9 @@ function addUnparsed(declaration, out, deferred, context) {
     for (const prop of platform.props) out[prop] = platform.value;
     return;
   }
-  if (settledAsWritten(declaration)) {
+  // `text-shadow: 0 1px 2px platform-color(link)`, which lightningcss cannot parse: its colour is
+  // a prop of its own, which takes the names as `color` does.
+  if (settledAsWritten(declaration) && !writtenPlatformShadow(declaration.value)) {
     unparsedValue(declaration.value, out, deferred, context);
     return;
   }
