@@ -362,7 +362,9 @@ describe("the files a page's stylesheet names", () => {
           // In development, the sheet the module puts in the page's `<style>`.
           injected: injectedCss(sheet.output[0]!.data.code),
           dependencies: sheet.dependencies.map((dependency) => dependency.name),
-          resources: (sheet.angularNativeResources ?? []).map((resource) => resource.file),
+          resources: (sheet.output[0]!.data.angularNativeResources ?? []).map(
+            (resource) => resource.file,
+          ),
         };
       } finally {
         console.warn = warn;
@@ -642,6 +644,7 @@ describe("the files a page's stylesheet names", () => {
 
 interface Sheet {
   dependencies: { name: string }[];
-  output: { data: { code: string; css?: { code: string } } }[];
-  angularNativeResources?: { file: string }[];
+  output: {
+    data: { code: string; css?: { code: string }; angularNativeResources?: { file: string }[] };
+  }[];
 }

@@ -18,7 +18,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { existsSync, readdirSync, readFileSync, watch } = require('node:fs');
 const { iconSetVersions } = require('./inline-icons.cjs');
-const { checkingResources } = require('./resource-cache.cjs');
+const { checkingResources, rereadingResources } = require('./resource-cache.cjs');
 
 const SOURCE_EXTS = ['html', 'css', 'scss', 'md'];
 const WEB_FONT_EXTS = ['woff', 'woff2'];
@@ -511,6 +511,19 @@ function withParkedRoute(config) {
 }
 
 /**
+ * Has a dev server transform a component again once a template or stylesheet it read has changed:
+ * see `rereadingResources`. Metro hands its server only to `enhanceMiddleware`.
+ */
+function withResourceReaders(config) {
+  const enhance = config.server?.enhanceMiddleware;
+  const enhanceMiddleware = (middleware, server) => {
+    rereadingResources(server, config.projectRoot ?? process.cwd());
+    return enhance ? enhance(middleware, server) : middleware;
+  };
+  config.server = { ...config.server, enhanceMiddleware };
+}
+
+/**
  * Wraps the server's `rewriteRequestUrl`, Expo's included, so a lazy chunk from a library outside
  * the server root is served: see `chunkOutsideServerRoot`.
  */
@@ -731,6 +744,9 @@ function withAngularNative(config, options = {}) {
   // A component's cached transform is a miss once a template or stylesheet it read has changed:
   // see `resource-cache.cjs`. The stores the config has now; one set after this is not checked.
   config.cacheStores = checkingResources(config.cacheStores, config.projectRoot);
+  // And a running dev server, which keeps what it transformed in its graph rather than asking the
+  // cache, transforms such a component again.
+  withResourceReaders(config);
 
   // So a change to the compiler invalidates every cached transform rather than only the files
   // that happen to be edited alongside it.

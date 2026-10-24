@@ -53,6 +53,10 @@ module.exports = withAngularNative(getDefaultConfig(__dirname));
   config has when `withAngularNative` runs are wrapped, so set your own `cacheStores` before calling
   it. The worker above is what records those files, so with a worker you configured yourself there
   is nothing to check and a release build needs `--clear` after such an edit.
+- Wraps `config.server.enhanceMiddleware`, keeping one you set before calling it, to reach the dev
+  server Metro starts, which then compiles a component again once a `templateUrl` or `styleUrl` file
+  it read has changed or gone, rather than serving the module it compiled before. One set after
+  `withAngularNative` replaces the wrapper, so wrap the config's own instead.
 
 Pass `{ workspaceRoot }` in a monorepo where the framework packages live outside your app's own
 `node_modules` - it adds the workspace root to `watchFolders` and both `node_modules` directories to
@@ -194,20 +198,26 @@ than leaving a half-rebuilt view on screen that throws on every change detection
 
 ### External templates and stylesheets
 
-An edit to a `templateUrl` or `styleUrl` file swaps in place too, keeping the component's state. It
-cannot go through the component's own module: Metro caches a transform on the file's own content and
-re-transforms only the file that changed, so the component's module is still the one compiled
-against the old template. Instead the template's or stylesheet's own module does it. In dev, the
-transformer finds the components that use the file - the source files anywhere in the project (the
+An edit to a `templateUrl` or `styleUrl` file swaps in place too, keeping the component's state.
+Metro transforms again only the file that changed, and a component's template and sheet are compiled
+into the component's own module, so left to itself a running dev server would serve that module as
+it was compiled against the old text, to every reload and launch, until the component's `.ts` file
+changed. So before the dev server answers a bundle request or sends a hot update, it checks each
+template and stylesheet a module of the bundle was compiled from against the file as it is now, and
+compiles the module again when one has changed or gone. The hot update then carries the
+component's module compiled against the new text, which swaps it in place, and the next reload or
+launch loads the component as it is now.
+
+The template's or stylesheet's own module carries the same swap. In dev, the transformer finds the
+components that use the file - the source files anywhere in the project (the
 nearest directory above the file with a `package.json`, leaving out `node_modules`, `ios`, `android`
 and build output) naming it in a `templateUrl` or `styleUrl`, whether as `./card.css` beside it or
 `../shared/lab.css` from another directory - and compiles each of them against the new text into
 that module: the same `ɵɵreplaceMetadata` swap, plus the component's recompiled rule set when the
 file is a stylesheet. The module accepts its own update, so nothing bubbles into a reload.
 
-The same module also fixes what a full reload after the edit shows. It runs before the component's
-module (the component imports it), and when the component registers, any template or sheet newer
-than the one it was compiled with is applied first.
+It runs before the component's module (the component imports it), and when the component registers,
+any template or sheet newer than the one it was compiled with is applied first.
 
 A release build empties that module, so it cannot carry the edit there. Instead, the transform
 worker writes down each template and stylesheet a component's transform read, with a hash of its

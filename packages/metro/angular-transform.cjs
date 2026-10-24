@@ -232,6 +232,9 @@ ${applies.join('\n')}
   var file = ${JSON.stringify(filename)};
   var shape = ${JSON.stringify(hash(shapeSource))};
   var source = ${JSON.stringify(hash(src))};
+  // The templates and stylesheets this module was compiled with: a dev server builds it again when
+  // only one of those changed, with its own source as it was, and that is a swap, not a reload.
+  var resources = ${JSON.stringify(hash(JSON.stringify(resources ?? null)))};
   var init = ${JSON.stringify(hash(hot?.init ?? shapeSource))};
   var defs = [${records.join(', ')}];
   var functions = [${handed.join(', ')}];
@@ -248,6 +251,7 @@ ${SWAP}${PATCH}
     var entry = {
       shape: shape,
       source: source,
+      resources: resources,
       types: new globalThis.Map(defs.map(function (d) { return [d.id, d.type]; })),
       templates: new globalThis.Map(defs.map(function (d) { return [d.id, d.template]; })),
       styles: new globalThis.Map(defs.map(function (d) { return [d.id, d.styles]; })),
@@ -286,9 +290,9 @@ ${SWAP}${PATCH}
       if (waiting.source !== source) continue;
       swap(entry, waiting, true);
     }
-  } else if (previous.source === source && again(previous)) {
+  } else if (previous.source === source && previous.resources === resources && again(previous)) {
     // The update this file has just applied, sent a second time: nothing to do but accept it.
-  } else if (previous.source === source) {
+  } else if (previous.source === source && previous.resources === resources) {
     // This module's own code is unchanged, so we were only re-run as the nearest accepting
     // module for a dependency's update. That is not something a template swap can express.
     log("[angular-native] hmr reload: a dependency changed", file);
@@ -297,12 +301,14 @@ ${SWAP}${PATCH}
     if (${patchable(shapeSource, classes, decorators, functions)} && previous.init === init && patchAll(previous)) {
       previous.shape = shape;
       previous.source = source;
+      previous.resources = resources;
     } else {
       log("[angular-native] hmr reload: more than a class or a function changed", file);
       reload = true;
     }
   } else {
     previous.source = source;
+    previous.resources = resources;
     for (var i = 0; i < defs.length; i++) {
       // Siblings in the same file whose template and styles did not move are simply left alone.
       if (!swap(previous, defs[i])) reload = true;
@@ -871,11 +877,12 @@ function sourceOf(file) {
  * An external template or stylesheet's own module, which in dev carries the hot update for every
  * component that uses it.
  *
- * Metro re-transforms only the file that changed. The component's module stays cached with the
- * old template compiled into it, so bubbling the update up to it re-runs the same code, which can
- * only ask for a reload - and the reload serves that same cached module again, so the edit never
- * arrived at all. This module is the one Metro did re-transform, so it recompiles each owning
- * component against the new text and patches the live class through the same swap an inline
+ * Metro re-transforms only the file that changed. A dev server with the preset's middleware
+ * compiles the component's module again as well (see `rereadingResources` in `resource-cache.cjs`),
+ * but one without it keeps that module with the old template compiled into it, so bubbling the
+ * update up to it re-runs the same code, which can only ask for a reload - and the reload serves
+ * that same module again. This module is the one Metro always re-transforms, so it recompiles each
+ * owning component against the new text and patches the live class through the same swap an inline
  * template takes.
  *
  * It runs before the component's module does, because the component imports it. On first load
@@ -1513,10 +1520,10 @@ function transformAngular(src, filename, options = {}) {
     const components = extractComponentMetadataSync(src, filename);
 
     // An external template is not an import, so without an edge Metro would never watch it. The
-    // edge does not re-transform this file when the template changes - Metro caches a transform
-    // on the file's own content - so in dev the template's module carries the update instead (see
-    // `resourceBlock`), and a cached transform of this file is a miss once the template has
-    // changed (see `resource-cache.cjs`).
+    // edge does not re-transform this file when the template changes - Metro transforms again
+    // only the file that changed - so the template's module carries the update too (see
+    // `resourceBlock`), and a cached transform of this file is a miss, and a dev server's module of
+    // it is transformed again, once the template has changed (see `resource-cache.cjs`).
     const edges = dependencies
       .map((dependency) => `import ${JSON.stringify(relativeSpecifier(dependency))};\n`)
       .join('');
