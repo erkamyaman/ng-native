@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import { Component, Renderer2, inject } from '@angular/core';
-import { Engine } from '@ng-native/fabric';
+import { Engine, claimHost } from '@ng-native/fabric';
 import { cleanup, render, screen, settle } from '@ng-native/testing';
 import { provideWebCompat } from './index.ts';
 
@@ -500,6 +500,154 @@ describe('scrolling an element', () => {
     const count = sent().length;
     item.scrollIntoView({ block: 'nearest' });
     assert.equal(sent().length, count);
+  });
+});
+
+/**
+ * A script making the body scroll: its `overflow` set inline, by a class in a sheet, or on the
+ * root as well. In a browser the body's overflow is the viewport's (CSS Overflow 3, overflow
+ * viewport propagation), so the body itself scrolls nothing and the page does. The page does not
+ * scroll here, and the body is the layer over the window that overlays are in: it stays a view.
+ */
+describe('a script making the body scroll', () => {
+  /** An empty page with a body taller than the window, and what each scroll reaches. */
+  async function tallBody() {
+    const made = await page();
+    const { document, place, div } = made;
+    const body = document.body;
+    const tall = div(body, 'height: 3000px');
+    await settle();
+    place(body, { x: 0, y: 0, width: 400, height: 800 });
+    place(tall, { x: 0, y: 0, width: 400, height: 3000 });
+    /** The view the body is committed as: a plain view, never a scroll view. */
+    const view = () => {
+      made.engine.commit();
+      return (body as { committed?: { handle?: Dom } }).committed?.handle as Dom;
+    };
+    /** Where each of the page's scroll positions is. */
+    const at = () => ({
+      body: body.scrollTop,
+      root: document.documentElement.scrollTop,
+      scrolling: document.scrollingElement.scrollTop,
+      window: [globals.scrollY, globals.pageYOffset],
+    });
+    /** Every way a script scrolls the page: none of them moves it. */
+    const scrollAll = async () => {
+      body.scrollTop = 100;
+      body.scrollTo(0, 150);
+      document.documentElement.scrollTop = 200;
+      await globals.scrollTo(0, 300);
+      await globals.scrollBy(0, 50);
+    };
+    return { ...made, body, view, at, scrollAll };
+  }
+  const still = { body: 0, root: 0, scrolling: 0, window: [0, 0] };
+
+  it('keeps the page at the top when the body is made to scroll inline, and when that goes', async () => {
+    const { body, view, at, scrollAll, sent } = await tallBody();
+    const layer = { ...view().props };
+    body.style.overflow = 'auto';
+    await settle();
+    assert.equal(view().viewName, 'View', 'the body is no scroll view');
+    assert.equal(view().props.overflow, 'auto');
+    // Still the layer over the window, under the header and over the app.
+    for (const key of ['position', 'top', 'bottom', 'zIndex', 'pointerEvents']) {
+      assert.equal(view().props[key], layer[key], key);
+    }
+    // Its computed value is what was written: propagating to the viewport changes the used one.
+    assert.equal(globals.getComputedStyle(body).overflow, 'auto');
+    await scrollAll();
+    assert.deepEqual(at(), still);
+    assert.equal(sent().length, 0, 'nothing is sent to native');
+    body.style.overflow = 'scroll';
+    await settle();
+    assert.equal(view().viewName, 'View');
+    await scrollAll();
+    assert.deepEqual(at(), still);
+    body.style.overflow = '';
+    await settle();
+    assert.equal(view().props.overflow, null, 'the overflow is taken off the view again');
+    assert.equal(globals.getComputedStyle(body).overflow, 'visible');
+    assert.deepEqual(at(), still);
+    assert.equal(sent().length, 0);
+  });
+
+  it('keeps the page at the top when a class in a sheet makes the body scroll, and when it goes', async () => {
+    const { document, body, view, at, scrollAll, sent } = await tallBody();
+    const style = document.createElement('style');
+    style.textContent = '.scrolling { overflow: auto } .locked .scrolling { overflow: hidden }';
+    document.head.appendChild(style);
+    body.classList.add('scrolling');
+    await settle();
+    assert.equal(view().viewName, 'View');
+    assert.equal(view().props.overflow, 'auto');
+    await scrollAll();
+    assert.deepEqual(at(), still);
+    // A library locking the page for a dialog, from the root: the body clips at the window, as the
+    // viewport it stands for does, and scrolls nothing.
+    document.documentElement.classList.add('locked');
+    await settle();
+    assert.equal(view().props.overflow, 'hidden');
+    document.documentElement.classList.remove('locked');
+    body.classList.remove('scrolling');
+    await settle();
+    assert.equal(view().viewName, 'View');
+    assert.equal(view().props.overflow, null);
+    style.remove();
+    assert.deepEqual(at(), still);
+    assert.equal(sent().length, 0);
+  });
+
+  it('keeps the body a view whatever the root says', async () => {
+    const { document, body, view, at, scrollAll, sent } = await tallBody();
+    const root = document.documentElement;
+    root.style.overflow = 'auto';
+    await settle();
+    await scrollAll();
+    assert.deepEqual(at(), still);
+    // A browser scrolls the body itself once the root's overflow is not visible. Here the body is
+    // over the whole app, and a scroll view there would take every swipe meant for the app.
+    root.style.overflow = 'hidden';
+    body.style.overflow = 'auto';
+    await settle();
+    assert.equal(view().viewName, 'View');
+    await scrollAll();
+    assert.deepEqual(at(), still);
+    root.style.overflow = '';
+    body.style.overflow = '';
+    await settle();
+    assert.equal(view().viewName, 'View');
+    assert.deepEqual(at(), still);
+    assert.equal(sent().length, 0);
+  });
+
+  it("tells the window and the document of the app's own scrolls, and of no scroll of the page", async () => {
+    const { app, engine, document, body, scrollAll } = await tallBody();
+    // A scroll view of the app's own, as a template's `<scroll-view>` is.
+    const list = engine.createElement('scroll-view');
+    claimHost(list);
+    engine.appendChild(engine.root, list);
+    await settle();
+    const heard: string[] = [];
+    const onDocument = () => heard.push('document');
+    const onWindow = () => heard.push('window');
+    document.addEventListener('scroll', onDocument);
+    globals.addEventListener('scroll', onWindow);
+    try {
+      body.style.overflow = 'auto';
+      await settle();
+      await scrollAll();
+      assert.deepEqual(heard, [], 'a page that does not move is no scroll');
+      app.fabric.emit((list as Dom).committed.handle, 'topScroll', {
+        contentOffset: { x: 0, y: 40 },
+      });
+      assert.deepEqual(heard.sort(), ['document', 'window']);
+      assert.equal(body.scrollTop, 0);
+      assert.equal(globals.scrollY, 0);
+    } finally {
+      document.removeEventListener('scroll', onDocument);
+      globals.removeEventListener('scroll', onWindow);
+    }
   });
 });
 
