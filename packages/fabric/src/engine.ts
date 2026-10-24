@@ -665,12 +665,8 @@ export interface EngineNode extends HostNode {
   nodeText: string;
   childList: EngineNode[];
   parent: EngineNode | null;
-  /**
-   * A child of this node that holds what is put in it: `appendChild` and `insertBefore` on this
-   * node put the child there instead, so a component's template lands inside a view its owner
-   * placed in the host element. Only the view itself goes in this node.
-   */
-  contentView?: EngineNode;
+  /** Set by `Engine.wrapChildren`: the view this node's children are committed in. */
+  wrapper?: Wrapper;
   listeners: Map<string, Set<(event: unknown) => void>> | null;
 
   /** CSS classes on this node, for selector matching. */
@@ -749,8 +745,11 @@ export interface EngineNode extends HostNode {
   scrollsOverflow?: true;
   /** Set while this element is one: see `Engine.settleScrolling`. */
   scrollView?: true;
-  /** The view a scrolling element's children are in, as it was last committed. */
-  inside?: { handle: FabricNode; childHandles: FabricNode[] };
+  /**
+   * The view a scrolling element's children are in, or a wrapped one's (`wrapper`), as it was
+   * last committed: a wrapper's with the props it was committed with.
+   */
+  inside?: Inside;
   /** Set while `settleLine` has given an always-inline element a line for the boxes it holds. */
   lined?: true;
   /** Set while an always-inline element is a flex box or a grid by its own style. */
@@ -1052,15 +1051,56 @@ export function scrollsOverflow(node: EngineNode): void {
   node.scrollsOverflow = true;
 }
 
+/** How a flex container places its children, which the view they are in takes. */
+const CHILD_PLACING_KEYS = [
+  ...['flexDirection', 'flexWrap', 'alignItems', 'alignContent', 'justifyContent'],
+  ...['gap', 'rowGap', 'columnGap'],
+];
+
 /** What a scrolling element lays out what it holds by, which its content view takes. */
 const CONTENT_KEYS = new Set([
   ...['padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'],
   ...['paddingHorizontal', 'paddingVertical', 'paddingStart', 'paddingEnd'],
   ...['paddingInline', 'paddingBlock', 'paddingInlineStart', 'paddingInlineEnd'],
   ...['paddingBlockStart', 'paddingBlockEnd'],
-  ...['flexDirection', 'flexWrap', 'alignItems', 'alignContent', 'justifyContent'],
-  ...['gap', 'rowGap', 'columnGap'],
+  ...CHILD_PLACING_KEYS,
 ]);
+
+/**
+ * A view the engine commits an element's children in, which is no node of the tree: see
+ * `Engine.wrapChildren`.
+ */
+export interface Wrapper {
+  readonly viewName: string;
+  readonly props: Readonly<Record<string, unknown>>;
+}
+
+/** The view an element's children are committed in, as `inside` keeps it. */
+interface Inside {
+  handle: FabricNode;
+  childHandles: FabricNode[];
+  /** A wrapper's props, as it was committed with them. */
+  props?: Record<string, unknown>;
+}
+
+const CHILD_PLACING = new Set(CHILD_PLACING_KEYS);
+
+/**
+ * A wrapped element's props split between its two views: the box it is, on its own view, and how
+ * its children are placed, on the wrapper, after the wrapper's own props. Its padding stays on
+ * the element, outside what the wrapper insets by.
+ */
+function splitWrapped(
+  props: Record<string, unknown>,
+  own: Readonly<Record<string, unknown>> = {},
+): { box: Record<string, unknown>; content: Record<string, unknown> } {
+  const box: Record<string, unknown> = {};
+  const content: Record<string, unknown> = { ...own };
+  for (const [key, value] of Object.entries(props)) {
+    (CHILD_PLACING.has(key) ? content : box)[key] = value;
+  }
+  return { box, content };
+}
 
 /** A scrolling element's props split between its two views: see `scrollerProps`. */
 function splitScroller(props: Record<string, unknown>): {
@@ -5881,7 +5921,8 @@ class RetainedNode {
   // field a node is not made with gives it another shape when it is written.
   inlineInherits: boolean | undefined = undefined;
   line: LineBox | undefined = undefined;
-  inside: { handle: FabricNode; childHandles: FabricNode[] } | undefined = undefined;
+  inside: Inside | undefined = undefined;
+  wrapper: Wrapper | undefined = undefined;
   transitions?: Map<string, Transition>;
   playing?: RunningAnimation;
   scrolled?: ScrollAnimation;
@@ -6102,7 +6143,7 @@ const ENGINE_NODE_FIELDS = {
   structureDirty: true,
   subtreeDirty: true,
   inside: true,
-  contentView: true,
+  wrapper: true,
   scrollsOverflow: true,
   engine: true,
 } satisfies Record<keyof EngineNode, true>;
@@ -7786,8 +7827,7 @@ export class Engine implements HostEngine {
     return node;
   }
 
-  appendChild(into: EngineNode, child: EngineNode): void {
-    const parent = into.contentView && into.contentView !== child ? into.contentView : into;
+  appendChild(parent: EngineNode, child: EngineNode): void {
     this.markAdopted(child, parent);
     this.detach(child);
     this.markReturned(child);
@@ -7800,8 +7840,7 @@ export class Engine implements HostEngine {
     this.markTextContent(parent, child);
   }
 
-  insertBefore(into: EngineNode, child: EngineNode, ref: EngineNode | null): void {
-    const parent = into.contentView && into.contentView !== child ? into.contentView : into;
+  insertBefore(parent: EngineNode, child: EngineNode, ref: EngineNode | null): void {
     this.markAdopted(child, parent);
     this.detach(child);
     this.markReturned(child);
@@ -7838,6 +7877,25 @@ export class Engine implements HostEngine {
     this.removedSinceCommit.add(child);
     this.markStructure(target, child, at);
     this.markTextContent(target, child);
+  }
+
+  /**
+   * Commit an element's children inside a view of the engine's own, `wrapper.viewName` with
+   * `wrapper.props`, and the element's own view around it; null commits them in the element
+   * again. For a native view that wants its content in a child of a kind it names, where the
+   * element is a component's host: the tree keeps the children in the element, so the
+   * component's `:host` rules, a `:host >` selector and what is inherited reach them as written,
+   * and how the element places its children (`flex-direction`, `justify-content`, `align-items`,
+   * `gap`) is committed on the wrapper, which holds them. What is hoisted into the element and
+   * its fixed boxes stay its own, after the wrapper. Called again with another wrapper's props,
+   * the wrapper is cloned with them; another view name makes the element and what it holds again,
+   * as native gives a view one parent for as long as it lives.
+   */
+  wrapChildren(node: EngineNode, wrapper: Wrapper | null): void {
+    const was = node.wrapper;
+    node.wrapper = wrapper ?? undefined;
+    if (was?.viewName !== wrapper?.viewName && node.committed) this.forgetCommitted(node);
+    this.markProps(node, false);
   }
 
   /**
@@ -14009,12 +14067,15 @@ export class Engine implements HostEngine {
     this.forgetRenamed(node, viewName);
     this.noteBaselineFields(node);
     this.freshBaselines(node);
-    const childHandles = this.reconcileChildren(node, viewName, style);
+    // A wrapped node's own views beside the wrapper: what is hoisted into it, and its fixed boxes.
+    const beside: FabricNode[] | undefined = node.wrapper && [];
+    const childHandles = this.reconcileChildren(node, viewName, style, beside);
     if (this.heldMoves.size) this.heldHandles(node, childHandles);
-    if (this.fixedIn.size) this.fixedHandles(node, childHandles);
+    if (this.fixedIn.size) this.fixedHandles(node, beside ?? childHandles);
     this.raise(node, viewName);
     noteTouches(node, style);
     if (scroller) return this.reconcileScroller(node, viewName, childHandles, styleChanged);
+    if (beside) return this.reconcileWrapped(node, viewName, childHandles, beside, styleChanged);
     const previous = node.committed;
     this.notePresented(node, viewName);
     if (!previous)
@@ -14134,6 +14195,90 @@ export class Engine implements HostEngine {
     return handle;
   }
 
+  /**
+   * `reconcile` for an element whose children are in a wrapper (`wrapChildren`): its own view,
+   * holding the wrapper and then `beside`, and the wrapper holding its children. The wrapper is
+   * created with the element and cloned for what changed of its own, as a scroll view's content
+   * is.
+   */
+  private reconcileWrapped(
+    node: EngineNode,
+    viewName: string,
+    childHandles: FabricNode[],
+    beside: FabricNode[],
+    styleChanged: boolean,
+  ): FabricNode {
+    const previous = node.committed;
+    const held = node.inside;
+    if (!previous || !held?.props) return this.createWrapped(node, viewName, childHandles, beside);
+    const propsMoved = node.propsDirty || styleChanged;
+    const props = propsMoved ? this.mergeProps(node, viewName) : previous.props;
+    const payload = propsMoved ? this.propsPayload(node, previous.props, props) : null;
+    if (this.asked & LAYOUTS) this.noteHow(node, payload);
+    const moved = this.childrenMoved(node, childHandles, held.childHandles);
+    this.noteWrappedClone(node, payload, moved, childHandles, previous, held);
+    const content = propsMoved ? splitWrapped(props, node.wrapper!.props).content : held.props;
+    const inside = this.clonedWrapper(held, content, moved ? childHandles : null);
+    const around = [inside, ...beside];
+    const aroundMoved = !sameHandles(around, previous.childHandles);
+    const box = payload && someProps(splitWrapped(payload).box);
+    const boxPayload = this.paintNatively(node, viewName, props, box, aroundMoved);
+    const handle = this.clonedFor(previous.handle, boxPayload, aroundMoved ? around : null);
+    node.committed = { handle, tag: previous.tag, props, childHandles: around, viewName };
+    node.inside = { handle: inside, childHandles, props: content };
+    this.clearFlags(node);
+    return handle;
+  }
+
+  /** `noteClone` for a wrapped element, whose children are counted in its wrapper. */
+  private noteWrappedClone(
+    node: EngineNode,
+    payload: Record<string, unknown> | null,
+    moved: boolean,
+    childHandles: readonly FabricNode[],
+    previous: NonNullable<EngineNode['committed']>,
+    held: Inside,
+  ): void {
+    if (!this.notesMoves) return;
+    const before = { ...previous, childHandles: held.childHandles };
+    this.noteClone(node, payload, moved, childHandles, before);
+  }
+
+  /** A wrapper cloned for what changed of its props, and for children that moved. */
+  private clonedWrapper(
+    held: Inside,
+    props: Record<string, unknown>,
+    children: FabricNode[] | null,
+  ): FabricNode {
+    const payload = props === held.props ? null : diffProps(held.props!, props);
+    return this.clonedFor(held.handle, payload, children);
+  }
+
+  private createWrapped(
+    node: EngineNode,
+    viewName: string,
+    childHandles: FabricNode[],
+    beside: FabricNode[],
+  ): FabricNode {
+    const wrapper = node.wrapper!;
+    const props = this.mergeProps(node, viewName);
+    const { box, content } = splitWrapped(props, wrapper.props);
+    // A touch on the wrapper lands on the element, as one on a scroll view's content does.
+    const inside = this.fabric.createNode(
+      nextTag(),
+      wrapper.viewName,
+      this.rootTag,
+      this.processed(content, false),
+      node,
+    );
+    this.stats.createdNodes++;
+    for (const child of childHandles) this.fabric.appendChild(inside, child);
+    const handle = this.create(node, viewName, box, [inside, ...beside]);
+    node.committed = { ...node.committed!, props };
+    node.inside = { handle: inside, childHandles, props: content };
+    return handle;
+  }
+
   /** A view cloned for the props and the children that changed, or itself where neither did. */
   private clonedFor(
     handle: FabricNode,
@@ -14215,10 +14360,11 @@ export class Engine implements HostEngine {
     node: EngineNode,
     viewName: string,
     style: StyleCache | null,
+    beside?: FabricNode[],
   ): FabricNode[] {
     const context = style?.context;
     if (HOIST_ONLY.has(node.tag)) return this.reconcileOnlyHoisted(node);
-    if (HOIST_TARGETS.has(node.tag)) return this.reconcileHoistTarget(node, context);
+    if (HOIST_TARGETS.has(node.tag)) return this.reconcileHoistTarget(node, context, beside);
     if (node.flow !== undefined) return this.reconcileInFlow(node, node.flow, viewName, context);
     // A node with no flow of its own holds nothing in a line: each child is its own view under it.
     const handles: FabricNode[] = [];
@@ -14630,10 +14776,16 @@ export class Engine implements HostEngine {
   /**
    * `reconcileChildren` for a node other nodes hoist into: its own children, each followed by
    * the hoisted nodes written inside it, then those written in it directly, then the views it
-   * keeps for hoisted nodes that are gone.
+   * keeps for hoisted nodes that are gone. A wrapped node's hoisted nodes and kept views go in
+   * `beside`, beside its wrapper and not in it, in the same order.
    */
-  private reconcileHoistTarget(node: EngineNode, context: object | undefined): FabricNode[] {
+  private reconcileHoistTarget(
+    node: EngineNode,
+    context: object | undefined,
+    beside?: FabricNode[],
+  ): FabricNode[] {
     const handles: FabricNode[] = [];
+    const landing = beside ?? handles;
     const hoisted = this.hoistedInto(node);
     const landed = new Set<string>();
     // One written directly in the node goes after its siblings: a page writes its header first,
@@ -14647,11 +14799,11 @@ export class Engine implements HostEngine {
       else handles.push(taken);
       const moved = hoisted?.get(child);
       for (const written of moved ?? []) {
-        if (!this.undisplayedUnder(node, written)) handles.push(this.land(node, written, landed));
+        if (!this.undisplayedUnder(node, written)) landing.push(this.land(node, written, landed));
       }
     }
-    for (const child of direct) handles.push(this.land(node, child, landed));
-    if (node.kept) this.standIn(node, landed, handles);
+    for (const child of direct) landing.push(this.land(node, child, landed));
+    if (node.kept) this.standIn(node, landed, landing);
     return handles;
   }
 

@@ -65,7 +65,7 @@ import { markScreenRoute } from './tab-routes.ts';
 import { IN_TAB } from './in-tab.ts';
 import { ownHost } from './own-host.ts';
 import { SCREEN_HEADER } from './screen-header.ts';
-import { HostEngine, nativePlatform, type EngineNode } from '@ng-native/fabric';
+import { HostEngine, nativePlatform, type Engine, type EngineNode } from '@ng-native/fabric';
 import type { ScreenPresentation } from './screen-presentation.ts';
 import { ActivityState } from './screens.ts';
 
@@ -537,7 +537,6 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     let ref: ComponentRef<unknown> | undefined;
     let unbind: (() => void) | undefined;
     const header = signal(false);
-    const content = this.insetContent(screen);
     try {
       ref = createComponent(component, {
         environmentInjector,
@@ -545,7 +544,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
         hostElement: screen as Element,
       });
       this.applicationRef.attachView(ref.hostView);
-      if (content) this.followHeader(content, header, ref.injector);
+      if (this.underBar) this.insetContent(screen, header, ref.injector);
       // Route params onto inputs before the first change detection, not after: a required input
       // read in the template throws NG0950 if it is still unset when the page first renders.
       unbind = this.bindInputs(ref, route);
@@ -924,35 +923,29 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
   }
 
   /**
-   * On iOS 26 and later, the view a page's content commits in, as react-native-screens'
-   * `ScreenStackItem` wraps it in its `SafeAreaView` there. From 4.30 the screen runs under the
-   * navigation bar whether the bar is opaque or not
+   * On iOS 26 and later, have the screen commit a page's content in a `SafeAreaView`
+   * (`RNSSafeAreaView`), as react-native-screens' `ScreenStackItem` wraps it there. From 4.30 the
+   * screen runs under the navigation bar whether the bar is opaque or not
    * (`+[RNSScreenStackHeaderConfig screensExtendUnderOpaqueNavigationBar]`), and this view insets
    * the content below an opaque one. Before 4.30 the screen starts below such a bar, its safe area
-   * is zero at the top, and the view insets by nothing. Null elsewhere: the content commits
-   * straight into the screen.
+   * is zero at the top, and the view insets by nothing. The engine makes the view
+   * (`wrapChildren`), so the page's template stays in its host, the screen, for its `:host`
+   * style and selectors, and the header stays a child of the screen.
+   *
+   * It insets the top edge while the page's header is shown and not translucent, which a large
+   * title on iOS is, and no edge otherwise, as `getSafeAreaEdges` in `ScreenStackItem` chooses.
+   * The view stays when the header changes, so the content is not made again. The effect runs in
+   * the page's first change detection, before anything of it is committed.
    */
-  private insetContent(screen: unknown): EngineNode | null {
-    if (!this.underBar) return null;
-    const content = ownHost(this.renderer.createElement('screen-content')) as EngineNode;
-    this.renderer.appendChild(screen, content);
-    (screen as EngineNode).contentView = content;
-    return content;
-  }
-
-  /**
-   * The top edge while the page's header is shown and not translucent, which a large title on iOS
-   * is, and no edge otherwise, as `getSafeAreaEdges` in `ScreenStackItem` chooses. The view stays
-   * when the header changes, so the content is not made again. Native takes all four edges.
-   */
-  private followHeader(content: EngineNode, header: () => boolean, injector: Injector): void {
+  private insetContent(screen: unknown, header: () => boolean, injector: Injector): void {
+    const node = screen as EngineNode;
+    const engine = node.engine as Engine;
     effect(
       () =>
-        this.renderer.setProperty(content, 'edges', {
-          top: header(),
-          right: false,
-          bottom: false,
-          left: false,
+        engine.wrapChildren(node, {
+          viewName: 'RNSSafeAreaView',
+          // The fill is `SafeAreaView.tsx`'s. Native takes all four edges.
+          props: { flex: 1, edges: { top: header(), right: false, bottom: false, left: false } },
         }),
       { injector },
     );

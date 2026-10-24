@@ -117,12 +117,12 @@ position and keyboard focus survive a push. A screen popped by a swipe-back gest
 back button is reported to the router as a real navigation, so the URL and the visible stack never
 disagree.
 
-A page's host element is its screen, so a style on `:host` (a background, padding) styles the
-screen. On iOS 26 and later the page's template is in a safe area view inside the screen, which
-starts it below an opaque header. There, a layout the host gives its children (`justify-content`,
-`align-items`, `gap`, `flex-direction`) does not reach them, and a `:host > ...` selector matches
-nothing. Lay the page out on an element at the root of its template instead, which works the same
-on every platform.
+A page's host element is its screen, so a style on `:host` (a background, padding, how it lays
+out its children) styles the screen, and a `:host > ...` selector matches the elements at the root
+of the page's template. On iOS 26 and later the screen holds the page's content in a safe area view
+that starts it below an opaque header, and the layout `:host` gives its children
+(`flex-direction`, `justify-content`, `align-items`, `gap`) is committed on that view, so it lays
+them out as it does on every other platform.
 
 Anything a route path can express - `routerLink`, `router.navigate()`, guards, resolvers - keeps
 working exactly as it does on the web, because it is still the same `Router`. For a plain push,

@@ -1,5 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { Text } from '../../components/src/text.ts';
+import { View } from '../../components/src/view.ts';
 import { NativeHeader } from '../../router/src/native-header.ts';
 import { NativeStackOutlet } from '../../router/src/native-stack-outlet.ts';
 import { ScreenSafeAreaView } from '../../router/src/screen-safe-area-view.ts';
@@ -40,6 +41,41 @@ export const later = signal(false);
 export class OpeningHours {
   protected readonly header = header;
   protected readonly later = later;
+}
+
+/** Whether the page below shows a box between its two, written at the root of its template. */
+export const between = signal(false);
+
+/**
+ * A page that lays out what is at the root of its template by its own `:host` style, and styles
+ * those elements by a `:host >` rule.
+ */
+@Component({
+  selector: 'x-centred',
+  imports: [NativeHeader, Text, View],
+  template: `
+    <native-header title="Centred" />
+    <view class="cell"><text>First</text></view>
+    @if (between()) {
+      <view class="cell"><text>Between</text></view>
+    }
+    <view class="cell"><text>Last</text></view>
+  `,
+  styles: `
+    :host {
+      flex-direction: row;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      background-color: rgb(1, 2, 3);
+    }
+    :host > .cell {
+      opacity: 0.5;
+    }
+  `,
+})
+export class Centred {
+  protected readonly between = between;
 }
 
 @Component({

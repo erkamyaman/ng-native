@@ -156,6 +156,12 @@ describe('position: fixed', () => {
     assert.deepEqual(s.tree(), [['app', ['page', ['scroll'], ['row'], ['bar']]]]);
   });
 
+  it('pins it to a screen that wraps its children beside the wrapper, and not in it', () => {
+    const s = scene(FIXED, ['app', ['page', ['scroll', ['bar']], ['row']]]);
+    s.engine.wrapChildren(s.nodes.get('page')!, { viewName: 'View', props: { nativeID: 'in' } });
+    assert.deepEqual(s.tree(), [['app', ['page', ['in', ['scroll'], ['row']], ['bar']]]]);
+  });
+
   it('lets the page go with what is fixed to it when the page leaves the tree', () => {
     const s = scene(FIXED, ['app', ['page', ['scroll', ['bar']], ['row']]]);
     s.tree();
