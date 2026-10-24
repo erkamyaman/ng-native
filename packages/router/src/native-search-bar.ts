@@ -20,7 +20,9 @@
  * ponytail: react-native-screens has no scope bar and no search tokens; a scope is a segmented
  * control under the header, and a token is text. Nor has its search bar a font prop on iOS or
  * Android, so the field and placeholder stay in the system font; `<search-field>` from
- * `@ng-native/expo/search-field` takes the font its CSS resolves to.
+ * `@ng-native/expo/search-field` takes the font its CSS resolves to. On iOS 27 the field is white
+ * glass where SwiftUI's `.searchable` draws flat grey, and neither UIKit nor react-native-screens
+ * has a public switch for that material.
  */
 import {
   Component,

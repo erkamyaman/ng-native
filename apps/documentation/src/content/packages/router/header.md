@@ -141,6 +141,15 @@ field shows nowhere; `placement="stacked"` keeps it under the title. react-nativ
 Android-only search bar props (`autoFocus`, `inputType`, `hintTextColor` and the rest) are not
 inputs here.
 
+On iOS 27 the field is drawn as white glass, where SwiftUI's
+`.searchable(placement: .navigationBarDrawer)` draws a flat grey field (`tertiarySystemFill`).
+Both are a `UISearchBar` in the minimal style; UIKit turns the glass material on for the one
+react-native-screens' search controller puts in the navigation bar and off for SwiftUI's, and no
+public UIKit API or react-native-screens prop turns it off, so `<native-search-bar>` has no input
+that matches SwiftUI's field. On iOS, `tintColor` and `textColor` leave the field's fill alone, and
+react-native-screens' `barTintColor`, which sets the text field's background color, only tints the
+glass, so it is not an input here either.
+
 The field and its placeholder are drawn in the system font, on iOS and Android, whatever the
 header's `titleFontFamily` or the page's CSS says: react-native-screens' search bar has no font
 prop on either platform, so `<native-search-bar>` has no font input, and a `font-family` or
