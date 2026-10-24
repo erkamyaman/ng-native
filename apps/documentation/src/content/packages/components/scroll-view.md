@@ -57,6 +57,51 @@ A tap on another `<text-input>` never dismisses, under any of the three: the fie
 and the keyboard stays up, so moving from one field of a form to the next takes one tap, as in
 React Native.
 
+## Keyboard insets on iOS
+
+`automaticallyAdjustKeyboardInsets` gives the scroll view a bottom inset as tall as the part of it
+the keyboard covers, so UIKit can scroll a focused field above the keyboard. React Native does this
+in native code, and in React Native 0.88 it gets two things wrong when
+`contentInsetAdjustmentBehavior` is anything but `never`, its default, as on a page under a native
+header:
+
+- **The content jumps under the bar.** Under a navigation bar the scroll view rests scrolled above
+  zero, by the inset UIKit adds for the bar. When the keyboard comes up, React Native scrolls to
+  where the scroll view already is, but clamps that offset with the scroll view's own
+  `contentInset` rather than the inset UIKit adds, so it lands at zero: focusing a field that is
+  already in view moves the content up by the bar's height, more with a large title, under the bar.
+- **A focused field stops short of the keyboard.** The inset React Native sets is the keyboard's
+  overlap with the scroll view, which already takes in the home indicator's strip, and UIKit adds
+  the bottom safe area on top of it. On an iPhone with a home indicator a focused field stops about
+  34 points above the keyboard, or above a bar docked on it, and the same space is left blank
+  under the content while the keyboard is up.
+
+Both come from `_keyboardWillChangeFrame:` and `scrollTo:y:animated:` in React Native's
+[`RCTScrollViewComponentView.mm`](https://github.com/facebook/react-native/blob/v0.88.0/packages/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm#L187-L266),
+not from anything Angular Native sends: for a field focused while the keyboard is already up, it
+scrolls only when the field is out of view.
+
+For a form, leave the page's insets to the page instead. `contentInsetAdjustmentBehavior="never"`
+stops UIKit adding any, so React Native's keyboard inset is the only one, and a
+[`<screen-safe-area-view>`](/packages/router/header#a-page-under-the-bar) keeps the scroll view
+clear of the bar and the home indicator:
+
+```html
+<native-header title="Profile" />
+<screen-safe-area-view [edges]="['top', 'bottom']" style="flex: 1">
+  <scroll-view
+    style="flex: 1"
+    contentInsetAdjustmentBehavior="never"
+    [automaticallyAdjustKeyboardInsets]="true"
+  >
+    <!-- fields -->
+  </scroll-view>
+</screen-safe-area-view>
+```
+
+The content then no longer scrolls under the bar, so a large title stays expanded rather than
+collapsing into it (see [Large titles](/packages/router/header#large-titles)).
+
 ## Sticky headers
 
 `stickyHeaderIndices` pins children of the content to the top while the rest scroll under them,
