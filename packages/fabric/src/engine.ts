@@ -4589,6 +4589,13 @@ const STACK_SCREEN = 'RNSScreen';
 
 const FIXED_BOUNDARIES = new Set([MODAL_HOST, STACK_SCREEN, 'RNSFullWindowOverlay']);
 
+/**
+ * The presentations that can leave a sheet short of the top of the screen on iOS: a screen's
+ * `stackPresentation` (`modal` is a page sheet from iOS 13) or a modal host's `presentationStyle`.
+ * The others cover the screen, or what they are presented over.
+ */
+const SHEETS = new Set(['modal', 'formSheet', 'pageSheet']);
+
 /** What an element's `touch-action` is: bound on it, or from the rules it matches. */
 function touchActionOf(node: EngineNode): unknown {
   return inlineOf(node)['touchAction'] ?? node.styleCache?.style['touchAction'];
@@ -7306,27 +7313,74 @@ export class Engine implements HostEngine {
    * keyboard's top edge, for a field the keyboard would otherwise hide.
    *
    * Measured in the window, all of it, so the scroll view's offset needs no tracking: it is how
-   * far its content's top edge is above its own.
+   * far its content's top edge is above its own. In a sheet on iOS the window is the sheet's: see
+   * `sheetTop`.
+   *
+   * A scroll view under a navigation bar rests scrolled above zero, by the inset the bar adds, and
+   * is not scrolled up past where it rests, nor past zero from below it: how far above zero it can
+   * go is known only while it is there.
    */
   reveal(node: EngineNode, options: { visibleBottom?: number; margin?: number } = {}): void {
     const scroll = scrollingDown(node);
     const content = scroll && this.contentOf(scroll);
     if (!scroll || !content) return;
     const margin = options.margin ?? 16;
+    const { visibleBottom } = options;
+    const covered =
+      visibleBottom === undefined ? Infinity : visibleBottom - this.sheetTop(node, visibleBottom);
     this.measure(scroll, (view) => {
       this.measureHandle(content, (inner) => {
         this.measure(node, (target) => {
           const offset = view.y - inner.y;
           const top = view.y + margin;
-          const bottom = Math.min(view.y + view.height, options.visibleBottom ?? Infinity) - margin;
+          const bottom = Math.min(view.y + view.height, covered) - margin;
           let by = 0;
           if (target.y + target.height > bottom) by = target.y + target.height - bottom;
           else if (target.y < top) by = target.y - top;
           if (by !== 0)
-            this.dispatchCommand(scroll, 'scrollTo', [0, Math.max(0, offset + by), true]);
+            this.dispatchCommand(scroll, 'scrollTo', [
+              0,
+              Math.max(Math.min(0, offset), offset + by),
+              true,
+            ]);
         });
       });
     });
+  }
+
+  /**
+   * How far down the window the iOS sheet a node is presented in starts, where that is known, so
+   * the keyboard's `visibleBottom` can be brought into the sheet. React Native measures a view in a
+   * presented sheet from the sheet's own top: the sheet's place on the screen is UIKit's, and the
+   * shadow tree has the sheet at the top of the window.
+   *
+   * A sheet as wide as the window is attached to its bottom edge, so it starts the window's height
+   * less its own down. One that is narrower (an iPad's form sheet, or one floating at a partial
+   * detent) could be anywhere, and one no taller than the room above the keyboard may have risen
+   * over it, so for those nothing is known and nothing is taken off. On Android the sheet is laid
+   * out in the shadow tree, so nothing is either.
+   */
+  private sheetTop(node: EngineNode, keyboardTop: number): number {
+    if (platformOS !== 'ios') return 0;
+    for (let up = node.parent; up; up = up.parent) {
+      if (up.nodeKind !== 'element') continue;
+      const viewName = viewNameOf(up);
+      // React Native's own modal measures what it holds from its own top, wherever it is written.
+      const modal = viewName === MODAL_HOST;
+      const presented = modal
+        ? up.props['presentationStyle']
+        : viewName === STACK_SCREEN && up.props['stackPresentation'];
+      // A screen pushed in a stack is measured in whatever it is pushed in.
+      if (!modal && (!presented || presented === 'push')) continue;
+      if (!SHEETS.has(String(presented))) return 0;
+      let top = 0;
+      this.measure(up, (sheet) => {
+        if (sheet.width < this.viewportSize.width || sheet.height <= keyboardTop) return;
+        top = Math.max(0, this.viewportSize.height - (modal ? 0 : sheet.y) - sheet.height);
+      });
+      return top;
+    }
+    return 0;
   }
 
   /**
