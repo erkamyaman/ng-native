@@ -49,6 +49,9 @@ const { getDefaultConfig } = require('expo/metro-config') as {
 const { withAngularNative } = require('@ng-native/metro/config.cjs') as {
   withAngularNative(config: object): Record<string, unknown>;
 };
+const { rereadingResources } = require('@ng-native/metro/resource-cache.cjs') as {
+  rereadingResources(server: unknown, projectRoot: string): void;
+};
 
 const workspace = path.resolve(import.meta.dirname, '../..');
 /** What the bundle needs for real to run: Angular, and what Angular and Babel's output import. */
@@ -73,14 +76,15 @@ function write(root: string, files: Record<string, string>): void {
   }
 }
 
-type Update = { modified: { module: [number, string] }[] };
+type Update = { added?: { module: [number, string] }[]; modified: { module: [number, string] }[] };
 
 /** A dev server for `root`, as `npx expo start` runs one, listening on a free port. */
-async function devServer(root: string) {
+async function devServer(root: string, adjust?: (config: Record<string, unknown>) => void) {
   const config = getDefaultConfig(root);
   // One cache for every case, so only the first transforms Angular.
   config['cacheStores'] = [new FileStore({ root: path.join(scratch, 'cache') })];
   withAngularNative(config);
+  adjust?.(config);
   Object.assign(config, {
     reporter: { update() {} },
     resetCache: false,
@@ -202,7 +206,9 @@ function launch(bundle: string) {
       return JSON.stringify([type?.ɵcmp?.consts, type?.ɵnativeStyles ?? null]);
     },
     apply(update: Update): void {
-      for (const { module } of update.modified) vm.runInContext(module[1], context);
+      for (const { module } of [...(update.added ?? []), ...update.modified]) {
+        vm.runInContext(module[1], context);
+      }
     },
   };
 }
@@ -210,6 +216,18 @@ function launch(bundle: string) {
 const list = (decorator: string) => `import { Component } from '@angular/core';
 @Component({ selector: 'app-list', ${decorator} })
 export class List {}
+`;
+/** `List`, reading a plain module of the project, `helper.ts`. */
+const LIST_WITH_HELPER = (
+  decorator: string,
+  members: string,
+) => `import { Component } from '@angular/core';
+import { label } from './helper';
+@Component({ selector: 'app-list', ${decorator} })
+export class List {
+  label = label;
+  ${members}
+}
 `;
 const INDEX = `import { List } from './list';\nexport default List;\n`;
 
@@ -301,6 +319,60 @@ export class Other {}
     }
   });
 
+  it('reloads for an edit to a module the component imports, after a template swap', async () => {
+    const root = project({
+      'index.ts': INDEX,
+      'list.ts': LIST_WITH_HELPER(`templateUrl: './list.html'`, ''),
+      'list.html': '<native-header title="FIRST_TITLE" />',
+      'helper.ts': `export const label = 'first';\n`,
+    });
+    const server = await devServer(root);
+    try {
+      const app = launch(await server.bundle());
+      const hot = await server.hot();
+
+      write(root, { 'list.html': '<native-header title="SECOND_TITLE" />' });
+      app.apply(await hot.next());
+      assert.match(app.shown(), /SECOND_TITLE/);
+      assert.deepEqual(app.reloads, []);
+
+      write(root, { 'helper.ts': `export const label = 'second';\n` });
+      app.apply(await hot.next());
+      assert.deepEqual(app.reloads, ['list.ts'], 'the swap kept the resources it applied');
+      assert.ok(app.logs.includes('[angular-native] hmr reload: a dependency changed list.ts'));
+    } finally {
+      await server.end();
+    }
+  });
+
+  it('reloads for an edit to a module the component imports, after a class patch that moved its template', async () => {
+    const root = project({
+      'index.ts': INDEX,
+      'list.ts': LIST_WITH_HELPER(`templateUrl: './list.html'`, ''),
+      'list.html': '<native-header title="FIRST_TITLE" />',
+      'items.html': '<native-header title="ITEMS_TITLE" />',
+      'helper.ts': `export const label = 'first';\n`,
+    });
+    const server = await devServer(root);
+    try {
+      const app = launch(await server.bundle());
+      const hot = await server.hot();
+
+      write(root, {
+        'list.ts': LIST_WITH_HELPER(`templateUrl: './items.html'`, 'count() { return 1; }'),
+      });
+      app.apply(await hot.next());
+      assert.deepEqual(app.reloads, [], 'the new method is patched onto the live class');
+
+      write(root, { 'helper.ts': `export const label = 'second';\n` });
+      app.apply(await hot.next());
+      assert.deepEqual(app.reloads, ['list.ts'], 'the patch kept the resources it applied');
+      assert.ok(app.logs.includes('[angular-native] hmr reload: a dependency changed list.ts'));
+    } finally {
+      await server.end();
+    }
+  });
+
   it('fails the bundle once the template is deleted, and builds it again once it is back', async () => {
     const root = project({
       'index.ts': INDEX,
@@ -350,6 +422,146 @@ export class Other {}
     } finally {
       await server.end();
     }
+  });
+});
+
+type Enhance = (middleware: unknown, server: unknown) => unknown;
+type DeltaBundler = { getDelta(...args: unknown[]): unknown; _deltaCalculators?: unknown };
+
+/**
+ * The dev server's config, with `_deltaCalculators` gone from the delta bundler for what reads it
+ * on the way into `getDelta` from outside Metro, as on a Metro that renamed it. Metro's own
+ * `getDelta`, and everything else in Metro, still reads it.
+ */
+function withoutCalculators(config: Record<string, unknown>): void {
+  const server = config['server'] as { enhanceMiddleware: Enhance };
+  const enhance = server.enhanceMiddleware;
+  server.enhanceMiddleware = (middleware, metroServer) => {
+    const delta = (metroServer as { getBundler(): { getDeltaBundler(): DeltaBundler } })
+      .getBundler()
+      .getDeltaBundler();
+    let calculators = delta._deltaCalculators;
+    let hidden = false;
+    Object.defineProperty(delta, '_deltaCalculators', {
+      configurable: true,
+      get: () => (hidden ? undefined : calculators),
+      set: (value) => {
+        calculators = value;
+      },
+    });
+    const metroGetDelta = delta.getDelta;
+    delta.getDelta = function (...args) {
+      hidden = false;
+      return metroGetDelta.apply(this, args);
+    };
+    const enhanced = enhance(middleware, metroServer);
+    const wrapped = delta.getDelta;
+    delta.getDelta = function (...args) {
+      hidden = true;
+      return wrapped.apply(this, args);
+    };
+    return enhanced;
+  };
+}
+
+/** A Metro server as `rereadingResources` reaches it, with only the members given. */
+function fakeServer(delta: object, bundler: object) {
+  return { getBundler: () => ({ getDeltaBundler: () => delta, getBundler: () => bundler }) };
+}
+
+describe('a dev server on a Metro without the internals that say what changed', () => {
+  it('still builds the bundle, and says once that a template edit may not show', async () => {
+    const root = project({
+      'index.ts': INDEX,
+      'list.ts': list(`templateUrl: './list.html'`),
+      'list.html': '<native-header title="FIRST_TITLE" />',
+    });
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.join(' '));
+    };
+    const server = await devServer(root, withoutCalculators);
+    try {
+      assert.match(launch(await server.bundle()).shown(), /FIRST_TITLE/);
+      write(root, { 'list.html': '<native-header title="SECOND_TITLE" />' });
+      // The template's own module still carries the edit; the component's is left as it was.
+      await settled(server, ['SECOND_TITLE'], []);
+    } finally {
+      console.warn = warn;
+      await server.end();
+    }
+    assert.deepEqual(
+      warnings.filter((line) => line.includes('does not say which files changed')).length,
+      1,
+    );
+  });
+
+  it('leaves a Metro without getDelta or transformFile as it is', () => {
+    const getDelta = () => 'delta';
+    const transformFile = async () => ({});
+    const withoutTransform = { getDelta };
+    rereadingResources(fakeServer(withoutTransform, {}), '/');
+    assert.equal(withoutTransform.getDelta, getDelta);
+
+    const bundler = { transformFile };
+    rereadingResources(fakeServer({}, bundler), '/');
+    assert.equal(bundler.transformFile, transformFile);
+
+    assert.doesNotThrow(() => rereadingResources(undefined, '/'));
+    assert.doesNotThrow(() => rereadingResources({}, '/'));
+  });
+
+  it('hands getDelta on unchanged when the calculator has no set of changed files', () => {
+    const graph = { dependencies: new Map() };
+    const seen: unknown[][] = [];
+    const delta: DeltaBundler = {
+      _deltaCalculators: new Map([[graph, { _modifiedFiles: [] }]]),
+      getDelta(...args) {
+        seen.push([this, ...args]);
+        return 'delta';
+      },
+    };
+    const warn = console.warn;
+    let warned = 0;
+    console.warn = () => {
+      warned++;
+    };
+    try {
+      rereadingResources(fakeServer(delta, { transformFile: async () => ({}) }), '/');
+      assert.equal(delta.getDelta(graph, { reset: true }), 'delta');
+      assert.equal(delta.getDelta(graph, { reset: false }), 'delta');
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(warned, 1);
+    assert.deepEqual(seen, [
+      [delta, graph, { reset: true }],
+      [delta, graph, { reset: false }],
+    ]);
+  });
+
+  it('wraps a server once, however many times it is handed over', async () => {
+    const calls: string[] = [];
+    const delta: DeltaBundler = {
+      _deltaCalculators: new Map(),
+      getDelta: () => calls.push('getDelta'),
+    };
+    const bundler = {
+      transformFile: async () => {
+        calls.push('transformFile');
+        return { output: [{ data: { angularNativeResources: [] } }] };
+      },
+    };
+    const server = fakeServer(delta, bundler);
+    rereadingResources(server, '/');
+    const getDelta = delta.getDelta;
+    const transformFile = bundler.transformFile;
+    rereadingResources(server, '/');
+    assert.equal(delta.getDelta, getDelta);
+    assert.equal(bundler.transformFile, transformFile);
+    await bundler.transformFile();
+    assert.deepEqual(calls, ['transformFile']);
   });
 });
 
