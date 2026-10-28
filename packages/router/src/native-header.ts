@@ -269,8 +269,10 @@ export class NativeHeader {
   /** Show the back button's title at all. Native defaults this to true. */
   readonly backTitleVisible = input(undefined, { transform: optionalBoolean });
   /**
-   * iOS 14+: how aggressively the back title is shortened when space is tight. VoiceOver reads a
-   * `minimal` back button as "Back" rather than the back title: UIKit labels it itself.
+   * iOS 14+: how aggressively the back title is shortened when space is tight. When iOS draws the
+   * button as the chevron alone (`minimal` without a back title font or `disableBackButtonMenu`, or
+   * `[backTitleVisible]="false"`), VoiceOver reads it as "Back" rather than the back title: UIKit
+   * labels it itself.
    */
   readonly backButtonDisplayMode = input<BackButtonDisplayMode>();
   /** Put the back button in the custom view slot, so a `back` header item can replace it. */

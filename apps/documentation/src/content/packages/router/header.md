@@ -360,11 +360,12 @@ react-native-screens build its own titled back button, and UIKit then shows the 
 title whatever the display mode says, so `minimal` does not reduce the button to the chevron.
 `[backTitleVisible]="false"` is not affected: it keeps the chevron alone with those set too.
 
-On iOS, VoiceOver reads a back button that shows the chevron alone, through
-`backButtonDisplayMode="minimal"` or `[backTitleVisible]="false"`, as "Back", not as the previous
-screen's title or `backTitle`. UIKit labels that button itself, and react-native-screens has no prop
-that changes the label. A screen whose back button should be read as the previous screen's title
-keeps the default display mode, which shows the title beside the chevron.
+On iOS, VoiceOver reads a back button that iOS draws as the chevron alone, through
+`backButtonDisplayMode="minimal"` (with none of the options above) or `[backTitleVisible]="false"`,
+as "Back", not as the previous screen's title or `backTitle`. UIKit labels that button itself, and
+react-native-screens has no prop that changes the label. A screen whose back button should be read
+as the previous screen's title keeps the default display mode, which shows the title beside the
+chevron.
 
 What a screen says about itself - its title, whether it has a large title, whether the bar is
 hidden - stays on the screen.
