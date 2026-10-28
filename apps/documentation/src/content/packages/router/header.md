@@ -142,7 +142,8 @@ Android-only search bar props (`autoFocus`, `inputType`, `hintTextColor` and the
 inputs here.
 
 On iOS 27 the field is drawn as white glass, where SwiftUI's
-`.searchable(placement: .navigationBarDrawer)` draws a flat grey field (`tertiarySystemFill`).
+`.searchable(placement: .navigationBarDrawer(displayMode: .always))` draws a flat grey field
+(`tertiarySystemFill`).
 Both are a `UISearchBar` in the minimal style; UIKit turns the glass material on for the one
 react-native-screens' search controller puts in the navigation bar and off for SwiftUI's, and no
 public UIKit API or react-native-screens prop turns it off, so `<native-search-bar>` has no input
