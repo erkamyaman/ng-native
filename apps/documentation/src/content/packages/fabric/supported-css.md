@@ -502,6 +502,14 @@ written there. A token is read as one value, so one that is no colour unsets it:
 length, `none`, and also a gradient, a `url()`, or a colour beside an image, `rgb(1 2 3) none`,
 where a browser reads the token as the whole shorthand and paints the colour and the image. With
 anything written beside the token, `background: var(--surface) none`, the shorthand is refused.
+Gradients written out over such a color,
+`background: linear-gradient(180deg, #ffffff33, #ffffff00), var(--primary)`, are the shorthand
+with that color: the gradients, and their position, size and repeat, are compiled as written, and
+the last layer is read as `background-color`, a token or a color made of one. A token that is no
+color unsets the whole background, gradients included, as a browser does for an unset token. A
+browser reads the token as the whole last layer, so one holding a position or a gradient paints
+the gradients there; here it is read as the color alone. A token in a gradient as well as in the
+color, or anything written beside the color in the last layer, is still refused.
 `flex: var(--grow)` is `flex: <number>`: it grows by the token, shrinks by 1, and starts from a
 basis of 0, once the token is set. With no token it is `flex`'s initial value, `0 1 auto`, whatever
 a weaker rule set, as on the web, where a `var()` that cannot be substituted gives the property its

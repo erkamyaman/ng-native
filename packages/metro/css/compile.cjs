@@ -31,6 +31,7 @@ const {
   mixedToken,
   OF_A_BOX,
   color,
+  commaSeparated,
 } = require('./values.cjs');
 const {
   translate,
@@ -625,6 +626,8 @@ function deferVar(value, context) {
     const templates = layers.map((layer) => deferGradient(layer, context).gradient);
     return { props: ['experimental_backgroundImage'], gradient: templates };
   }
+  const over = imagesOverColourToken(value, context);
+  if (over) return over;
 
   if (
     parts.length === 1 &&
@@ -2445,6 +2448,58 @@ function addUnparsed(declaration, out, deferred, context) {
   deferred.push(deferVar(declaration.value, context));
 }
 
+/**
+ * `background: linear-gradient(...), var(--primary)`: images written out over a colour from a
+ * token, as shadcn-style buttons write them. The images, and where they are placed, are settled
+ * here as the same shorthand with no token in it is; the colour is read on device as
+ * `background-color` reads it, a `var()` or a colour made of one.
+ *
+ * One declaration for every longhand, so a colour the device makes nothing of unsets all of them,
+ * as Chrome makes the shorthand invalid at computed-value time. A browser substitutes the token as
+ * the whole last layer, so one holding a position or an image is not invalid there; here a token
+ * is read as the colour alone. A `border` line made of tokens is settled the same way.
+ *
+ * @returns the deferred declaration, or null where this is not that shape: a token among the
+ *   images, or anything beside the token in the last layer
+ */
+function imagesOverColourToken(value, context) {
+  const parts = (value?.propertyId?.property === 'background' && value.value) || [];
+  const colour = colourLayer(parts);
+  if (!colour) return null;
+  const end = parts.findLastIndex((part) => part.type === 'token' && part.value?.type === 'comma');
+  const beside = imagesBeside(cssText(parts.slice(0, end), context), context);
+  const read = deferVar({ propertyId: { property: 'background-color' }, value: [colour] }, context);
+  return { ...read, props: ['backgroundColor', ...Object.keys(beside)], beside };
+}
+
+/** A background's last layer where it is one term and no gradient, with no token before it. */
+function colourLayer(parts) {
+  const layers = commaSeparated(parts);
+  const last = meaningful(layers.pop());
+  if (!layers.length || last.length !== 1 || layers.some(mentionsVar)) return null;
+  const [colour] = last;
+  const gradient = colour.type === 'function' && GRADIENTS.has(colour.value?.name?.toLowerCase());
+  return gradient ? null : colour;
+}
+
+/** Every longhand of a background of `images` but its colour, settled here. */
+function imagesBeside(images, context) {
+  const typed = reparsed('background', images, context);
+  if (typed?.property !== 'background') {
+    throw new CssUnsupported(`${context}: could not read 'background: ${images}'`);
+  }
+  const beside = {};
+  translate('background', typed.value, beside, context);
+  delete beside.backgroundColor;
+  if (JSON.stringify(beside).includes('"__')) {
+    throw new CssUnsupported(
+      `${context}: the images beside a var() colour in 'background' have to be settled at build ` +
+        `time, and a length relative to the font or the viewport cannot be. Write them in points.`,
+    );
+  }
+  return beside;
+}
+
 const SIDES = ['Top', 'Right', 'Bottom', 'Left'];
 
 /**
@@ -2661,9 +2716,8 @@ function termText(part, context) {
     return `${part.value.name}(${cssText(part.value.arguments, context)})`;
   }
   const value = part.value ?? {};
-  if (part.type === 'time') return `${value.value}${value.type === 'seconds' ? 's' : 'ms'}`;
-  if (part.type === 'angle') return `${value.value}${value.type}`;
-  if (part.type === 'length') return `${value.value}${value.unit}`;
+  const written = Object.hasOwn(TERM_TEXT, part.type) ? TERM_TEXT[part.type] : null;
+  if (written) return written(value, context);
   if (part.type !== 'token') throw new CssUnsupported(`${context}: '${part.type}' in a shorthand`);
   if (value.type === 'white-space') return ' ';
   if (value.type === 'comma') return ',';
@@ -2671,6 +2725,15 @@ function termText(part, context) {
   if (value.type === 'percentage') return `${value.value * 100}%`;
   return String(value.value);
 }
+
+/** The terms lightningcss parses for itself in an unparsed value, each as the CSS it was. */
+const TERM_TEXT = {
+  time: (value) => `${value.value}${value.type === 'seconds' ? 's' : 'ms'}`,
+  angle: (value) => `${value.value}${value.type}`,
+  length: (value) => `${value.value}${value.unit}`,
+  color: (value, context) => color(value, context),
+  url: (value) => `url(${JSON.stringify(value.url)})`,
+};
 
 /**
  * Translate one declaration into `out`, or record it as a token or a deferred value.

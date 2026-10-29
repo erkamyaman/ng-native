@@ -1153,6 +1153,37 @@ export const CASES: OracleCase[] = [
     css: '.outer { color: rgb(11, 0, 0); --bg: currentColor } #probe { color: rgb(12, 0, 0); background: var(--bg) }',
     tree: { name: 'view', classes: ['outer'], children: [probe()] },
   },
+  // Images over a colour from a token: the last layer is the colour, the images settled at build.
+  {
+    name: 'background: a gradient over var() of a colour token has the token as its colour',
+    css: '.outer { --bg: rgb(13, 0, 0) } #probe { background: linear-gradient(180deg, #ffffff33 0%, #ffffff00 67.7%), var(--bg) }',
+    tree: { name: 'view', classes: ['outer'], children: [probe()] },
+  },
+  {
+    name: 'background: a gradient over var() falls back to a written colour when the token is unset',
+    css: '#probe { background: linear-gradient(red, blue), var(--missing, rgb(14, 0, 0)) }',
+    tree: probe(),
+  },
+  {
+    name: 'background: a gradient over var() of an unset token unsets a weaker background-color',
+    css: '#probe { background-color: rgb(15, 0, 0) } #probe.c { background: linear-gradient(red, blue), var(--missing) }',
+    tree: probe({ classes: ['c'] }),
+  },
+  {
+    name: 'background: a gradient over rgba() of a channel token has that colour',
+    css: '#probe { --rgb: 16, 0, 0; background: linear-gradient(red, blue), rgba(var(--rgb), 0.5) }',
+    tree: probe(),
+  },
+  {
+    name: 'background: a gradient over var() gives way to a later background-color',
+    css: '#probe { --bg: rgb(17, 0, 0); background: linear-gradient(red, blue), var(--bg) } #probe.c { background-color: rgb(18, 0, 0) }',
+    tree: probe({ classes: ['c'] }),
+  },
+  {
+    name: 'background: a gradient over var() marked important stands over a later background-color',
+    css: '#probe { --bg: rgb(19, 0, 0); background: linear-gradient(red, blue), var(--bg) !important } #probe.c { background-color: rgb(20, 0, 0) }',
+    tree: probe({ classes: ['c'] }),
+  },
   // A ViewEncapsulation.None component's sheet, which Angular adds to the document unscoped: an
   // app's component (`css`) renders the None component's host, `.none-chip`, which renders
   // `.inner`; `.outside` is the app's own.

@@ -358,6 +358,12 @@ export interface DeferredDeclaration {
    */
   readonly layers?: true;
   /**
+   * `background: linear-gradient(...), var(--c)`: the longhands settled at build time beside the
+   * colour this reads, each written as it is where the colour settles and unset with it where it
+   * does not, as a browser unsets every longhand of a shorthand its token makes invalid.
+   */
+  readonly beside?: Readonly<Record<string, unknown>>;
+  /**
    * `inherit`, written for these props: each is the parent's value for it, or nothing where the
    * parent has none.
    */
@@ -5481,7 +5487,10 @@ function writeSettled(
 ): void {
   const one = settled instanceof EachSide ? settled.at(declaration.props, prop) : settled;
   const value = one ?? declaration.unset;
-  if (declaration.layers) writeLayer(own, prop, value, layers);
+  const beside = declaration.beside;
+  if (beside && prop in beside)
+    write(own, prop, value === undefined ? undefined : beside[prop], false);
+  else if (declaration.layers) writeLayer(own, prop, value, layers);
   else write(own, prop, value, declaration.line !== undefined);
 }
 

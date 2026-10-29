@@ -1864,6 +1864,48 @@
     }
   },
   {
+    "name": "background: a gradient over var() of a colour token has the token as its colour",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgb(13, 0, 0)"
+    }
+  },
+  {
+    "name": "background: a gradient over var() falls back to a written colour when the token is unset",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgb(14, 0, 0)"
+    }
+  },
+  {
+    "name": "background: a gradient over var() of an unset token unsets a weaker background-color",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)"
+    }
+  },
+  {
+    "name": "background: a gradient over rgba() of a channel token has that colour",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(16, 0, 0, 0.5)"
+    }
+  },
+  {
+    "name": "background: a gradient over var() gives way to a later background-color",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgb(18, 0, 0)"
+    }
+  },
+  {
+    "name": "background: a gradient over var() marked important stands over a later background-color",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgb(19, 0, 0)"
+    }
+  },
+  {
     "name": "None: a rule on the host class styles the host",
     "expected": {
       "color": "rgb(0, 0, 0)",

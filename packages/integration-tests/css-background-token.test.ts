@@ -26,7 +26,8 @@ function tree(css: string, parent: string[] = []) {
   engine.commit();
   const background = () => fabric.committed[0]!.children[0]!.props['backgroundColor'];
   const image = () => fabric.committed[0]!.children[0]!.props['experimental_backgroundImage'];
-  return { engine, outer, node, background, image, warnings };
+  const prop = (key: string) => fabric.committed[0]!.children[0]!.props[key];
+  return { engine, outer, node, background, image, prop, warnings };
 }
 
 describe('background: var()', () => {
@@ -262,5 +263,181 @@ describe('background: var()', () => {
     engine.setCustomProperty(node, '--bg', 'rgb(1, 2, 3) none');
     engine.commit();
     assert.equal(background(), undefined);
+  });
+});
+
+/**
+ * `background: linear-gradient(...), var(--primary)`: images written out over a colour from a
+ * token, as shadcn-style buttons write them. The images are settled at build time and the colour
+ * on device. Where the token makes no colour the whole background goes, as Chrome makes the
+ * shorthand invalid at computed-value time and gives every longhand its initial value.
+ */
+describe('background: images over a var() colour', () => {
+  const GLOSS = 'linear-gradient(180deg, #ffffff33 0%, #ffffff00 67.7%)';
+  const KEYS = [
+    'backgroundColor',
+    'experimental_backgroundImage',
+    'experimental_backgroundPosition',
+    'experimental_backgroundSize',
+    'experimental_backgroundRepeat',
+  ];
+  const NONE = Object.fromEntries(KEYS.map((key) => [key, null]));
+  /** The background props committed on the child, each null where it is not set. */
+  const painted = (css: string, parent: string[] = []) => {
+    const built = tree(css, parent);
+    const props = () => Object.fromEntries(KEYS.map((key) => [key, built.prop(key) ?? null]));
+    return { ...built, props };
+  };
+  const layers = (value: unknown) => (value as unknown[] | undefined)?.length;
+
+  it('paints the images over the token, as the same background with the colour written does', () => {
+    const tokened = painted(
+      `.p { --primary: #615fff } .a { background: ${GLOSS}, var(--primary) }`,
+      ['p'],
+    );
+    const written = painted(`.a { background: ${GLOSS}, #615fff }`);
+    assert.deepEqual(tokened.warnings, []);
+    assert.equal(tokened.background(), 'rgb(97, 95, 255)');
+    assert.equal(layers(tokened.image()), 1);
+    assert.deepEqual(tokened.props(), written.props());
+  });
+
+  it('follows the token where it is set and as it changes, the images staying', () => {
+    const { engine, node, background, image } = tree(`.a { background: ${GLOSS}, var(--bg) }`);
+    engine.setCustomProperty(node, '--bg', 'rgb(0, 128, 0)');
+    engine.commit();
+    assert.equal(background(), 'rgb(0, 128, 0)');
+    engine.setCustomProperty(node, '--bg', 'rgb(0, 0, 255)');
+    engine.commit();
+    assert.equal(background(), 'rgb(0, 0, 255)');
+    assert.equal(layers(image()), 1);
+  });
+
+  it('unsets the whole background for a token that is unset or no colour, over weaker rules', () => {
+    const { engine, node, props } = painted(
+      '.a { background-color: #f00; background-image: linear-gradient(red, blue); ' +
+        'background-size: 4px 4px } ' +
+        `.a { background: ${GLOSS}, var(--bg) }`,
+    );
+    assert.deepEqual(props(), NONE, 'an unset token');
+    engine.setCustomProperty(node, '--bg', 'rgb(0, 0, 255)');
+    engine.commit();
+    assert.equal(props()['backgroundColor'], 'rgb(0, 0, 255)');
+    assert.equal(layers(props()['experimental_backgroundImage']), 1);
+    engine.setCustomProperty(node, '--bg', 'bold');
+    engine.commit();
+    assert.deepEqual(props(), NONE, 'a token that is no colour');
+    engine.setCustomProperty(node, '--bg', 'rgb(0, 0, 255)');
+    engine.commit();
+    engine.setCustomProperty(node, '--bg', null);
+    engine.commit();
+    assert.deepEqual(props(), NONE, 'the token going away');
+  });
+
+  it('unsets the whole background for a token that is a part of a layer other than a colour', () => {
+    // Chrome 141 substitutes the token as the whole last layer: `2px` is its position, and a
+    // gradient its image, under no colour. Here the token is read as the colour alone, so it
+    // is no colour, and the background is unset as an invalid one is; supported-css says so.
+    const { engine, node, props } = painted(`.a { background: ${GLOSS}, var(--bg) }`);
+    for (const part of ['2px', 'linear-gradient(red, blue)']) {
+      engine.setCustomProperty(node, '--bg', part);
+      engine.commit();
+      assert.deepEqual(props(), NONE, part);
+    }
+  });
+
+  it('falls back as the var() says, through another token and to a written colour', () => {
+    const { background, image } = tree(
+      `.a { --b: rgb(1, 2, 3) } .a { background: ${GLOSS}, var(--missing, var(--b)) }`,
+    );
+    assert.equal(background(), 'rgb(1, 2, 3)');
+    assert.equal(layers(image()), 1);
+    const written = tree(`.a { background: ${GLOSS}, var(--missing, #0f0) }`);
+    assert.equal(written.background(), 'rgb(0, 255, 0)');
+  });
+
+  it('reads a colour made of a token in the last layer, as background-color does', () => {
+    const { background, image, warnings } = tree(
+      `.a { --bg: rgb(0, 0, 200); background: ${GLOSS}, color-mix(in srgb, var(--bg), rgb(0, 0, 0)) }`,
+    );
+    assert.deepEqual(warnings, []);
+    assert.equal(background(), 'rgb(0, 0, 100)');
+    assert.equal(layers(image()), 1);
+  });
+
+  it('lands a platform colour the token holds in the background colour', () => {
+    const { background, image, warnings } = tree(
+      `.a { --bg: platform-color(systemBlue); background: ${GLOSS}, var(--bg) }`,
+    );
+    assert.deepEqual(warnings, []);
+    assert.deepEqual(background(), { semantic: ['systemBlue'] });
+    assert.equal(layers(image()), 1);
+  });
+
+  it('places and sizes the images as written, and resets what a weaker rule placed', () => {
+    const weaker = '.a { background-size: 4px 4px; background-repeat: no-repeat } ';
+    const tokened = painted(
+      `${weaker}.a { --bg: #000; background: ${GLOSS} center / 50% repeat-x, ${GLOSS}, var(--bg) }`,
+    );
+    const written = painted(
+      `${weaker}.a { background: ${GLOSS} center / 50% repeat-x, ${GLOSS}, #000 }`,
+    );
+    assert.deepEqual(tokened.warnings, []);
+    assert.deepEqual(tokened.props(), written.props());
+    assert.equal(layers(tokened.prop('experimental_backgroundSize')), 2);
+  });
+
+  it('gives way to a longhand a later rule declares, and stands over it when important', () => {
+    const later = tree(
+      `.a { --bg: #f00; background: ${GLOSS}, var(--bg) } ` +
+        '.a { background-image: none; background-color: #0f0 }',
+    );
+    assert.deepEqual(later.image(), [], 'the later image wins');
+    assert.equal(later.background(), 'rgb(0, 255, 0)', 'and the later colour');
+
+    const important = tree(
+      `.a { --bg: #f00; background: ${GLOSS}, var(--bg) !important } ` +
+        '.a { background-image: none; background-color: #0f0 }',
+    );
+    assert.equal(layers(important.image()), 1);
+    assert.equal(important.background(), 'rgb(255, 0, 0)');
+
+    // Unset and important: nothing, over a later colour and image that are not.
+    const unset = tree(
+      `.a { background: ${GLOSS}, var(--missing) !important } ` +
+        '.a { background-image: linear-gradient(red, blue); background-color: #0f0 }',
+    );
+    assert.equal(unset.background() ?? null, null);
+    assert.equal(unset.image() ?? null, null);
+  });
+
+  it('draws a last layer that is a gradient with a token in it as a gradient, not a colour', () => {
+    const { background, image, warnings } = tree(
+      `.a { --a: rgb(0, 0, 255); background: ${GLOSS}, linear-gradient(var(--a), red) }`,
+    );
+    assert.deepEqual(warnings, []);
+    assert.equal(layers(image()), 2);
+    assert.equal(background() ?? null, null);
+  });
+
+  it('still refuses a var() among the images, and anything beside the colour token', () => {
+    const MIXES = /'background' mixes var\(\) with other values/;
+    for (const [value, why] of [
+      // The message the same images give beside a written colour.
+      [`url(a.png), var(--bg)`, /a url\(\) is not something native can paint/],
+      [`${GLOSS} 0 0 / 1em 1em, var(--bg)`, /have to be settled at build time/],
+      [`linear-gradient(var(--a), red) center, var(--bg)`, MIXES],
+      [`${GLOSS} center, linear-gradient(var(--a), red)`, MIXES],
+      [`${GLOSS}, var(--bg) none`, MIXES],
+      [`${GLOSS} var(--bg)`, MIXES],
+    ] as const) {
+      const { background, image, warnings } = tree(
+        `.a { --a: red; --bg: blue; background: ${value} }`,
+      );
+      assert.equal(background() ?? null, null, value);
+      assert.equal(image() ?? null, null, value);
+      assert.equal(warnings.length, 1, value);
+      assert.match(warnings[0]!, why, value);
+    }
   });
 });
