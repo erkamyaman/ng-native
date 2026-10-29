@@ -19,13 +19,14 @@ const component = (styles: string, extra = '') =>
     'export class A {}',
   ].join('\n');
 
-/** What the compiled component definition still carries, ignoring the rest of the module. */
+/**
+ * What the compiled component definition still carries, ignoring the rest of the module: up to
+ * the sheet, which is handed to the class right after the definition.
+ */
 const definition = (code: string) => {
   const at = code.indexOf('ɵɵdefineComponent(');
-  return code.slice(
-    at,
-    code.indexOf('ɵnativeStyles') === -1 ? undefined : code.indexOf('ɵnativeStyles'),
-  );
+  const sheet = code.indexOf('{"rules":', at);
+  return code.slice(at, sheet === -1 ? undefined : sheet);
 };
 
 describe('stripping the emitted CSS', () => {

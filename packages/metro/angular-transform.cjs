@@ -997,18 +997,53 @@ ${SWAP}
  * so on native they are dropped in silence. Compiling here means the CSS costs nothing at
  * runtime, and anything native cannot express is dropped with a build warning that names the
  * file, the line and the reason, instead of doing nothing without a word.
+ *
+ * @returns {{ name: string, sheet: object }[]} each component's sheet, by its class's name
  */
-function styleBlock(src, filename, components, resources, platform, warn) {
-  const blocks = [];
-
+function componentSheets(src, filename, components, resources, platform, warn) {
+  const sheets = [];
   for (const component of components ?? []) {
     const parts = componentParts(component, resources, filename, src);
     const css = parts.map((part) => part.text).join('\n');
     const sheet = componentSheet(css, filename, component.className, platform, parts, warn);
-    if (sheet) blocks.push(`${component.className}["ɵnativeStyles"] = ${literal(sheet)};`);
+    if (sheet) sheets.push({ name: component.className, sheet });
   }
+  return sheets;
+}
 
-  return blocks.length ? `\n${blocks.join('\n')}\n` : '';
+/**
+ * The compiled module with each sheet on its class as the class is defined: the definition
+ * `ɵɵdefineComponent({ type: X, ... })` returns hands X the sheet on the way out, as
+ * `withLibrarySheets` does for a library's. The module's own code runs after its classes are
+ * defined, so a sheet read at its top level, `export const theme = styleSheetOf(Theme)`, is there.
+ * An assignment after the module's last line came after that code, which then read null.
+ *
+ * The sheet follows the call rather than leading it, so the columns of the line the call starts
+ * on, which the source map describes, move only by the few characters ahead of it.
+ *
+ * A class whose definition is not found once in the output, which the compiler always writes,
+ * has its sheet assigned at the end as a fallback, where it is there by the time anything renders.
+ */
+function withSheets(code, filename, sheets) {
+  if (!sheets.length) return code;
+  const declarations = componentDeclarations(code, filename, 'ɵɵdefineComponent') ?? [];
+  const inline = [];
+  const after = [];
+  for (const { name, sheet } of sheets) {
+    const found = declarations.filter((declared) => declared.type === name);
+    if (found.length === 1) inline.push({ declared: found[0], sheet });
+    else after.push(`${name}["ɵnativeStyles"] = ${literal(sheet)};`);
+  }
+  let out = code;
+  for (const { declared, sheet } of inline.sort((a, b) => b.declared.start - a.declared.start)) {
+    out =
+      out.slice(0, declared.start) +
+      `((d, s) => ((d.type["ɵnativeStyles"] = s), d))(` +
+      out.slice(declared.start, declared.end) +
+      `, ${literal(sheet)})` +
+      out.slice(declared.end);
+  }
+  return after.length ? `${out}\n${after.join('\n')}\n` : out;
 }
 
 /**
@@ -1335,7 +1370,7 @@ function manifestName(directory) {
 
 /**
  * The file with each `ɵɵngDeclareComponent({ type: X, ..., styles: [...] })` handing X the sheet
- * its CSS compiles to, as `styleBlock` does for a component the compiler sees.
+ * its CSS compiles to, as `withSheets` does for a component the compiler sees.
  *
  * Read from the file as shipped, before the linker: the linker shims the CSS for emulated
  * encapsulation, `[_nghost-%COMP%]`, and that `%` is no selector lightningcss can tokenize. The
@@ -1540,7 +1575,7 @@ function transformAngular(src, filename, options = {}) {
       };
     }
     const warn = buildWarnings();
-    const styles = styleBlock(src, filename, components, resources, platform, warn);
+    const sheets = componentSheets(src, filename, components, resources, platform, warn);
     const { quiet, hmr } = hotParts(src, filename, components, resources, options, warn);
     // Components copied into the app from a library written for a browser: see `browserElements`.
     const named = isBrowserSource(filename, options.projectRoot) ? browserElements(src) : '';
@@ -1549,7 +1584,7 @@ function transformAngular(src, filename, options = {}) {
     const compiled =
       options.dev === true ? result.code : stripComponentStyles(result.code, filename);
     return {
-      code: edges + quiet + compiled + styles + hmr + named,
+      code: edges + quiet + withSheets(compiled, filename, sheets) + hmr + named,
       dependencies,
       map: result.map,
       // The resource imports are prepended, so everything the map describes has moved down by

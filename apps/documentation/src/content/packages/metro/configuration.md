@@ -87,7 +87,9 @@ is gone, styles are compiled separately (below). A few things ride along with th
 ## Component CSS
 
 Each component's `styles`/`styleUrl` is compiled with lightningcss into a rule set and attached to
-the class as a static: `MyComponent["ɵnativeStyles"] = {...}`. That is the only thing that reaches
+the class as a static, `MyComponent["ɵnativeStyles"]`, as Angular defines the component, so
+`styleSheetOf(MyComponent)` returns it anywhere after the class, the top level of the same module
+included. That is the only thing that reaches
 the class - Angular's own `styles: [...]` array on the definition is emptied in a production build,
 because nothing on this platform reads it. In dev it is left in place, because the hot-reload path
 below is easier to reason about against untouched compiler output and bundle size does not matter
