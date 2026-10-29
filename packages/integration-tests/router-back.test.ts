@@ -261,7 +261,10 @@ describe('going back in an app with tabs', () => {
     it('is left behind by a link relative to it, which goes where the link leads', async () => {
       await navigation.present('/library/7', { as: 'modal' });
       await settle();
-      const page = router.routerState.root.children.find((child) => child.outlet === 'presented');
+      // The page's own route, under one empty-path route for each route it sat inside.
+      let page = router.routerState.root.children.find((child) => child.outlet === 'presented');
+      while (page?.firstChild) page = page.firstChild;
+      assert.equal(page?.component, mod['Album']);
       assert.equal(await navigation.push(['..', '9'], { relativeTo: page }), true);
       await settle();
       assert.equal(router.url, '/library/9');

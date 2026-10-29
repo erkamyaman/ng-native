@@ -33,8 +33,11 @@ type Page = {
   title: string | undefined;
 };
 
-/** The routes, and what each guard and resolver was given, in the order they ran. */
-function setup() {
+/**
+ * The routes, and what each guard and resolver was given, in the order they ran. `lazy` loads the
+ * page's component with `loadComponent`.
+ */
+function setup(lazy = false) {
   const SHELL = mod['SHELL'] as InjectionToken<object>;
   const SESSION = mod['SESSION'] as InjectionToken<object>;
   const POLICY = mod['POLICY'] as InjectionToken<string>;
@@ -95,7 +98,9 @@ function setup() {
             { path: '', component: mod['Library'] as Type<unknown> },
             {
               path: ':id',
-              component: mod['Album'] as Type<unknown>,
+              ...(lazy
+                ? { loadComponent: () => Promise.resolve(mod['Album'] as Type<unknown>) }
+                : { component: mod['Album'] as Type<unknown> }),
               title: 'Album',
               providers: [{ provide: POLICY, useValue: 'lenient' }],
               resolve: {
@@ -187,7 +192,8 @@ describe('the providers of a page presented over another tab', () => {
     assert.equal(router.url, '/home(presented:library/7)');
     assert.equal(pages.length, 1);
     assertShared(ran, pages[0]!);
-    // What the page is given is what it is given in its tab.
+    // Its params and data as before: the data of the routes it sat inside merges into its own,
+    // as an empty-path child's does, since the copies of those routes have no component.
     assert.deepEqual(pages[0]!.params, { id: '7' });
     assert.deepEqual(Object.fromEntries(Object.entries(pages[0]!.data)), {
       section: 'library',
@@ -199,6 +205,28 @@ describe('the providers of a page presented over another tab', () => {
 
     await dismiss(navigation, router);
   });
+
+  for (const lazy of [false, true]) {
+    it(`are the presented page s own after it was shown in its tab, not the tab s${lazy ? ', with a lazy page' : ''}`, async () => {
+      const { routes, ran, pages } = setup(lazy);
+      pages.length = 0;
+      const { router, navigation } = await boot(routes);
+      await router.navigateByUrl('/library/7');
+      await settle();
+      await router.navigateByUrl('/home');
+      await settle();
+      assert.equal(pages.length, 1);
+      ran.length = 0;
+      await navigation.present('/library/8', { as: 'formSheet' });
+      await settle();
+      assert.equal(router.url, '/home(presented:library/8)');
+      assert.equal(pages.length, 2);
+      assertShared(ran, pages[1]!);
+      assert.notEqual(pages[1]!.session, pages[0]!.session, 'not the instance the tab has');
+
+      await dismiss(navigation, router);
+    });
+  }
 
   it('are kept for the next presentation, as Angular keeps a route s injector', async () => {
     const { routes, ran, destroyed, pages } = setup();

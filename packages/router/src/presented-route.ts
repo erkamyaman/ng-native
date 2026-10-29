@@ -101,6 +101,18 @@ async function chainTo(
 }
 
 /**
+ * `route` without what the router keeps on it once it has been matched: the injector it made from
+ * the route's providers (`_injector`) and what it loaded (`_loadedRoutes`, `_loadedComponent`,
+ * `_loadedInjector`, `_loadedNgModuleFactory`). The router makes an injector only for a route that
+ * has none, so a copy of a page already shown in its tab would give the page and its resolvers
+ * the tab's instances, and its guards those of the copy. A lazy component is loaded again, from
+ * the same function, which a dynamic import answers from its cache.
+ */
+function withoutRouterState(route: Route): Route {
+  return Object.fromEntries(Object.entries(route).filter(([key]) => !key.startsWith('_'))) as Route;
+}
+
+/**
  * The page's route as a root route of the presented outlet: its own component, title, data and
  * resolvers, under the whole path, inside a route for each one it sat inside with that route's
  * guards, providers, resolvers and data. Their components are left out: the tab bar and the tab's
@@ -115,7 +127,7 @@ async function chainTo(
 function presentedCopy(chain: readonly Route[]): Route {
   const page = chain.at(-1)!;
   let copy: Route = {
-    ...page,
+    ...withoutRouterState(page),
     // Its own children are in the copy by now, where they were lazy.
     loadChildren: undefined,
     path: '',
