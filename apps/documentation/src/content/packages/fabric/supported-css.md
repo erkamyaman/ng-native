@@ -272,6 +272,14 @@ from a basis of nothing, as `flex-1` cells do. The engine commits such a box wit
 reads its width back, and commits it at that width, which the percentage and the shares are then
 of. It costs the box two more commits when something in it changes.
 
+So does an item that grows in such a box, with `flex-grow` or `flex` from any basis. A browser
+sizes the row from what its items hold, so growing has nothing left over to hand out, where React
+Native's Yoga grows the items into all the room the row could have had. A segmented control's
+tray that is `align-self: flex-start`, an item of a row, `inline-flex` or out of the flow, around
+segments that grow, is as wide as its segments, and each segment as wide as its own content. In a
+row that is `width: fit-content` or `max-width: max-content` the items do not grow at all, since
+such a row has no room left over in a browser either.
+
 Only margins in points collapse. Beside a percentage margin in the same container every margin stays
 as written, because a percentage is of a width nothing knows before layout. In a flex container or a
 grid an inline-level box is an item like any other, as a browser has it. `.d-none` followed by

@@ -2624,8 +2624,27 @@ function sharesRow(node: EngineNode): boolean {
  */
 function sharesWidth(node: EngineNode): boolean {
   const share =
-    isShare(readStyle(node, 'width')) || isShare(readStyle(node, 'minWidth')) || basisOfRow(node);
+    isShare(readStyle(node, 'width')) ||
+    isShare(readStyle(node, 'minWidth')) ||
+    basisOfRow(node) ||
+    growsInRow(node);
   return share && !OUT_OF_FLOW.has(readStyle(node, 'position') as string);
+}
+
+/**
+ * Whether a box grows into the row it is an item of: a share of the room left in the row. A
+ * browser leaves none in a row as wide as its content, where React Native's Yoga hands out all
+ * the room the row could have (its `StretchFlexBasis` erratum), whatever the item's basis.
+ */
+function growsInRow(node: EngineNode): boolean {
+  const row = node.parent;
+  return row?.nodeKind === 'element' && grows(node) && isRow(row);
+}
+
+/** Whether an item grows: by `flex-grow`, or by React Native's `flex`. */
+function grows(node: EngineNode): boolean {
+  const [grow, flex] = [readStyle(node, 'flexGrow'), readStyle(node, 'flex')];
+  return (typeof grow === 'number' && grow > 0) || (typeof flex === 'number' && flex > 0);
 }
 
 /**
@@ -3040,6 +3059,10 @@ const LAID_OUT_HERE = new Set([
   'clipBand',
   ...CONTAINING_ONLY,
 ]);
+/** What makes an item grow into the room left in its line: see `growsInRow`. */
+const GROWS = new Set(['flexGrow', 'flex']);
+/** The keys whose number asks for something, where most numbers ask for nothing: see `asks`. */
+const ASKED_AS_NUMBER = new Set([...LAID_OUT_HERE, ...GROWS]);
 /**
  * Whether a box is what an absolute box in it is placed against: one that is not static, or one
  * CSS makes a containing block however it is positioned (see `containsAbsolutes`).
@@ -3116,6 +3139,8 @@ function asks(key: string, value: unknown): number {
   // A transition or an animation, as each of their declarations is kept: `$transition`.
   if (key.startsWith('$')) return TRANSITIONS;
   if (typeof value === 'string') return asksByText(key, value);
+  // Growing is a share of the room left in a row, which is fitted as a share of its width is.
+  if (GROWS.has(key)) return typeof value === 'number' && value > 0 ? SHARED_WIDTHS : 0;
   if (LAID_OUT_HERE.has(key)) return CSS_LAYOUT;
   // A move by a share with a length added is inside a transform's own list of values, and
   // nothing else's: see `takeMixedTranslate`.
@@ -3205,7 +3230,7 @@ function styleAsks(style: unknown): number {
     const value = (style as Record<string, unknown>)[key];
     // A number asks for nothing but by a key the engine alone reads, as in `Engine.setProp`: told
     // here without the call, as most declarations are numbers.
-    if (typeof value !== 'number' || LAID_OUT_HERE.has(key)) asked |= asks(key, value);
+    if (typeof value !== 'number' || ASKED_AS_NUMBER.has(key)) asked |= asks(key, value);
   }
   return asked;
 }
@@ -3221,6 +3246,7 @@ function lateAsks(late: DeferredDeclaration): number {
   for (const prop of late.props) {
     if (prop === 'display' || prop === 'position' || LAID_OUT_HERE.has(prop)) asked |= CSS_LAYOUT;
     if (prop.startsWith('$')) asked |= TRANSITIONS;
+    if (GROWS.has(prop)) asked |= SHARED_WIDTHS;
   }
   const text = JSON.stringify(late);
   if (text.includes('"percent"') || text.includes('%') || text.includes('calc(')) {
@@ -4403,6 +4429,28 @@ function percentBasis(node: EngineNode, props: Record<string, unknown>): void {
   else if (INLINE_ROWS.has(readStyle(parent, 'display') as string) && inALine(parent)) {
     const width = readStyle(parent, 'width');
     if (width == null || width === 'auto') delete props['flexBasis'];
+  }
+}
+
+/**
+ * Growing in a row that is written to be as wide as its content: a browser makes the row as wide
+ * as what its items hold, or as the room where that is less, so it has no room left over to grow
+ * an item into. React Native's Yoga hands out all the room the row could have (its
+ * `StretchFlexBasis` erratum), so the item does not grow. A row fitted to its content by the
+ * engine instead has its growing items set aside while it is measured: see `sizedByRoom`.
+ *
+ * ponytail: a `min-width` larger than the content leaves room to grow into in a browser. Keep the
+ * growth there if one comes up.
+ */
+function noGrowthInFittedRow(node: EngineNode, props: Record<string, unknown>): void {
+  const [grow, flex] = [props['flexGrow'], props['flex']];
+  if (!(typeof grow === 'number' && grow > 0) && !(typeof flex === 'number' && flex > 0)) return;
+  const parent = layoutParent(node);
+  if (!parent || !isRow(parent) || !fitsWidth(parent)) return;
+  delete props['flexGrow'];
+  if (typeof flex === 'number' && flex > 0) {
+    delete props['flex'];
+    props['flexShrink'] ??= 1;
   }
 }
 
@@ -8292,7 +8340,7 @@ export class Engine implements HostEngine {
       node.props[key] = value;
       // A number asks for nothing but by a key the engine alone reads: see `asks`.
       // `askedBy`, written out: this runs for every prop Angular writes.
-      if ((typeof value !== 'number' || LAID_OUT_HERE.has(key)) && this.asked !== EVERYTHING) {
+      if ((typeof value !== 'number' || ASKED_AS_NUMBER.has(key)) && this.asked !== EVERYTHING) {
         const bits =
           key === 'style' || key === STYLE_OVERRIDE ? styleAsks(value) : asks(key, value);
         if (bits & ~this.asked) this.want(bits);
@@ -8457,7 +8505,9 @@ export class Engine implements HostEngine {
       const style = node.props['style'] as Record<string, unknown> | undefined;
       const value = key === undefined ? style : style?.[key];
       // A number asks for nothing but by a key the engine alone reads: see `asks`.
-      if (typeof value !== 'number' || LAID_OUT_HERE.has(key!)) this.askedBy(key ?? 'style', value);
+      if (typeof value !== 'number' || ASKED_AS_NUMBER.has(key!)) {
+        this.askedBy(key ?? 'style', value);
+      }
     }
     // As `setProp` restyles for a new style object: a child that takes one of its values, an
     // `inherit`, follows the one changed in place too.
@@ -10419,8 +10469,8 @@ export class Engine implements HostEngine {
 
   /**
    * The boxes inside `node` that Yoga sizes from the room on offer and not from their content:
-   * one with a percentage width or a percentage basis in a row, and one that takes a share of a
-   * row from a basis of nothing.
+   * one with a percentage width or a percentage basis in a row, one that takes a share of a row
+   * from a basis of nothing, and one that grows into a row from any basis.
    * Nothing under a box with a width of its own in points is looked at: that width is its
    * content's room whatever it holds.
    */
@@ -10433,7 +10483,7 @@ export class Engine implements HostEngine {
       const shares =
         typeof readStyle(child, 'flex') === 'number' ||
         isNoBasis(basis) ||
-        (isShare(basis) && isRow(node));
+        ((isShare(basis) || grows(child)) && isRow(node));
       if (typeof width === 'string' || shares || isShare(readStyle(child, 'minWidth'))) {
         found.push(child);
       }
@@ -11806,6 +11856,7 @@ export class Engine implements HostEngine {
   /** A node's part in a block's flow, where a layout of CSS's has been asked for. */
   private flowed(node: EngineNode, style: Record<string, unknown>): void {
     percentBasis(node, style);
+    noGrowthInFittedRow(node, style);
     flowLayout(node, style, this.fontScale);
     this.alignLine(node, style);
     onBaseline(node, style);

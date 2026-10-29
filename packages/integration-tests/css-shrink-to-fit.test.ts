@@ -814,3 +814,154 @@ describe('a chip set in an item that is as wide as its content', () => {
     });
   }
 });
+
+describe('an item that grows in a row as wide as its content', () => {
+  // A segmented control's tray: a row that is not stretched across its column, holding segments
+  // that grow. A browser sizes the row from what its items hold, and growing hands out the room
+  // left in it, which is none. React Native's Yoga grows the items into all the room the row
+  // could have, so the row filled the column wherever an item grew from a basis of `auto`.
+  const CSS =
+    '.col { display: flex; flex-direction: column; width: 362px }' +
+    ' .row { display: flex; flex-direction: row; align-self: flex-start }' +
+    ' .a { flex: 1 1 auto } .c { flex-grow: 1 } .d { flex: 1 } .e { flex: 1 1 0% }' +
+    ' .b { width: 40px; height: 20px } .wide { align-self: stretch }';
+  const ITEMS = ['plain', 'a', 'c', 'd', 'e'];
+
+  for (const conformance of ['classic', 'strict'] as const) {
+    it(`is as wide as what its item holds, however the item grows, laid out ${conformance}`, () => {
+      const rows = ITEMS.map((item): Spec => [`row ${item}-row`, [item]]);
+      const s = scene(CSS, ['col', ...rows], conformance);
+      for (const item of ITEMS) say(s, item, 'Segment');
+      // Chrome: each row and each item 70 wide, the seven characters of the item's words.
+      for (const item of ITEMS) {
+        assert.equal(s.box(`row ${item}-row`)[2], 70, `row of ${item}`);
+        assert.equal(s.box(item)[2], 70, item);
+      }
+    });
+  }
+
+  it('is as wide as its items hold where they share it, each growing by nothing', () => {
+    // The tray of a segmented control, `width: fit-content`, `align-self: flex-start` or
+    // `inline-flex` in a block, around segments that each grow.
+    const COLUMN = '.col { display: flex; flex-direction: column; width: 362px }';
+    const trays = [
+      [COLUMN, 'width: fit-content'],
+      [COLUMN, 'align-self: flex-start'],
+      ['.col { display: block; width: 362px }', 'display: inline-flex'],
+      ['.col { display: flex; width: 362px; height: 100px }', 'position: absolute'],
+    ];
+    for (const [column, tray] of trays) {
+      const css =
+        `${column} .tray { display: flex; flex-direction: row; padding: 2px; ${tray} }` +
+        ' .seg { flex-grow: 1; padding: 0 8px }';
+      const s = scene(css, ['col', ['tray', ['seg day'], ['seg week'], ['seg month']]]);
+      say(s, 'seg day', 'Day');
+      say(s, 'seg week', 'Week');
+      say(s, 'seg month', 'Month');
+      // Chrome: 46, 56 and 66, the words and their padding, and the tray those and its own.
+      assert.deepEqual(
+        ['day', 'week', 'month'].map((seg) => s.box(`seg ${seg}`)[2]),
+        [46, 56, 66],
+        tray,
+      );
+      assert.equal(s.box('tray')[2], 172, tray);
+    }
+  });
+
+  it('grows its items again where it stops being fit-content, and not where it starts again', () => {
+    const css =
+      '.col { display: flex; flex-direction: column; width: 362px }' +
+      ' .tray { display: flex; flex-direction: row } .fit { width: fit-content }' +
+      ' .capped { max-width: max-content } .seg { flex-grow: 1 }';
+    const s = scene(css, ['col', ['tray fit', ['seg one'], ['seg two']]]);
+    say(s, 'seg one', 'Day');
+    say(s, 'seg two', 'Week');
+    const tray = s.nodes.get('tray fit')!;
+    assert.equal(s.box('tray fit')[2], 70);
+    assert.equal(s.box('seg one')[2], 30);
+    s.engine.removeClass(tray, 'fit');
+    // Stretched across the column: each grows by half of what is left, (362 - 70) / 2.
+    assert.equal(s.box('tray fit')[2], 362);
+    assert.equal(s.box('seg one')[2], 176);
+    s.engine.addClass(tray, 'capped');
+    assert.equal(s.box('tray fit')[2], 70);
+    assert.equal(s.box('seg one')[2], 30);
+  });
+
+  it('is as wide as what it holds as an item of a row, which does not grow it', () => {
+    const css =
+      '.outer { display: flex; flex-direction: row; width: 362px }' +
+      ' .row { display: flex; flex-direction: row } .c { flex-grow: 1 }' +
+      ' .b { width: 40px; height: 20px }';
+    const s = scene(css, ['outer', ['row', ['c'], ['b']]]);
+    say(s, 'c', 'Segment');
+    // Chrome: the row 110 wide, the item's words and the box beside it.
+    assert.equal(s.box('row')[2], 110);
+    assert.equal(s.box('c')[2], 70);
+  });
+
+  it('is so where the item grows by its own style, with no sheet asking for it', () => {
+    // An inline `style="flex-grow: 1"`, a style object, and one written into in place, as a
+    // bound `[style.flex-grow]` is: nothing in the sheet is a share of anything.
+    const css =
+      '.col { display: flex; flex-direction: column; width: 362px }' +
+      ' .row { display: flex; flex-direction: row; align-self: flex-start }';
+    const object = scene(css, ['col', ['row', ['item']]]);
+    say(object, 'item', 'Segment');
+    object.engine.setProp(object.nodes.get('item')!, 'style', { flexGrow: 1 });
+    assert.equal(object.box('row')[2], 70);
+
+    const inPlace = scene(css, ['col', ['row', ['item']]]);
+    say(inPlace, 'item', 'Segment');
+    const style: Record<string, unknown> = {};
+    const item = inPlace.nodes.get('item')!;
+    inPlace.engine.setProp(item, 'style', style);
+    assert.equal(inPlace.box('row')[2], 70);
+    style['flexGrow'] = 1;
+    inPlace.engine.styleChanged(item, 'flexGrow');
+    assert.equal(inPlace.box('row')[2], 70);
+
+    // React Native's own `flex: 1`, which grows from a basis of nothing.
+    const flex = scene(css, ['col', ['row', ['item']]]);
+    say(flex, 'item', 'Segment');
+    flex.engine.setProp(flex.nodes.get('item')!, 'style', { flex: 1 });
+    assert.equal(flex.box('row')[2], 70);
+
+    // A token's growth, known only once the token is.
+    const tokens = `${css} .col { --grow: 1 } .item { flex-grow: var(--grow) }`;
+    const token = scene(tokens, ['col', ['row', ['item']]]);
+    say(token, 'item', 'Segment');
+    assert.equal(token.box('row')[2], 70);
+  });
+
+  it('follows the item coming to grow and stopping, and the row coming to be stretched', () => {
+    const s = scene(CSS, ['col', ['row', ['item'], ['b']]]);
+    say(s, 'item', 'Segment');
+    const [row, item] = [s.nodes.get('row')!, s.nodes.get('item')!];
+    assert.equal(s.box('row')[2], 110);
+    s.engine.addClass(item, 'c');
+    assert.equal(s.box('row')[2], 110);
+    assert.equal(s.box('item')[2], 70);
+    // Stretched across the column, the row is as wide as it, and the item grows into it.
+    s.engine.addClass(row, 'wide');
+    assert.equal(s.box('row')[2], 362);
+    assert.equal(s.box('item')[2], 322);
+    s.engine.removeClass(row, 'wide');
+    assert.equal(s.box('row')[2], 110);
+    assert.equal(s.box('item')[2], 70);
+    s.engine.removeClass(item, 'c');
+    assert.equal(s.box('row')[2], 110);
+  });
+
+  it('grows the item into a row given a width, and fits the row again when it loses it', () => {
+    const s = scene(`${CSS} .w200 { width: 200px }`, ['col', ['row', ['c'], ['b']]]);
+    say(s, 'c', 'Segment');
+    const row = s.nodes.get('row')!;
+    assert.equal(s.box('row')[2], 110);
+    s.engine.addClass(row, 'w200');
+    assert.equal(s.box('c')[2], 160);
+    s.engine.removeClass(row, 'w200');
+    assert.equal(s.box('row')[2], 110);
+    assert.equal(s.box('c')[2], 70);
+  });
+});
