@@ -264,7 +264,16 @@ export class NativeNavigation {
     if (this.backWaiting) return;
     this.backWaiting = this.router.events.subscribe((event) => {
       const ended = event instanceof NavigationEnd;
-      if (!ended && !(event instanceof NavigationCancel) && !(event instanceof NavigationError)) {
+      if (
+        !ended &&
+        !(event instanceof NavigationCancel) &&
+        !(event instanceof NavigationError) &&
+        !(event instanceof NavigationSkipped)
+      ) {
+        return;
+      }
+      // A guard's redirect ends the navigation only for the one it starts: the back waits for that.
+      if (event instanceof NavigationCancel && event.code === NavigationCancellationCode.Redirect) {
         return;
       }
       this.backWaiting?.unsubscribe();
