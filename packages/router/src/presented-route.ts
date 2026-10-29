@@ -10,11 +10,6 @@
  * tab, and a back goes through history as any other does.
  */
 import {
-  createEnvironmentInjector,
-  runInInjectionContext,
-  type EnvironmentInjector,
-} from '@angular/core';
-import {
   PRIMARY_OUTLET,
   type NavigationExtras,
   type Route,
@@ -107,82 +102,45 @@ async function chainTo(
 
 /**
  * The page's route as a root route of the presented outlet: its own component, title, data and
- * resolvers, under the whole path, with the guards and providers of the routes it sat inside.
- * Their components are left out: the tab bar and the tab's stack are not what is presented.
+ * resolvers, under the whole path, inside a route for each one it sat inside with that route's
+ * guards, providers, resolvers and data. Their components are left out: the tab bar and the tab's
+ * stack are not what is presented.
+ *
+ * Each route keeps its providers, so Angular makes an injector for it under the one above, as it
+ * does in the page's tab: a guard runs with the providers down to its own route, and it, the
+ * resolvers and the page share one instance of each. The routes inside the first have an empty
+ * path and the presented outlet, so the router puts the page in that outlet, and the page gets
+ * the params, data and resolved data of the routes it is inside as an empty path child does.
  */
-function presentedCopy(chain: readonly Route[], root: EnvironmentInjector | undefined): Route {
+function presentedCopy(chain: readonly Route[]): Route {
   const page = chain.at(-1)!;
-  const above = chain.slice(0, -1);
-  const scopeOf = root ? scopes(above, root) : undefined;
-  // An ancestor's guard is run where it was: the copy has the providers of every route, and a
-  // page's override of one that guard reads would otherwise decide it.
-  const guarded = (route: Route, level: number, kind: 'canActivate' | 'canActivateChild') =>
-    (route[kind] ?? []).map((guard: unknown) =>
-      root && chain.slice(level + 1).some((below) => below.providers?.length)
-        ? scoped(guard, kind, () => scopeOf!(level))
-        : guard,
-    ) as NonNullable<Route['canActivate']>;
-  return {
+  let copy: Route = {
     ...page,
     // Its own children are in the copy by now, where they were lazy.
     loadChildren: undefined,
+    path: '',
+    pathMatch: undefined,
+    outlet: PRESENTED,
+  };
+  for (const route of chain.slice(0, -1).reverse()) {
+    const { canActivate, canActivateChild, providers, resolve, data } = route;
+    copy = {
+      path: '',
+      outlet: PRESENTED,
+      canActivate,
+      canActivateChild,
+      providers,
+      resolve,
+      data,
+      children: [copy],
+    };
+  }
+  return {
+    ...copy,
     path: chain
       .map((route) => route.path)
       .filter(Boolean)
       .join('/'),
-    pathMatch: undefined,
-    outlet: PRESENTED,
-    canActivate: [
-      ...above.flatMap((route, level) => [
-        ...guarded(route, level, 'canActivate'),
-        ...guarded(route, level, 'canActivateChild'),
-      ]),
-      ...(page.canActivate ?? []),
-    ],
-    providers: [...above.flatMap((route) => route.providers ?? []), ...(page.providers ?? [])],
-    resolve: Object.assign({}, ...above.map((route) => route.resolve), page.resolve),
-    data: Object.assign({}, ...above.map((route) => route.data), page.data),
-  };
-}
-
-/**
- * The injector each route above the page made, made when one of their guards first asks: its own
- * providers over those above it, the first over `root`.
- * ponytail: `root` stands for what a root route's injector is under; an ancestor inside a lazily
- * loaded NgModule leaves that module's providers out.
- */
-function scopes(
-  above: readonly Route[],
-  root: EnvironmentInjector,
-): (level: number) => EnvironmentInjector {
-  const made: EnvironmentInjector[] = [];
-  const scopeOf = (level: number): EnvironmentInjector => {
-    if (level < 0) return root;
-    const providers = above[level]!.providers;
-    return (made[level] ??= providers?.length
-      ? createEnvironmentInjector(providers, scopeOf(level - 1))
-      : scopeOf(level - 1));
-  };
-  return scopeOf;
-}
-
-const NOT_FOUND = {};
-
-/**
- * A guard run in `scope` as Angular runs one: a class or token as what `scope` gives for it, a
- * function in its injection context.
- */
-function scoped(guard: unknown, kind: string, scope: () => EnvironmentInjector): unknown {
-  return (...args: unknown[]) => {
-    const injector = scope();
-    const found = injector.get(guard as never, NOT_FOUND as never) as unknown;
-    const value = (found === NOT_FOUND ? guard : found) as Record<string, unknown>;
-    const method = value[kind];
-    return typeof method === 'function'
-      ? (method as (...a: unknown[]) => unknown).apply(value, args)
-      : runInInjectionContext(injector, () =>
-          (value as unknown as (...a: unknown[]) => unknown)(...args),
-        );
   };
 }
 
@@ -190,20 +148,16 @@ function scoped(guard: unknown, kind: string, scope: () => EnvironmentInjector):
  * The commands that present the page at `path` in the root's presented outlet, having given its
  * route a copy there, or null when the config is not one this follows.
  */
-export async function presentedCommands(
-  router: Router,
-  path: string,
-  root?: EnvironmentInjector,
-): Promise<unknown[] | null> {
+export async function presentedCommands(router: Router, path: string): Promise<unknown[] | null> {
   // Parsed, so the routes are matched against decoded segments and the escapes are written once.
   const parsed = primarySegments(router, path);
   const segments = parsed.map((segment) => segment.path);
   const config = router.config;
   const chain = await chainTo(config, segments);
   // Routes reset while lazy children loaded: the copy is made from the routes the router has.
-  if (router.config !== config) return presentedCommands(router, path, root);
+  if (router.config !== config) return presentedCommands(router, path);
   if (!chain || chain === STOP) return null;
-  const copy = presentedCopy(chain, root);
+  const copy = presentedCopy(chain);
   const copied = router.config.some(
     (route) => route.outlet === PRESENTED && route.path === copy.path,
   );

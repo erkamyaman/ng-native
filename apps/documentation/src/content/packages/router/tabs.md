@@ -256,6 +256,10 @@ void this.nav.present('/invoices/7', { as: 'formSheet' });
 The route is the one the tab already has, with its params, resolvers, data and lazy component, and
 with the guards and providers of the routes it sits inside. Only their components are left out:
 the page is shown on the app's own stack, over the tab bar, and not inside the Invoices tab's.
+Each of those routes gets its own injector from its providers, as in the tab, so its guards, the
+resolvers and the page share one instance of a service. That instance is the presented page's, not
+the one the Invoices tab has.
+
 While it is up the url names it beside where the app is, `/home(presented:invoices/7)`, and a
 back, or the swipe that dismisses a sheet, returns to `/home`.
 
