@@ -1,3 +1,31 @@
+## 0.19.2 (2026-10-29)
+
+### 🩹 Fixes
+
+- On iOS, `Notifications` puts the data of a push sent through FCM or straight to APNs in `request.content.data`, which `expo-notifications` fills only for a push from Expo's push service. ([#1289](https://github.com/ng-native/ng-native/pull/1289), [#1287](https://github.com/ng-native/ng-native/issues/1287))
+
+  This covers `latest`, `response`, `take()`, `presented()`, and the notification a `setHandler()` handler is passed, including the one on a timeout error given to its `handleError`. The keys come from `request.trigger.payload` and are used only when `content.data` is null or missing. The keys the push services add are left out: `aps`, FCM's `fcm_options`, `gcm.` and `google.` keys, and on a push from Expo's service its `experienceId`, `projectId` and `scopeKey`. Android, local notifications and an Expo push whose `data` the module already read are unchanged.
+
+- `fileRoutes` gives a lazy page's `canMatch` guards the same instances of its `routeMeta` providers that the page and its resolvers get, as Angular does for an eager page. ([#1292](https://github.com/ng-native/ng-native/pull/1292))
+
+  Before, a lazy page's `canMatch` guards ran in an injector of their own, made for each navigation and destroyed after it, so a service a guard wrote was not the one the page read. The injector is now made once for the page's route, and the page's routes are loaded into it. With `withAutoCleanupInjectors()`, it is destroyed when the page is left and made again on the next visit, as an eager page's is.
+
+- On iOS, a `<refresh-control>` that is already refreshing when its page is pushed, or when its tab is shown for the first time, starts spinning once the screen has appeared, so it no longer leaves a gap under a large title. ([#1298](https://github.com/ng-native/ng-native/pull/1298))
+
+  Before, native began it as the page mounted, before UIKit had laid the page out under its bars. Under a large title that left a gap the spinner's height between the title and the content, which stayed after the spinner stopped and showed on pages shown after it. React Native's own `RefreshControl` does the same. Now a control under a `<native-stack-outlet>` or `<native-tabs-outlet>` commits `refreshing` from the screen's `appear` (a tab's `didAppear`), so the spinner shows as the push finishes rather than during it. On Android, and on a view no outlet shows, nothing changes.
+
+  `SCREEN_SHOWN` in `@ng-native/device` is the signal it reads: false for a screen until native says the screen has appeared, then true, and always true outside an outlet.
+
+  In a Node test rendered for iOS, a refresh control under an outlet now commits `refreshing: false` until the test emits the screen's `topAppear` (for a tab, `topDidAppear`) with `fabric.emit`, since the fake Fabric sends no appear events.
+
+- `nx g @ng-native/nx:library` in the TypeScript preset adds the app's Babel 7 `@babel/core` to the library's dev dependencies, so pnpm 10 no longer prints "Failed to create bin" for `expo` and unmet `@babel/core` peers on every install. ([#1288](https://github.com/ng-native/ng-native/pull/1288), [#1285](https://github.com/ng-native/ng-native/issues/1285), [#1286](https://github.com/ng-native/ng-native/issues/1286))
+
+  `@angular/compiler-cli` depends on Babel 8, which otherwise answered React Native's `@babel/core` peer in the library under pnpm 10, giving the library its own copies of `react-native` and `expo`. pnpm 11 resolves the peer to the root's Babel 7 already. A library generated before this can add `"@babel/core": "^7.29.7"` to its `devDependencies` by hand.
+
+### ❤️ Thank You
+
+- Ashley Hunter
+
 ## 0.19.1 (2026-10-28)
 
 ### 🩹 Fixes
