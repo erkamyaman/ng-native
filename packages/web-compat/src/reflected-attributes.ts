@@ -1,4 +1,5 @@
 import { editedByContent } from './element-tree.ts';
+import { INPUT_TYPES } from './input-type.ts';
 import {
   action,
   baseHref,
@@ -205,31 +206,6 @@ const CONTROL: Table = {
   disabled: boolean('disabled'),
   autocomplete: string('autocomplete'),
 };
-
-const INPUT_TYPES = [
-  'hidden',
-  'text',
-  'search',
-  'tel',
-  'url',
-  'email',
-  'password',
-  'date',
-  'month',
-  'week',
-  'time',
-  'datetime-local',
-  'number',
-  'range',
-  'color',
-  'checkbox',
-  'radio',
-  'file',
-  'submit',
-  'image',
-  'reset',
-  'button',
-];
 
 /** What a text field and a text area both have. */
 const TYPED: Table = {

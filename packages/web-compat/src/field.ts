@@ -1,6 +1,7 @@
 import { markComponentHost, type Engine, type EngineNode } from '@ng-native/fabric';
 import { documentOf } from './document.ts';
 import { keepTaken } from './node-members.ts';
+import { inputTypeOf } from './input-type.ts';
 
 /**
  * `<input>` and `<textarea>`: the platform's text field, in an app that asked for this package.
@@ -270,7 +271,8 @@ const SETTERS: Readonly<
     if (node.tag !== 'input') return false;
     // A radio, a checkbox, a file or a hidden input is no text field: a library keeps one out
     // of sight under a control it draws itself. It is a plain view, as its own host would be.
-    if (!TEXT_TYPES.has(String(value ?? 'text').toLowerCase())) {
+    const type = inputTypeOf(value);
+    if (!TEXT_TYPES.has(type)) {
       asAField(node, engine, false);
       fields.delete(node);
       hostedHere.add(node);
@@ -278,7 +280,7 @@ const SETTERS: Readonly<
       return false;
     }
     for (const prop of TYPE_PROPS) engine.setProp(node, prop, null);
-    for (const [prop, set] of Object.entries(TYPES[String(value).toLowerCase()] ?? {})) {
+    for (const [prop, set] of Object.entries(TYPES[type] ?? {})) {
       engine.setProp(node, prop, set);
     }
     return false;

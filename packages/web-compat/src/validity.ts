@@ -4,6 +4,7 @@ import { controlsOf, formOf } from './form-controls.ts';
 import { method, own, type Reflecting, type Reflection } from './reflect.ts';
 import { elementsUnder } from './element-tree.ts';
 import { fenced } from './fieldset.ts';
+import { inputTypeOf } from './input-type.ts';
 import { parseUrl } from './parse-url.ts';
 
 /**
@@ -29,7 +30,7 @@ type Control = Reflecting & {
 /** What a script said is wrong with each control, until it says nothing is. */
 const custom = new WeakMap<EngineNode, string>();
 
-const typeOf = (node: Control) => String(node.getAttribute('type') ?? 'text').toLowerCase();
+const typeOf = (node: Control) => inputTypeOf(node.getAttribute('type'));
 const has = (node: Control, name: string) => node.getAttribute(name) !== null;
 const valueOf = (node: Control) => String(node.value ?? '');
 

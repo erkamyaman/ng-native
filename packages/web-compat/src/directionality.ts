@@ -1,6 +1,7 @@
 import type { EngineNode } from '@ng-native/fabric';
 import { attributeOf, isHtml, parentElement } from './element-tree.ts';
 import { isInDocument } from './in-document.ts';
+import { inputTypeOf } from './input-type.ts';
 
 /**
  * An element's directionality, as HTML works it out for `:dir()`
@@ -55,7 +56,7 @@ const TEXT_VALUES = new Set([
   'button',
 ]);
 
-const typeOf = (node: EngineNode): string => (attributeOf(node, 'type') ?? 'text').toLowerCase();
+const typeOf = (node: EngineNode): string => inputTypeOf(attributeOf(node, 'type'));
 
 /** The elements whose text `dir=auto` above them passes over. */
 const PASSED_OVER = ['bdi', 'script', 'style', 'textarea'];

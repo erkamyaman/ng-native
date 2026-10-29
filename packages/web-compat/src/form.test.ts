@@ -80,6 +80,44 @@ describe('checked', () => {
     // A radio of the same name outside the form is another group.
     assert.equal(byId('loose').checked, false);
   });
+
+  it('unchecks the one checked in the group when a checked radio is put in', async () => {
+    const { document, byId, form } = await order();
+    const milk = document.createElement('input');
+    milk.type = 'radio';
+    milk.name = 'drink';
+    milk.checked = true;
+    form.appendChild(milk);
+    assert.deepEqual([byId('tea').checked, milk.checked], [false, true]);
+    // And one inside what is put in.
+    const box = document.createElement('div');
+    box.innerHTML = '<input type="radio" name="drink" checked>';
+    form.appendChild(box);
+    assert.deepEqual([milk.checked, box.firstChild.checked], [false, true]);
+  });
+
+  it('unchecks the one checked in the group a checked radio is moved to', async () => {
+    const { document, byId, form } = await order();
+    const other = document.createElement('input');
+    other.type = 'radio';
+    other.name = 'size';
+    other.checked = true;
+    form.appendChild(other);
+    assert.equal(byId('tea').checked, true, 'another group');
+    other.name = 'drink';
+    assert.deepEqual([byId('tea').checked, other.checked], [false, true], 'by its name');
+    byId('tea').checked = true;
+    other.type = 'checkbox';
+    other.checked = true;
+    other.setAttribute('type', 'radio');
+    assert.deepEqual([byId('tea').checked, other.checked], [false, true], 'by its type');
+    const loose = byId('loose');
+    loose.type = 'radio';
+    loose.name = 'drink';
+    loose.checked = true;
+    loose.setAttribute('form', 'order');
+    assert.deepEqual([other.checked, loose.checked], [false, true], 'by its form');
+  });
 });
 
 describe('a form', () => {
@@ -308,6 +346,9 @@ describe('the selection in a field', () => {
     await fireEvent.changeText(screen.getByTestId('name'), 'Grace');
     assert.equal(name.selectionStart, 5, 'gone with the text it was set on');
     assert.equal(byId('gift').selectionStart, null);
+    byId('loose').setAttribute('type', 'datetime');
+    assert.equal(byId('loose').selectionStart, 0, 'a type HTML does not know is text');
+    assert.equal(byId('loose').matches(':read-write'), true, 'and is typed into');
     byId('gift').type = 'email';
     assert.throws(() => byId('gift').setSelectionRange(0, 1), { name: 'InvalidStateError' });
   });

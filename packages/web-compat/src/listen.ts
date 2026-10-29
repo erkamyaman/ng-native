@@ -18,7 +18,7 @@ import {
 } from './field.ts';
 import { fenceUnder, legendInserted, legendRemoved } from './fieldset.ts';
 import { implicitSubmit } from './form.ts';
-import { setChecked } from './form-controls.ts';
+import { radiosJoined, setChecked } from './form-controls.ts';
 import { buildAs, holdIconBox, setMarkup } from './html.ts';
 import { imageCreated, imageInserted, setImage } from './image.ts';
 import { inlineStyle } from './inline-style.ts';
@@ -60,6 +60,20 @@ const ICON_MARKUP = /^\s*<svg[\s>]/i;
 
 /** Elements whose own component already turns a touch into a press. */
 const PRESSABLES = new Set(['pressable', 'touchable-opacity']);
+
+/** The attributes that say which group a radio is of. */
+const REGROUPING = new Set(['name', 'form', 'type']);
+
+/**
+ * A checked radio put in another group unchecks the others of it, once the attribute that puts
+ * it there is set: see `form-controls.ts`.
+ */
+function regroup(node: EngineNode, name: string, value: unknown, engine: Engine): boolean {
+  if (node.tag !== 'input' || !REGROUPING.has(name.toLowerCase())) return false;
+  engine.setProp(node, name, value);
+  radiosJoined(node);
+  return true;
+}
 
 /** The native event a listener's own element is being told, while it is told it, and its name. */
 let current: unknown;
@@ -230,6 +244,8 @@ export const webListen: RendererExtension = {
     shapeInserted(node, parent, engine);
     // An SVG image parsed where nothing loads is fetched once it is put where it would be.
     imageInserted(node, engine);
+    // A checked radio unchecks the others of its group: see `form-controls.ts`.
+    radiosJoined(node);
   },
   removed(node, engine) {
     optionRemoved(node, engine);
@@ -268,7 +284,12 @@ export const webListen: RendererExtension = {
       ? own(node, value, engine)
       : setCanvasSize(node, name, value, engine) || setSvg(node, name, value, engine);
     // A field's and a select's own: see `field.ts` and `select.ts`.
-    return setSelect(node, name, value, engine) || setField(node, name, value, engine) || took;
+    return (
+      setSelect(node, name, value, engine) ||
+      setField(node, name, value, engine) ||
+      took ||
+      regroup(node, name, value, engine)
+    );
   },
   // A style a library binds is set as what a native view reads: see `inline-style.ts`. A
   // gradient's stop is given its colour as a style as often as an attribute, and a shape's paint

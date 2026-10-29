@@ -1,6 +1,7 @@
 import type { EngineNode } from '@ng-native/fabric';
 import type { Argument, Complex, Nth } from './parse-selector.ts';
 import { documentOfRoot, topOf } from './document-roots.ts';
+import { inputTypeOf } from './input-type.ts';
 import { directionOf } from './directionality.ts';
 import {
   attributeOf,
@@ -91,7 +92,7 @@ function disabled(node: EngineNode): boolean {
   return !isHtml(node, 'optgroup') && inDisabledFieldset(node);
 }
 
-const typeOf = (node: EngineNode): string => (attributeOf(node, 'type') ?? 'text').toLowerCase();
+const typeOf = (node: EngineNode): string => inputTypeOf(attributeOf(node, 'type'));
 /** The kinds of `<input>` that are typed into. */
 const TYPED = new Set([
   ...['text', 'search', 'url', 'tel', 'email', 'password', 'date', 'month', 'week', 'time'],

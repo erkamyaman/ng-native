@@ -2,6 +2,7 @@ import type { EngineNode } from '@ng-native/fabric';
 import { select as keepSelected } from './copy-command.ts';
 import { domError } from './dom-error.ts';
 import { selectNatively } from './field.ts';
+import { inputTypeOf } from './input-type.ts';
 import { method, own, type Reflecting, type Reflection } from './reflect.ts';
 import { engineOf } from './window.ts';
 
@@ -34,7 +35,7 @@ const SELECTABLE = new Set(['text', 'search', 'url', 'tel', 'password']);
 
 const selectable = (node: Field) =>
   node.tag === 'textarea' ||
-  (node.tag === 'input' && SELECTABLE.has((node.getAttribute('type') ?? 'text').toLowerCase()));
+  (node.tag === 'input' && SELECTABLE.has(inputTypeOf(node.getAttribute('type'))));
 
 const textOf = (node: Field) => String(node.value ?? '');
 

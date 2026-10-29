@@ -119,6 +119,19 @@ export function setChecked(node: EngineNode, value: boolean): void {
 }
 
 /**
+ * A checked radio that joins a group unchecks the others of it, as a browser's does: put in the
+ * page, or given another name, form or type. Of two checked ones, the one that joined last
+ * stays checked. The radios under what was put in join with it.
+ */
+export function radiosJoined(node: EngineNode): void {
+  for (const each of [node, ...elementsUnder(node)]) {
+    if (each.tag === 'input' && typeOf(each as Reflecting) === 'radio' && isChecked(each)) {
+      setChecked(each, true);
+    }
+  }
+}
+
+/**
  * `checked`: the state a click or a script sets, which starts as the attribute says, and is put
  * back to it by a reset. `defaultChecked` is the attribute.
  */

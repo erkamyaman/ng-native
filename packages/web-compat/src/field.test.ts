@@ -130,6 +130,12 @@ describe('a text field', () => {
     await settle();
     assert.match(field('name').viewName, /TextInput$/);
     assert.equal(field('name').props['keyboardType'], 'email-address');
+    // A type HTML does not know, or none, is a text field, as a browser's is.
+    for (const type of ['datetime', '']) {
+      name.setAttribute('type', type);
+      await settle();
+      assert.match(field('name').viewName, /TextInput$/, `type="${type}"`);
+    }
   });
 
   it('shows the value it is given, keeps it as its default, and is read as what was typed', async () => {
