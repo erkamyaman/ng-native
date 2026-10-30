@@ -344,3 +344,135 @@ export class Grammar {}
     }
   });
 });
+
+describe('a flex in a style', () => {
+  const FLEX = ['flex', 'flexGrow', 'flexShrink', 'flexBasis'];
+  const VALUES = [
+    '1 1 auto',
+    '2 3',
+    '1 0 10px',
+    '30%',
+    '2 25%',
+    'none',
+    'auto',
+    '1 1 0',
+    // A zero of any spelling, and a length with a sign or an exponent, as a browser reads them.
+    '1 1 0.0',
+    '1 1 -0',
+    '1 1 +10px',
+    '1 1 1e2px',
+  ];
+
+  it('is the grow, shrink and basis a stylesheet makes of it', async () => {
+    const pairs = VALUES.map(
+      (value, i) =>
+        `<view nativeID="sheet${i}" class="f${i}"></view><view nativeID="attribute${i}" style="flex: ${value}"></view>`,
+    ).join('');
+    const rules = VALUES.map((value, i) => `.f${i} { flex: ${value}; }`).join(' ');
+    const mod = await build(
+      'flex',
+      `
+import { Component } from '@angular/core';
+import { View } from '../components/src/view.ts';
+@Component({
+  selector: 'x-flex',
+  imports: [View],
+  template: '${pairs}',
+  styles: '${rules}',
+})
+export class Flex {}
+`,
+    );
+    const { fabric } = await render(mod['Flex'] as Type<unknown>);
+    VALUES.forEach((value, i) => {
+      const sheet = styleOf(fabric, `sheet${i}`, FLEX);
+      assert.equal(sheet['flex'], undefined, `control: the stylesheet's flex: ${value}`);
+      assert.deepEqual(styleOf(fabric, `attribute${i}`, FLEX), sheet, `flex: ${value}`);
+    });
+  });
+
+  it('follows a binding from one value to another, and to none', async () => {
+    const mod = await build(
+      'flex-bound',
+      `
+import { Component, signal } from '@angular/core';
+import { View } from '../components/src/view.ts';
+@Component({
+  selector: 'x-flex-bound',
+  imports: [View],
+  template: '<view nativeID="box" [style.flex]="flex()"></view>',
+})
+export class FlexBound { readonly flex = signal<string | undefined>('1 1 auto'); }
+`,
+    );
+    const { fabric, instance } = await render(
+      mod['FlexBound'] as Type<{ flex: { set(value: string | undefined): void } }>,
+    );
+    assert.deepEqual(styleOf(fabric, 'box', FLEX), {
+      flex: undefined,
+      flexGrow: 1,
+      flexShrink: 1,
+      flexBasis: 'auto',
+    });
+
+    // One number is React Native's own flex, as a style object writes it.
+    instance.flex.set('2');
+    await settle();
+    assert.deepEqual(styleOf(fabric, 'box', FLEX), {
+      flex: 2,
+      flexGrow: undefined,
+      flexShrink: undefined,
+      flexBasis: undefined,
+    });
+
+    instance.flex.set('none');
+    await settle();
+    assert.deepEqual(styleOf(fabric, 'box', FLEX), {
+      flex: undefined,
+      flexGrow: 0,
+      flexShrink: 0,
+      flexBasis: 'auto',
+    });
+
+    instance.flex.set(undefined);
+    await settle();
+    assert.deepEqual(
+      styleOf(fabric, 'box', FLEX),
+      Object.fromEntries(FLEX.map((key) => [key, undefined])),
+    );
+  });
+
+  it('drops one that is no flex, with a warning, as a browser drops it', async () => {
+    const mod = await build(
+      'flex-refused',
+      `
+import { Component } from '@angular/core';
+import { View } from '../components/src/view.ts';
+@Component({
+  selector: 'x-flex-refused',
+  imports: [View],
+  template: '<view nativeID="sheet" class="f"></view><view nativeID="many" class="f" style="flex: 1 2 3px 4"></view><view nativeID="negative" class="f" style="flex: 1 -10px"></view><view nativeID="word" class="f" style="flex: constructor"></view><view nativeID="banana" class="f" style="flex: 1 banana"></view>',
+  styles: '.f { flex: 2 0 5px; }',
+})
+export class FlexRefused {}
+`,
+    );
+    const warnings: string[] = [];
+    mock.method(console, 'warn', (message: string) => warnings.push(message));
+    try {
+      const { fabric } = await render(mod['FlexRefused'] as Type<unknown>, { dev: true });
+      const sheet = styleOf(fabric, 'sheet', FLEX);
+      assert.deepEqual(styleOf(fabric, 'many', FLEX), sheet);
+      assert.deepEqual(styleOf(fabric, 'negative', FLEX), sheet);
+      assert.deepEqual(styleOf(fabric, 'word', FLEX), sheet, 'a name on Object.prototype');
+      assert.deepEqual(styleOf(fabric, 'banana', FLEX), sheet, 'a basis that is no length');
+      assert.equal(warnings.length, 4, warnings.join('\n'));
+      assert.match(warnings[0]!, /flex: 1 2 3px 4.*<view>.*dropped/);
+      assert.match(warnings[1]!, /flex: 1 -10px.*<view>.*dropped/);
+      assert.match(warnings[2]!, /flex: constructor.*<view>.*dropped/);
+      assert.match(warnings[3]!, /flex: 1 banana.*<view>.*dropped/);
+    } finally {
+      mock.restoreAll();
+    }
+  });
+});

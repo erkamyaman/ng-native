@@ -153,7 +153,7 @@ function parseStyleAttribute(css: string): Record<string, unknown> {
 }
 
 const SIDES = ['Top', 'Right', 'Bottom', 'Left'] as const;
-const SHORTHANDS = new Set(['padding', 'margin', 'inset', 'gap']);
+const SHORTHANDS = new Set(['padding', 'margin', 'inset', 'gap', 'flex']);
 
 /** CSS whitespace, which a no-break space is not. */
 const CSS_SPACE = /[ \t\n\r\f]/;
@@ -186,10 +186,11 @@ const REFUSED = 'refused';
  * takes as it is, and for a value holding a `var()`, whose count is only known once it is settled.
  * `REFUSED` for more values than the shorthand takes.
  *
- * ponytail: `padding`, `margin`, `inset` and `gap`, the ones written this way in a style. A
+ * ponytail: `padding`, `margin`, `inset`, `gap` and `flex`, the ones written this way in a style. A
  * stylesheet has every shorthand; add one here when a style needs it.
  */
 function longhands(key: string, value: unknown): [string, string][] | typeof REFUSED | null {
+  if (key === 'flex') return flexLonghands(value);
   if (!SHORTHANDS.has(key) || typeof value !== 'string' || /var\(/i.test(value)) return null;
   const parts = cssValues(value);
   if (parts.length < 2) return null;
@@ -205,6 +206,81 @@ function longhands(key: string, value: unknown): [string, string][] | typeof REF
     part,
   ]);
 }
+
+/** A number as `flex` takes a grow or a shrink: no sign, and no unit. */
+const FACTOR = /^\+?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+/** A number with a sign of either kind: one alone is React Native's own `flex`. */
+const BARE_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+
+/**
+ * `flex` of several values, a keyword or a basis, as the grow, shrink and basis a stylesheet
+ * makes of it: native reads none of them, and drops `flex: 1 1 auto` without a word. Null for
+ * one number, which stays React Native's own `flex`, as a style object has always written it and
+ * a component's own `flex` over it expects, and for a value holding a `var()`. `REFUSED` for a
+ * value that is no `flex`.
+ */
+function flexLonghands(value: unknown): [string, string][] | typeof REFUSED | null {
+  if (typeof value !== 'string' || /var\(/i.test(value)) return null;
+  const parts = cssValues(value);
+  if (parts.length === 1 && BARE_NUMBER.test(parts[0]!)) return null;
+  const word = parts.length === 1 ? FLEX_WORDS.get(parts[0]!.toLowerCase()) : undefined;
+  const flex = word ?? (parts.length ? flexValues(parts) : null);
+  return flex ? flexOf(...flex) : REFUSED;
+}
+
+/** The keywords `flex` takes, as their grow, shrink and basis: no other name, `constructor` say. */
+const FLEX_WORDS = new Map<string, [string, string, string]>([
+  ['none', ['0', '0', 'auto']],
+  ['auto', ['1', '1', 'auto']],
+]);
+
+/**
+ * The grow, shrink and basis of `flex`'s values, one or more: a grow and a shrink beside a basis
+ * either side, or null for values that are none of those.
+ */
+function flexValues(parts: readonly string[]): [string, string, string] | null {
+  let grow: string | undefined;
+  let shrink: string | undefined;
+  let basis: string | null | undefined;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    if (FACTOR.test(part) && grow === undefined) {
+      grow = String(Number(part));
+      if (FACTOR.test(parts[i + 1] ?? '')) shrink = String(Number(parts[++i]));
+    } else {
+      basis = basis === undefined ? basisOf(part, shrink !== undefined) : null;
+      if (basis === null) return null;
+    }
+  }
+  // A basis alone grows and shrinks by 1, and a grow alone starts from nothing.
+  return [grow ?? '1', shrink ?? '1', basis ?? '0%'];
+}
+
+/**
+ * A length as a basis takes one: a percentage, or a unit a style reads (`px` and `rem` as points,
+ * the others measured where they are used). Not negative.
+ */
+const BASIS_LENGTH = /^\+?((?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)(%|px|rem|em|vw|vh|vmin|vmax)$/i;
+
+/**
+ * A value as the basis a style reads, or null for one that is no basis: `auto`, a `calc()`, a
+ * length written as a style reads it (`+1e2px` is `100px`), or a unitless zero of any spelling,
+ * `0.0` say, only after a grow and a shrink, as CSS has it. Not `content`, which the stylesheet
+ * refuses too.
+ */
+function basisOf(part: string, afterShrink: boolean): string | null {
+  if (BARE_NUMBER.test(part)) return afterShrink && Number(part) === 0 ? '0' : null;
+  const length = BASIS_LENGTH.exec(part);
+  if (length) return `${Number(length[1])}${length[2]!.toLowerCase()}`;
+  if (/^auto$/i.test(part)) return 'auto';
+  return /^calc\(.*\)$/i.test(part) ? part : null;
+}
+
+const flexOf = (grow: string, shrink: string, basis: string): [string, string][] => [
+  ['flexGrow', grow],
+  ['flexShrink', shrink],
+  ['flexBasis', basis],
+];
 
 /** The longhands each element's shorthand was last written as, to take out when it changes. */
 const writtenAs = new WeakMap<EngineNode, Map<string, string[]>>();
@@ -409,7 +485,10 @@ class NativeRenderer implements Renderer2 {
     this.removeStyle(el, key);
     if (sides === REFUSED) {
       const most = key === 'gap' ? 'two' : 'four';
-      const why = `${key} takes ${most} values at most`;
+      const why =
+        key === 'flex'
+          ? 'flex takes a grow, a shrink and a basis'
+          : `${key} takes ${most} values at most`;
       this.engine.reportDroppedDeclaration(key, String(value), el.tag, why);
       return true;
     }
