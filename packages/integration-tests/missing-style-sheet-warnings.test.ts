@@ -54,6 +54,11 @@ export const plain = styleSheetOf(Plain);
 @Directive({ selector: '[x-d]' })
 export class D {}
 export const directive = styleSheetOf(D);
+
+@Component({ selector: 'x-c', template: '', styles: ['c { color: blue }'] })
+export class Child extends D {
+  static sheet = styleSheetOf(Child);
+}
 `;
 
 const ROOT = `import { Component } from '@angular/core';
@@ -85,13 +90,23 @@ describe('styleSheetOf() in a static field of its own class', () => {
     assert.match(about[0]!, /static field/);
   });
 
+  it('warns for a component whose base class is a defined directive', async () => {
+    const { said, mod } = await compiled(true);
+    assert.equal((mod['Child'] as { sheet: unknown }).sheet, null);
+    const about = said.filter((message) => message.includes('styleSheetOf(Child)'));
+    assert.equal(about.length, 1, said.join('\n'));
+  });
+
   it('says nothing for a read after the class, or for a component with no styles or a directive', async () => {
     const { said, mod } = await compiled(true);
     assert.ok(mod['later'], 'the sheet is there after the class');
     assert.equal(mod['plain'], null);
     assert.equal(mod['directive'], null);
     assert.deepEqual(
-      said.filter((message) => !message.includes('styleSheetOf(A)')),
+      said.filter(
+        (message) =>
+          !message.includes('styleSheetOf(A)') && !message.includes('styleSheetOf(Child)'),
+      ),
       [],
     );
   });

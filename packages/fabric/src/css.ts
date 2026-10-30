@@ -6481,10 +6481,13 @@ const warnedNotDefined = new WeakSet<object>();
  * is what the build hangs the sheet on, so it reads `null` however many styles the component
  * declares. A defined component with no styles has its definition, and stays quiet.
  *
- * `in` rather than a read, so a JIT-compiled class is not compiled by asking.
+ * The class's own definition, not one inherited from a defined base class, and looked up without
+ * a read, so a JIT-compiled class is not compiled by asking.
  */
 function warnIfNotDefinedYet(type: unknown): void {
-  if (typeof type !== 'function' || 'ɵcmp' in type || 'ɵdir' in type) return;
+  if (typeof type !== 'function' || Object.hasOwn(type, 'ɵcmp') || Object.hasOwn(type, 'ɵdir')) {
+    return;
+  }
   if (warnedNotDefined.has(type)) return;
   warnedNotDefined.add(type);
   const name = type.name || 'a class';
