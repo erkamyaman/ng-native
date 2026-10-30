@@ -37,7 +37,7 @@ async function warnings(dev: boolean | undefined, body: () => unknown): Promise<
   return said.filter((message) => message.startsWith('[angular-native]'));
 }
 
-const COMPONENTS = `import { Component, Directive } from '@angular/core';
+const COMPONENTS = `import { Component, Directive, Pipe } from '@angular/core';
 import { styleSheetOf } from '@ng-native/fabric';
 
 @Component({ selector: 'x-a', template: '', styles: ['a { color: red }'] })
@@ -59,6 +59,30 @@ export const directive = styleSheetOf(D);
 export class Child extends D {
   static sheet = styleSheetOf(Child);
 }
+
+@Component({ selector: 'x-p', template: '', styles: ['p { color: red }'] })
+export class Parent {}
+export const parent = styleSheetOf(Parent);
+
+@Component({ selector: 'x-k', template: '', styles: ['k { color: blue }'] })
+export class Kid extends Parent {
+  static sheet = styleSheetOf(Kid);
+}
+export const kid = styleSheetOf(Kid);
+
+export class Undecorated extends Plain {}
+export const undecorated = styleSheetOf(Undecorated);
+
+export class UnderStyled extends Parent {}
+export const underStyled = styleSheetOf(UnderStyled);
+
+@Pipe({ name: 'x' })
+export class P {
+  transform(value: unknown) {
+    return value;
+  }
+}
+export const pipe = styleSheetOf(P);
 `;
 
 const ROOT = `import { Component } from '@angular/core';
@@ -97,18 +121,48 @@ describe('styleSheetOf() in a static field of its own class', () => {
     assert.equal(about.length, 1, said.join('\n'));
   });
 
-  it('says nothing for a read after the class, or for a component with no styles or a directive', async () => {
+  it('reads null and warns, not the sheet of a styled base component', async () => {
+    const { said, mod } = await compiled(true);
+    assert.equal((mod['Kid'] as { sheet: unknown }).sheet, null);
+    assert.ok(mod['kid'], 'its own sheet is there after the class');
+    assert.notEqual(mod['kid'], mod['parent']);
+    const about = said.filter((message) => message.includes('styleSheetOf(Kid)'));
+    assert.equal(about.length, 1, said.join('\n'));
+  });
+
+  it('says nothing for a read after the class, or for a class that is never defined', async () => {
     const { said, mod } = await compiled(true);
     assert.ok(mod['later'], 'the sheet is there after the class');
     assert.equal(mod['plain'], null);
     assert.equal(mod['directive'], null);
+    assert.equal(mod['undecorated'], null);
+    assert.equal(mod['underStyled'], null);
+    assert.equal(mod['pipe'], null);
     assert.deepEqual(
       said.filter(
         (message) =>
-          !message.includes('styleSheetOf(A)') && !message.includes('styleSheetOf(Child)'),
+          !message.includes('styleSheetOf(A)') &&
+          !message.includes('styleSheetOf(Child)') &&
+          !message.includes('styleSheetOf(Kid)'),
       ),
       [],
     );
+  });
+
+  it('says nothing for a class that has its sheet before its definition', async () => {
+    const sheet = { rules: [] };
+    let read: unknown;
+    const said = await warnings(true, async () => {
+      class Early {
+        static ɵnativeStyles = sheet;
+        static read = styleSheetOf(Early);
+        static ɵcmp = {};
+      }
+      read = Early.read;
+      await Promise.resolve();
+    });
+    assert.equal(read, sheet);
+    assert.deepEqual(said, []);
   });
 
   it('says nothing in a release build', async () => {

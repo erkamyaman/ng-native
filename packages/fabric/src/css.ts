@@ -6465,9 +6465,16 @@ export function faded(value: unknown, fraction: number): unknown {
  */
 export const NATIVE_STYLES = 'ɵnativeStyles';
 
+/**
+ * The sheet of a defined class, or of one given a sheet by hand. A class with neither has none yet
+ * and reads `null`, rather than the sheet of a base class, which the static chain would find.
+ */
 export function styleSheetOf(type: unknown): StyleSheet | null {
+  if (typeof type === 'function' && !Object.hasOwn(type, NATIVE_STYLES) && !isDefined(type)) {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) warnIfDefinedLater(type);
+    return null;
+  }
   const sheet = (type as Record<string, unknown> | null)?.[NATIVE_STYLES];
-  if (sheet === undefined && typeof __DEV__ !== 'undefined' && __DEV__) warnIfNotDefinedYet(type);
   return (sheet as StyleSheet | undefined) ?? null;
 }
 
@@ -6476,25 +6483,31 @@ declare const __DEV__: boolean | undefined;
 const warnedNotDefined = new WeakSet<object>();
 
 /**
- * A class with no sheet and no Angular definition is one whose statics are still running:
- * `static sheet = styleSheetOf(Self)` is initialised before the compiler's own `ɵcmp` static, which
- * is what the build hangs the sheet on, so it reads `null` however many styles the component
- * declares. A defined component with no styles has its definition, and stays quiet.
- *
  * The class's own definition, not one inherited from a defined base class, and looked up without
  * a read, so a JIT-compiled class is not compiled by asking.
  */
-function warnIfNotDefinedYet(type: unknown): void {
-  if (typeof type !== 'function' || Object.hasOwn(type, 'ɵcmp') || Object.hasOwn(type, 'ɵdir')) {
-    return;
-  }
+function isDefined(type: object): boolean {
+  return Object.hasOwn(type, 'ɵcmp') || Object.hasOwn(type, 'ɵdir');
+}
+
+/**
+ * `static sheet = styleSheetOf(Self)` is initialised before the compiler's own `ɵcmp` static, which
+ * is what the build hangs the sheet on, so it reads `null` however many styles the component
+ * declares. From inside the class that looks the same as a class that is never defined, such as a
+ * plain subclass or a pipe, so the answer waits until the class has finished: one that has a
+ * definition by then was read too early.
+ */
+function warnIfDefinedLater(type: object & { name?: string }): void {
   if (warnedNotDefined.has(type)) return;
   warnedNotDefined.add(type);
-  const name = type.name || 'a class';
-  console.warn(
-    `[angular-native] styleSheetOf(${name}) is null: ${name} is not a defined component yet, as ` +
-      `in a static field of its own class, which runs before Angular defines the component and ` +
-      `its compiled sheet is attached. Read it after the class instead, in a module-scope ` +
-      `const or a static getter.`,
-  );
+  queueMicrotask(() => {
+    if (!isDefined(type)) return;
+    const name = type.name || 'a class';
+    console.warn(
+      `[angular-native] styleSheetOf(${name}) read null: ${name} was not defined yet, as in a ` +
+        `static field of its own class, which runs before Angular defines the component and ` +
+        `its compiled sheet is attached. Read it after the class instead, in a module-scope ` +
+        `const or a static getter.`,
+    );
+  });
 }

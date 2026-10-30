@@ -1030,7 +1030,7 @@ let warnedGlobalStylesNull = false;
  * that never load. Said once, in development.
  */
 function warnIfGlobalStylesIsNull(options: EngineOptions): void {
-  if (!('globalStyles' in options) || options.globalStyles !== null) return;
+  if (options.globalStyles !== null) return;
   if (warnedGlobalStylesNull) return;
   warnedGlobalStylesNull = true;
   console.warn(
