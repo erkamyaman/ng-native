@@ -6467,5 +6467,31 @@ export const NATIVE_STYLES = 'ɵnativeStyles';
 
 export function styleSheetOf(type: unknown): StyleSheet | null {
   const sheet = (type as Record<string, unknown> | null)?.[NATIVE_STYLES];
+  if (sheet === undefined && typeof __DEV__ !== 'undefined' && __DEV__) warnIfNotDefinedYet(type);
   return (sheet as StyleSheet | undefined) ?? null;
+}
+
+declare const __DEV__: boolean | undefined;
+
+const warnedNotDefined = new WeakSet<object>();
+
+/**
+ * A class with no sheet and no Angular definition is one whose statics are still running:
+ * `static sheet = styleSheetOf(Self)` is initialised before the compiler's own `ɵcmp` static, which
+ * is what the build hangs the sheet on, so it reads `null` however many styles the component
+ * declares. A defined component with no styles has its definition, and stays quiet.
+ *
+ * `in` rather than a read, so a JIT-compiled class is not compiled by asking.
+ */
+function warnIfNotDefinedYet(type: unknown): void {
+  if (typeof type !== 'function' || 'ɵcmp' in type || 'ɵdir' in type) return;
+  if (warnedNotDefined.has(type)) return;
+  warnedNotDefined.add(type);
+  const name = type.name || 'a class';
+  console.warn(
+    `[angular-native] styleSheetOf(${name}) is null: ${name} is not a defined component yet, as ` +
+      `in a static field of its own class, which runs before Angular defines the component and ` +
+      `its compiled sheet is attached. Read it after the class instead, in a module-scope ` +
+      `const or a static getter.`,
+  );
 }
