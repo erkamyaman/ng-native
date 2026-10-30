@@ -52,9 +52,9 @@ the bundler ships the file - a plain path would be a font that is simply missing
 with nothing anywhere to say why. `loadFonts()` takes any number of compiled sheets and does
 nothing at all when none of them declare a face, so bootstrap can call it unconditionally.
 
-`styleSheetOf()` reads `null` from a static field of the component's own class
-(`static sheet = styleSheetOf(GlobalStyles)`), because that runs before the build attaches the
-sheet. Read it after the class instead, in a module-scope `const` or a static getter. A
+`styleSheetOf()` reads `null`, or a styled base class's sheet, from a static field of the
+component's own class (`static sheet = styleSheetOf(GlobalStyles)`), because that runs before the
+build attaches the sheet. Read it after the class instead, in a module-scope `const` or a static getter. A
 development build warns about that call, and about a `null` sheet given to `loadFonts()` or as
 `globalStyles` to `mount()`.
 

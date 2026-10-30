@@ -83,6 +83,20 @@ export class P {
   }
 }
 export const pipe = styleSheetOf(P);
+
+@Component({ selector: 'x-n', template: '' })
+export class NoStyles {
+  static sheet = styleSheetOf(NoStyles);
+}
+
+@Directive({ selector: '[x-e]' })
+export class StaticDirective {
+  static sheet = styleSheetOf(StaticDirective);
+}
+
+export class StaticUnderStyled extends Parent {
+  static sheet = styleSheetOf(StaticUnderStyled);
+}
 `;
 
 const ROOT = `import { Component } from '@angular/core';
@@ -121,23 +135,24 @@ describe('styleSheetOf() in a static field of its own class', () => {
     assert.equal(about.length, 1, said.join('\n'));
   });
 
-  it('reads null and warns, not the sheet of a styled base component', async () => {
+  it('warns under a styled base component, whose sheet is all it can read yet', async () => {
     const { said, mod } = await compiled(true);
-    assert.equal((mod['Kid'] as { sheet: unknown }).sheet, null);
+    assert.equal((mod['Kid'] as { sheet: unknown }).sheet, mod['parent']);
     assert.ok(mod['kid'], 'its own sheet is there after the class');
     assert.notEqual(mod['kid'], mod['parent']);
     const about = said.filter((message) => message.includes('styleSheetOf(Kid)'));
     assert.equal(about.length, 1, said.join('\n'));
   });
 
-  it('says nothing for a read after the class, or for a class that is never defined', async () => {
+  it('says nothing for a read after the class, or for a class with no sheet to read', async () => {
     const { said, mod } = await compiled(true);
     assert.ok(mod['later'], 'the sheet is there after the class');
     assert.equal(mod['plain'], null);
     assert.equal(mod['directive'], null);
     assert.equal(mod['undecorated'], null);
-    assert.equal(mod['underStyled'], null);
     assert.equal(mod['pipe'], null);
+    assert.equal((mod['NoStyles'] as { sheet: unknown }).sheet, null);
+    assert.equal((mod['StaticDirective'] as { sheet: unknown }).sheet, null);
     assert.deepEqual(
       said.filter(
         (message) =>
@@ -147,6 +162,16 @@ describe('styleSheetOf() in a static field of its own class', () => {
       ),
       [],
     );
+  });
+
+  it('reads the sheet a renderer draws an undecorated subclass with, in any build', async () => {
+    for (const dev of [true, false]) {
+      const { said, mod } = await compiled(dev);
+      assert.ok(mod['parent']);
+      assert.equal(mod['underStyled'], mod['parent']);
+      assert.equal((mod['StaticUnderStyled'] as { sheet: unknown }).sheet, mod['parent']);
+      assert.ok(!said.some((message) => message.includes('UnderStyled')), said.join('\n'));
+    }
   });
 
   it('says nothing for a class that has its sheet before its definition', async () => {
