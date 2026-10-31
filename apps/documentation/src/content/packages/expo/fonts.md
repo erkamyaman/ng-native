@@ -54,9 +54,9 @@ nothing at all when none of them declare a face, so bootstrap can call it uncond
 
 `styleSheetOf()` reads `null`, or a styled base class's sheet, from a static field of the
 component's own class (`static sheet = styleSheetOf(GlobalStyles)`), because that runs before the
-build attaches the sheet. Read it after the class instead, in a module-scope `const` or a static getter. A
-development build warns about that call, and about a `null` sheet given to `loadFonts()` or as
-`globalStyles` to `mount()`.
+build attaches the sheet. Read it after the class instead, in a module-scope `const` or a static
+getter. A development build warns about that call, and about a `null` sheet given to `loadFonts()`
+or as `globalStyles` to `mount()`.
 
 A face that names several files, as an icon font's own stylesheet does for browsers of different
 ages, is registered from its TrueType or OpenType file: the one with `format('truetype')` or
