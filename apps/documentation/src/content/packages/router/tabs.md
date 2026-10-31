@@ -254,10 +254,13 @@ void this.nav.present('/invoices/7', { as: 'formSheet' });
 ```
 
 The route is the one the tab already has, with its params, resolvers, data and lazy component, and
-with the guards and providers of the routes it sits inside. Only their components are left out:
-the page is shown on the app's own stack, over the tab bar, and not inside the Invoices tab's. A
-service one of those routes provides is one instance for its guards, the page and the page's
-resolvers, as in the tab, though not the instance the tab itself has.
+with the guards, resolvers, data, titles and providers of the routes it sits inside. Only their
+components are left out: the page is shown on the app's own stack, over the tab bar, and not
+inside the Invoices tab's. A service one of those routes provides is one instance for its guards,
+the page and the page's resolvers, as in the tab, though not the instance the tab itself has. Their
+`canDeactivate` guards run when the page is dismissed, as they do when the tab's route is left,
+though with no component to pass them, and their `runGuardsAndResolvers` decides when their guards
+and resolvers run again.
 While it is up the url names it beside where the app is, `/home(presented:invoices/7)`, and a
 back, or the swipe that dismisses a sheet, returns to `/home`.
 
@@ -271,7 +274,8 @@ Three things follow from the page being over the tabs rather than in one:
 - It needs the app's root to be a `<native-stack-outlet>`, the usual shape, with the tab bar as the
   stack's first screen. Without one, and for a page of the tab in front or of no tab, `present()`
   shows the page where its url puts it. So it does for a page behind a `canMatch` guard, on its own
-  route or one above it, which only the route's own place can run.
+  route or one above it, or behind a `canLoad` guard above it, which only the route's own place can
+  run.
 
 ## Going back
 
