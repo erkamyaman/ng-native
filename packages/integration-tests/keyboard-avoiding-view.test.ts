@@ -302,6 +302,8 @@ describe('keyboard-avoiding-view under a navigation bar', () => {
     frame = { y: 116, height: 758 },
     windowTop?: number | (() => number),
     screenTop?: number,
+    /** Where the keyboard already is when the view is first laid out. */
+    keyboardUp?: KeyboardMetrics,
   ) {
     let emit: (metrics: KeyboardMetrics) => void = () => {};
     const fabric = createFakeFabric();
@@ -322,6 +324,7 @@ describe('keyboard-avoiding-view under a navigation bar', () => {
     });
     app.componentRef.setInput('behavior', behavior);
     await settle();
+    if (keyboardUp) emit(keyboardUp);
 
     fabric.frames.set('avoider', { x: 0, width: 402, ...frame });
     const avoider = () => fabric.committed[0]!.children[0]!;
@@ -417,6 +420,47 @@ describe('keyboard-avoiding-view under a navigation bar', () => {
 
     assert.equal(avoider().props['height'], 758 - 335);
     assert.equal(avoider().props['flex'], 0);
+
+    app.applicationRef.destroy();
+  });
+
+  it('keeps the height it shrank to in height mode when the keyboard was up before its first layout', async () => {
+    const keyboard = { height: 335, screenY: 539 };
+    const { fabric, app, avoider } = await open(
+      'height',
+      undefined,
+      undefined,
+      undefined,
+      keyboard,
+    );
+    assert.equal(avoider().props['height'], 758 - 335, 'control: it shrinks at its first layout');
+
+    // The layout of the view it shrank to, which the keyboard caused.
+    fabric.frames.set('avoider', { x: 0, y: 116, width: 402, height: 758 - 335 });
+    fabric.emit(avoider(), 'topLayout', { layout: { x: 0, y: 0, width: 402, height: 758 - 335 } });
+    await settle();
+
+    assert.equal(avoider().props['height'], 758 - 335);
+    assert.equal(avoider().props['flex'], 0);
+
+    app.applicationRef.destroy();
+  });
+
+  it('shrinks from the height it had before padding when it changes from padding to height', async () => {
+    // A view sized by its content grows by its padding. Without a `screenY`, the keyboard's height
+    // is the overlap, so the padded height would read as one to shrink from.
+    const { fabric, app, avoider, emit } = await open('padding', { y: 116, height: 300 });
+    emit({ height: 200 });
+    await settle();
+    assert.equal(avoider().props['paddingBottom'], 200, 'control: it pads by the keyboard');
+
+    fabric.frames.set('avoider', { x: 0, y: 116, width: 402, height: 500 });
+    fabric.emit(avoider(), 'topLayout', { layout: { x: 0, y: 0, width: 402, height: 500 } });
+    await settle();
+    app.componentRef.setInput('behavior', 'height');
+    await settle();
+
+    assert.equal(avoider().props['height'], 300 - 200);
 
     app.applicationRef.destroy();
   });
