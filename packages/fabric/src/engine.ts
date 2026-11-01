@@ -795,6 +795,11 @@ export interface EngineNode extends HostNode {
    * flex item is no narrower than its content, which Yoga's is. See `growAround`.
    */
   fitMin?: number;
+  /**
+   * Set on a box a share of a row inside it was noted up to, where it was not fitted: one with a
+   * width, a stretch or a growth of its own, which may be let go of. See `restyledToFit`.
+   */
+  mayFit?: true;
   /** Set on a box inside one being fitted, while its percentage width and zero basis are off. */
   fitOff?: boolean;
   /**
@@ -2599,9 +2604,32 @@ function asCommitted(
  */
 function shrunkOutOfFlow(node: EngineNode): boolean {
   if (!OUT_OF_FLOW.has(readStyle(node, 'position') as string)) return false;
-  if (readStyle(node, 'width') != null) return false;
+  if (hasOwnWidth(node)) return false;
   const set = (...keys: string[]) => keys.some((key) => readStyle(node, key) != null);
   return !(set('left', 'start') && set('right', 'end'));
+}
+
+/**
+ * Whether a box has a width of its own: one that is not written as its content's, `fit-content`
+ * or a cap at `max-content` (see `fitsWidth`), which `fitContent` drops for Yoga.
+ */
+function hasOwnWidth(node: EngineNode): boolean {
+  const width = readStyle(node, 'width');
+  // Read first, and alone, for most boxes: none, or one in points.
+  if (width == null || typeof width === 'number') return width != null;
+  return !fitsWidth(node);
+}
+
+/**
+ * Whether a box in the flow is written as wide as its content, by `fitsWidth`, across a column or
+ * in a block, where `fitContent` and `placeInFlow` keep it from stretching. Along a row the
+ * keyword is dropped, and the item is as wide as `itemOfRow` says.
+ */
+function fitsByOwnWidth(node: EngineNode): boolean {
+  const parent = node.parent;
+  if (parent?.nodeKind !== 'element' || !fitsWidth(node)) return false;
+  if (readStyle(node, 'display') === 'contents') return false;
+  return !OUT_OF_FLOW.has(readStyle(node, 'position') as string) && !isRow(parent);
 }
 
 /** Whether a column makes an item as wide as itself: by the item's own alignment, or its own. */
@@ -6193,6 +6221,7 @@ const ENGINE_NODE_FIELDS = {
   ordered: true,
   fit: true,
   fitMin: true,
+  mayFit: true,
   fitOff: true,
   mixed: true,
   mixedOff: true,
@@ -10015,21 +10044,36 @@ export class Engine implements HostEngine {
 
   /** Have a box fitted to its content again, and the item of a row it is a share of. */
   private noteFits(node: EngineNode): void {
-    if (this.sitsInLine(node) || (this.fits.has(node) && this.fitsContent(node))) {
-      this.refitted(node);
-    }
+    const fits = this.fits.has(node) ? this.fitsContent(node) : this.restyledToFit(node);
+    if (this.sitsInLine(node) || fits) this.refitted(node);
     if (!sharesWidth(node) && !growsInRow(node)) return;
     // The box it is a share of, or one further up that this one is as wide as: each box between
     // has no width of its own, and is as wide as the one it is in.
     for (let around = node.parent; around?.nodeKind === 'element'; around = around.parent) {
       if (this.fitsContent(around)) return this.refitted(around);
+      around.mayFit = true;
       if (!this.wideAsItsBox(around)) return;
     }
   }
 
-  /** Whether a box is as wide as what it holds: an item of a row, or out of the flow. */
+  /**
+   * Whether a box not fitted was restyled to be as wide as what it holds, with something in it
+   * sized by the room: a row let go of its width, its stretch or its own growth, for which
+   * nothing in it is restyled. Asked only of a box a share in it was noted up to (`mayFit`).
+   */
+  private restyledToFit(node: EngineNode): boolean {
+    if (!node.mayFit || !node.propsDirty) return false;
+    return this.fitsContent(node) && this.sizedByRoom(node).length > 0;
+  }
+
+  /**
+   * Whether a box is as wide as what it holds: an item of a row, out of the flow, or written so.
+   * Yoga sizes none of them by what they hold once an item in a row grows: strict Yoga gives the
+   * row no width where the item grows from a basis of zero points, and Yoga as React Native
+   * configures it gives the row all the room it could have.
+   */
   private fitsContent(node: EngineNode): boolean {
-    return this.itemOfRow(node) || shrunkOutOfFlow(node);
+    return this.itemOfRow(node) || shrunkOutOfFlow(node) || fitsByOwnWidth(node);
   }
 
   /**
@@ -10059,7 +10103,7 @@ export class Engine implements HostEngine {
     const row = node.parent;
     if (!row || row.nodeKind !== 'element' || row.flow) return false;
     // One that is `display: contents` is no box, and its children are the row's items.
-    if (readStyle(node, 'width') != null || readStyle(node, 'display') === 'contents') return false;
+    if (hasOwnWidth(node) || readStyle(node, 'display') === 'contents') return false;
     if (OUT_OF_FLOW.has(readStyle(node, 'position') as string)) return false;
     // An item of a column is as wide as its content too, where the column does not stretch it.
     if (!isRow(row)) return !stretched(node, row);
@@ -10264,7 +10308,7 @@ export class Engine implements HostEngine {
     const fit = node.fit;
     const fitted =
       this.topOf(node) === this.root && (this.sitsInLine(node) || this.fitsContent(node));
-    if (!fit || !fitted || readStyle(node, 'width') != null) {
+    if (!fit || !fitted || hasOwnWidth(node)) {
       this.unfit(node);
       return false;
     }
