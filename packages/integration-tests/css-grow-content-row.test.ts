@@ -419,3 +419,108 @@ describe('a row as wide as its content by its own width, with an item that grows
     assert.equal(fabric.box('row').width, CONTENT);
   });
 });
+
+/**
+ * A row given a width and let go of it by a class on a box above it: nothing on the row itself
+ * changes, so no prop of its own is dirty. What it holds is styled again with it, as it hands
+ * down a context of its own, and its growing item notes it for a fit. Chrome lays the row out
+ * at the width it is given, and at the width of the text once it is as wide as its content.
+ */
+describe('a row as wide as its content by an ancestor, with an item that grows from no basis', () => {
+  const SIZED = 200;
+  /** How the row is as wide as its content under `.narrow`. */
+  const BY = {
+    'fit-content': '.wide .row { width: 200px } .narrow .row { width: fit-content }',
+    'a cap at max-content': '.wide .row { width: 200px } .narrow .row { max-width: max-content }',
+  };
+  function ancestorScene(
+    css: string,
+    conformance: (typeof CONFORMANCES)[number],
+    first: string,
+    byStyle = false,
+  ) {
+    const fabric = createLaidOutFabric(conformance);
+    const engine = new Engine(fabric, 1, {
+      globalStyles: compileCss(
+        `.col { width: 362px } .row { flex-direction: row } .item { flex: 1 1 0px } ${css}`,
+        'app.css',
+      ) as never,
+      ...(conformance === 'strict' ? { layoutConformance: 'strict' as const } : {}),
+    });
+    const element = (classes: string, id: string, parent: EngineNode) => {
+      const node = engine.createElement('view');
+      engine.setClasses(node, classes);
+      engine.setProp(node, 'nativeID', id);
+      engine.appendChild(parent, node);
+      return node;
+    };
+    // The class is on the box above the column, two above the row.
+    const screen = element(first, 'screen', engine.root);
+    const row = element('row', 'row', element('col', 'col', screen));
+    // One that grows by its style attribute matches no rule, and is styled by what it inherits.
+    const item = element(byStyle ? '' : 'item', 'item', row);
+    if (byStyle) engine.setProp(item, 'style', { flexGrow: 1, flexShrink: 1, flexBasis: 0 });
+    const text = engine.createElement('text');
+    engine.appendChild(text, engine.createText(WORD));
+    engine.appendChild(item, text);
+    const width = (id: string) => {
+      engine.commit();
+      return fabric.box(id).width;
+    };
+    return { fabric, engine, screen, width };
+  }
+
+  for (const conformance of CONFORMANCES) {
+    for (const [by, css] of Object.entries(BY)) {
+      it(`fits once its ancestor lets go of its width, by ${by} (${conformance})`, () => {
+        const s = ancestorScene(css, conformance, 'wide');
+        assert.equal(s.width('row'), SIZED, 'sized');
+        assert.equal(s.width('item'), SIZED, "the item's share is all of it");
+        s.engine.setClasses(s.screen, 'narrow');
+        assert.equal(s.width('row'), CONTENT, 'fitted');
+        assert.equal(s.width('item'), CONTENT);
+        s.engine.setClasses(s.screen, 'wide');
+        assert.equal(s.width('row'), SIZED, 'sized again');
+        assert.equal(s.width('item'), SIZED);
+        s.engine.setClasses(s.screen, 'narrow');
+        assert.equal(s.width('row'), CONTENT, 'fitted again');
+      });
+
+      it(`takes the width its ancestor gives it once fitted, by ${by} (${conformance})`, () => {
+        const s = ancestorScene(css, conformance, 'narrow');
+        assert.equal(s.width('row'), CONTENT, 'fitted');
+        s.engine.setClasses(s.screen, 'wide');
+        assert.equal(s.width('row'), SIZED, 'sized');
+        assert.equal(s.width('item'), SIZED);
+        s.engine.setClasses(s.screen, 'narrow');
+        assert.equal(s.width('row'), CONTENT, 'fitted again');
+        assert.equal(s.width('item'), CONTENT);
+      });
+    }
+
+    it(`fits once its ancestor lets go of its width, the item grown by its style (${conformance})`, () => {
+      const s = ancestorScene(BY['fit-content'], conformance, 'wide', true);
+      assert.equal(s.width('row'), SIZED, 'sized');
+      s.engine.setClasses(s.screen, 'narrow');
+      assert.equal(s.width('row'), CONTENT, 'fitted');
+      assert.equal(s.width('item'), CONTENT);
+      s.engine.setClasses(s.screen, 'wide');
+      assert.equal(s.width('row'), SIZED, 'sized again');
+    });
+  }
+
+  it('is committed once for an ancestor restyled where it stays sized', () => {
+    for (const conformance of CONFORMANCES) {
+      const s = ancestorScene(
+        `${BY['fit-content']} .tall { padding-top: 2px }`,
+        conformance,
+        'wide',
+      );
+      assert.equal(s.width('row'), SIZED, conformance);
+      const before = s.fabric.calls.completeRoot;
+      s.engine.setClasses(s.screen, 'wide tall');
+      assert.equal(s.width('row'), SIZED, conformance);
+      assert.equal(s.fabric.calls.completeRoot - before, 1, `none to fit it (${conformance})`);
+    }
+  });
+});
