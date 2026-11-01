@@ -32,3 +32,39 @@ export class SearchHost {
 export class SearchRestored {
   readonly query = signal('oak');
 }
+
+/** A search that starts over once the query is longer than two characters. */
+@Component({
+  selector: 'x-search-reset',
+  imports: [NativeSearchBar],
+  template: `<native-search-bar
+    placeholder="Search"
+    [query]="query()"
+    (queryChange)="reset($event)"
+  />`,
+})
+export class SearchReset {
+  readonly query = signal('');
+  reset(query: string): void {
+    this.query.set(query.length > 2 ? '' : query);
+  }
+}
+
+/** A search that clears the field from code once the query is longer than two characters. */
+@Component({
+  selector: 'x-search-clear',
+  imports: [NativeSearchBar],
+  template: `<native-search-bar
+    placeholder="Search"
+    [query]="query()"
+    (queryChange)="clearPast($event)"
+  />`,
+})
+export class SearchClear {
+  readonly query = signal('');
+  readonly bar = viewChild.required(NativeSearchBar);
+  clearPast(query: string): void {
+    if (query.length > 2) this.bar().clear();
+    this.query.set(query.length > 2 ? '' : query);
+  }
+}

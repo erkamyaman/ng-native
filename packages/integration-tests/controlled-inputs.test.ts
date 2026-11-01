@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { afterEach, before, describe, it } from 'node:test';
 import type { Type } from '@angular/core';
 import { registerPlatformComponents, registerViewName } from '@ng-native/fabric';
-import { cleanup, fireEvent, render, screen, type FakeFabric } from '@ng-native/testing';
+import { cleanup, fireEvent, render, screen, userEvent, type FakeFabric } from '@ng-native/testing';
 import { compileFixture } from './compile.ts';
 
 afterEach(cleanup);
@@ -232,6 +232,49 @@ describe('a controlled text input', () => {
     await type('free', 1);
     assert.equal(instance.control().value(), 'free');
     assert.deepEqual(fabric.commands, []);
+  });
+
+  // userEvent.type types each key into what the field shows, as a keyboard does: after a refused
+  // key, the text the app put back, not the text that was refused.
+  it('types the next key into the text the app put back, through userEvent', async () => {
+    const { instance } = await boot<{ digits(): string }>('RefusedInput');
+
+    await userEvent.type(screen.getByTestId('field'), 'a34');
+
+    assert.equal(instance.digits(), '1234');
+  });
+
+  it('types into what was typed when nothing is bound to it, through userEvent', async () => {
+    const { instance } = await boot<{ control(): { value(): string } }>('FreeInput');
+    await userEvent.type(screen.getByTestId('field'), 'free');
+    assert.equal(instance.control().value(), 'free');
+  });
+
+  it('keeps the typed text when the app only moves the caret, through userEvent', async () => {
+    const { fabric, instance } = await boot<{ text(): string }>('CaretInput');
+
+    await userEvent.type(screen.getByTestId('field'), 'ab');
+
+    assert.ok(
+      fabric.commands.some(({ args }) => args[1] === null),
+      'control: a command with no text',
+    );
+    assert.equal(instance.text(), 'ab');
+  });
+
+  it('keeps the typed text when the app rewrites another field, through userEvent', async () => {
+    const { fabric, instance } = await boot<{ text(): string }>('MirroredInputs');
+    // The field only sends commands once it has reported text of its own.
+    fireEvent.changeText(screen.getByTestId('mirror'), 'own');
+    await settle();
+
+    await userEvent.type(screen.getByTestId('field'), 'ab');
+
+    assert.ok(
+      fabric.commands.some(({ args }) => args[1] === 'mirror of a'),
+      'control: a command to the other field',
+    );
+    assert.equal(instance.text(), 'ab');
   });
 
   /*
