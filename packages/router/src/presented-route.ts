@@ -71,7 +71,7 @@ const STOP = Symbol('stop');
 
 /** A route's children, or `STOP` where the copy cannot follow it: see `chainTo`. */
 async function followable(route: Route): Promise<Routes | undefined | typeof STOP> {
-  if (route.canMatch?.length) return STOP;
+  if (route.canMatch?.length || route.canLoad?.length) return STOP;
   return (await childrenOf(route)) ?? (route.loadChildren ? STOP : undefined);
 }
 
@@ -79,7 +79,9 @@ async function followable(route: Route): Promise<Routes | undefined | typeof STO
  * The routes from the root to the one that shows `segments`, null when none of `routes` leads
  * there, or `STOP` at a route with a `canMatch` guard. The router runs that guard against the
  * route and the segments it was matched with, which a copy under another path cannot give it,
- * and leaving it out would let the page match where its own route refuses to.
+ * and leaving it out would let the page match where its own route refuses to. So too at a
+ * `canLoad` guard, which the router runs before it loads a route's children: the copy holds them
+ * loaded, so it would never run.
  */
 async function chainTo(
   routes: Routes,
@@ -132,21 +134,57 @@ export const PAGE_FIELDS = {
   providers: true,
 } as const satisfies Record<keyof Route, boolean>;
 
-/** The page's own route: the fields `PAGE_FIELDS` keeps, and nothing else. */
-function pageOf(route: Route): Route {
-  const page: Record<string, unknown> = {};
-  for (const [field, kept] of Object.entries(PAGE_FIELDS)) {
+/**
+ * Every public `Route` field, and whether the copy of a route the page sits inside keeps it, as
+ * `PAGE_FIELDS` decides them for the page. Each kept one does in the copy what it does in the tab:
+ * the deepest `title` names the page when it has none of its own, `canDeactivate` runs when the
+ * page is dismissed as when the tab's route is left, and `runGuardsAndResolvers` decides when the
+ * route's guards and resolvers run again.
+ *
+ * Left out: `path`, `pathMatch` and `outlet`, which the copy sets itself; `component` and
+ * `loadComponent`, as the tab bar and the tab's stack are not what is presented; `children` and
+ * `loadChildren`, which the copy replaces with the one route on the way to the page; `matcher`
+ * and `redirectTo`, which `taken` never follows; `canMatch` and `canLoad`, which stop the search.
+ */
+export const ANCESTOR_FIELDS = {
+  title: true,
+  path: false,
+  pathMatch: false,
+  matcher: false,
+  component: false,
+  loadComponent: false,
+  redirectTo: false,
+  outlet: false,
+  canActivate: true,
+  canMatch: false,
+  canActivateChild: true,
+  canDeactivate: true,
+  canLoad: false,
+  data: true,
+  resolve: true,
+  resources: true,
+  children: false,
+  loadChildren: false,
+  runGuardsAndResolvers: true,
+  providers: true,
+} as const satisfies Record<keyof Route, boolean>;
+
+/** The fields of `route` that `fields` keeps, and nothing else. */
+function keptOf(route: Route, fields: Record<keyof Route, boolean>): Route {
+  const kept: Record<string, unknown> = {};
+  for (const [field, keep] of Object.entries(fields)) {
     const value = (route as Record<string, unknown>)[field];
-    if (kept && value !== undefined) page[field] = value;
+    if (keep && value !== undefined) kept[field] = value;
   }
-  return page as Route;
+  return kept as Route;
 }
 
 /**
  * The page's route as a root route of the presented outlet, under its whole path, inside a copy of
- * each route it sat inside: their guards, providers, resolvers and data, and not their components,
- * as the tab bar and the tab's stack are not what is presented. Angular makes one injector for each
- * of them, so a route's guards, the routes below it and the page share its providers' instances.
+ * each route it sat inside: the fields `ANCESTOR_FIELDS` keeps, such as their guards, providers,
+ * resolvers, data and titles, and not their components, as the tab bar and the tab's stack are
+ * not what is presented. Angular makes one injector for each of them, so a route's guards, the
+ * routes below it and the page share its providers' instances.
  *
  * Every route of the copy is in the presented outlet, and all but the first have an empty path: a
  * route without a component activates its children in its own parent's outlets, and Angular
@@ -159,18 +197,11 @@ function presentedCopy(chain: readonly Route[]): Route {
     .join('/');
   const last = chain.length - 1;
   return chain.reduceRight<Route | undefined>((inside, route, level) => {
+    // Public fields only, so nothing Angular made for a route in its tab carries over.
     const own: Route =
       level === last
-        ? // Public fields only, so nothing Angular made for it in its tab carries over.
-          pageOf(route)
-        : {
-            providers: route.providers,
-            canActivate: route.canActivate,
-            canActivateChild: route.canActivateChild,
-            resolve: route.resolve,
-            data: route.data,
-            children: [inside!],
-          };
+        ? keptOf(route, PAGE_FIELDS)
+        : { ...keptOf(route, ANCESTOR_FIELDS), children: [inside!] };
     return { ...own, path: level ? '' : path, pathMatch: undefined, outlet: PRESENTED };
   }, undefined)!;
 }
