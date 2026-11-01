@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DefaultUrlSerializer, type Route, type Router, type Routes } from '@angular/router';
-import { PRESENTED, presentedCommands } from '../router/src/presented-route.ts';
+import { PRESENTED, presentedCommands, taken } from '../router/src/presented-route.ts';
 
 class Bar {}
 class Stack {}
@@ -48,6 +48,102 @@ const tabs = (): Routes => [
     ],
   },
 ];
+
+class SectionFixed {}
+class Book {}
+class SectionEdit {}
+
+/**
+ * The page the router shows for `url` in the presented outlet: the first copy, in the root's
+ * order, whose path takes the whole url, as the router matches them.
+ */
+function presentedPageOf(router: Router, url: string): unknown {
+  const segments = url.split('/').filter(Boolean);
+  const copy = router.config.find(
+    (route) =>
+      route.outlet === PRESENTED &&
+      taken({ ...route, outlet: undefined }, segments) === segments.length,
+  );
+  let route = copy;
+  while (route?.children) route = route.children[0];
+  return route?.component;
+}
+
+describe('the copies of presented pages, in the order the router matches them', () => {
+  // The library tab's own order picks `:section/fixed` for `/library/books/fixed`, ahead of
+  // `books/:id`: the copies keep that order whichever page was presented first.
+  const library = (): Routes => [
+    {
+      path: 'library',
+      children: [
+        { path: ':section/fixed', component: SectionFixed },
+        { path: 'books/:id', component: Book },
+        { path: ':section/edit', component: SectionEdit },
+      ],
+    },
+  ];
+
+  it('takes a url as the tab does, whatever order its pages were presented in', async () => {
+    const router = routerWith(library());
+    await presentedCommands(router, '/library/other/edit');
+    await presentedCommands(router, '/library/other/fixed');
+    await presentedCommands(router, '/library/books/edit');
+    await presentedCommands(router, '/library/books/fixed');
+
+    assert.equal(presentedPageOf(router, '/library/books/fixed'), SectionFixed);
+    assert.equal(presentedPageOf(router, '/library/books/edit'), Book);
+    assert.equal(presentedPageOf(router, '/library/other/edit'), SectionEdit);
+    assert.equal(presentedPageOf(router, '/library/other/fixed'), SectionFixed);
+  });
+
+  it('puts a static route ahead of a parameter after it, as the tab has them', async () => {
+    const router = routerWith([
+      {
+        path: 'library',
+        children: [
+          { path: 'new', component: SectionEdit },
+          { path: ':id', component: Book },
+        ],
+      },
+    ]);
+    await presentedCommands(router, '/library/7');
+    await presentedCommands(router, '/library/new');
+
+    assert.equal(presentedPageOf(router, '/library/new'), SectionEdit);
+    assert.equal(presentedPageOf(router, '/library/7'), Book);
+  });
+});
+
+describe('the copy of a presented page, while it is being made', () => {
+  const copiesIn = (router: Router) => router.config.filter((route) => route.outlet === PRESENTED);
+
+  it('is added once when the same page is presented twice at once', async () => {
+    const router = routerWith(tabs());
+    await Promise.all([
+      presentedCommands(router, '/invoices/7'),
+      presentedCommands(router, '/invoices/7'),
+    ]);
+    assert.equal(copiesIn(router).length, 1);
+  });
+
+  it('comes from the routes the router has, whenever they are reset', async () => {
+    // Past every await a call goes through, so one reset lands between each two of them.
+    for (let ticks = 0; ticks < 40; ticks++) {
+      const router = routerWith(tabs());
+      const resetRoutes = tabs();
+      const presenting = presentedCommands(router, '/invoices/7');
+      for (let tick = 0; tick < ticks; tick++) await Promise.resolve();
+      router.config = resetRoutes;
+      await presenting;
+      for (const copy of copiesIn(router)) {
+        assert.equal(router.config, resetRoutes, `reset after ${ticks} ticks`);
+        assert.ok(router.config.includes(copy));
+        const provided = copy.children![0]!.providers;
+        assert.equal(provided, resetRoutes[0]!.children![1]!.providers, `after ${ticks} ticks`);
+      }
+    }
+  });
+});
 
 describe('the route a presented page gets at the root', () => {
   it('is the page under its whole path, inside a copy of each route above it', async () => {
