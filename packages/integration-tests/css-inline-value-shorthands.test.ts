@@ -271,6 +271,38 @@ describe('a background over a token in a style', () => {
     assert.equal((after['experimental_backgroundImage'] as unknown[]).length, 1);
   });
 
+  it('keeps the gradients over a fallback that is a valid last layer', () => {
+    for (const fallback of [
+      'none',
+      '10px',
+      'var(--y, none)',
+      'center',
+      'calc(var(--y, 5px) * 2)',
+    ]) {
+      const { props } = bound(`${GRADIENT}, var(--x, ${fallback})`, {});
+      assert.equal((props()['experimental_backgroundImage'] as object[]).length, 1, fallback);
+    }
+  });
+
+  it('keeps the gradients over a token that is a word a last layer can be', () => {
+    const { props } = bound(`${GRADIENT}, var(--x)`, { '--x': 'no-repeat' });
+    assert.equal((props()['experimental_backgroundImage'] as object[]).length, 1);
+  });
+
+  it('draws neither over a token that is unset, as a stylesheet does not', () => {
+    const { props } = bound(`${GRADIENT}, var(--x)`, {}, 'background-color: green');
+    const after = without(drawn(props()));
+    assert.equal((after['experimental_backgroundImage'] as unknown[] | undefined)?.length ?? 0, 0);
+    assert.equal(after['backgroundColor'], undefined);
+  });
+
+  it('draws a gradient the token holds under the written ones', () => {
+    const { props } = bound(`${GRADIENT}, var(--x)`, {
+      '--x': 'linear-gradient(to left, red, blue)',
+    });
+    assert.equal((props()['experimental_backgroundImage'] as unknown[]).length, 2);
+  });
+
   it('follows the token as it changes and goes', () => {
     const { renderer, node, props } = bound(`${GRADIENT}, var(--x)`, { '--x': 'red' });
     assert.equal(props()['backgroundColor'], 'red');

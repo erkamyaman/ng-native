@@ -77,6 +77,7 @@ export const EXTRA_KEYS = {
   display: 'display',
   'font-family': 'fontFamily',
   'font-size': 'fontSize',
+  'background-image': 'experimental_backgroundImage',
   'font-style': 'fontStyle',
   'font-weight': 'fontWeight',
   'outline-width': 'outlineWidth',
@@ -334,6 +335,47 @@ const INLINE_VALUE_SHORTHAND_CASES: OracleCase[] = [
     '#probe { color: blue; text-decoration-color: lime }',
     DECORATION,
     'text',
+  ),
+];
+
+const GRADIENT = 'linear-gradient(rgb(255, 0, 0), rgb(0, 0, 255))';
+
+/** `background: <written>` with `--x` as `token`, bound on the probe, over a weaker colour. */
+const backgroundOver = (written: string, token: string | null): OracleCase => ({
+  name: `background: ${written} with --x of ${token}`,
+  css: `#probe { background-color: rgb(0, 255, 0); background: ${written} }`,
+  tree: probe({ name: 'view' }),
+  ...(token === null ? {} : { bound: { '--x': token } }),
+  extra: ['background-image'],
+});
+
+const BACKGROUND_TOKEN_CASES: OracleCase[] = [
+  backgroundOver(`${GRADIENT}, var(--x)`, 'rgb(1, 2, 3)'),
+  backgroundOver(`${GRADIENT}, var(--x)`, null),
+  backgroundOver(`${GRADIENT}, var(--x)`, '10px'),
+  backgroundOver(`${GRADIENT}, var(--x)`, 'none'),
+  backgroundOver(`${GRADIENT}, var(--x)`, 'notacolour'),
+  backgroundOver(`${GRADIENT}, var(--x)`, 'linear-gradient(to right, rgb(0, 0, 0), rgb(1, 1, 1))'),
+  backgroundOver(`${GRADIENT}, var(--x, none)`, null),
+  backgroundOver(`${GRADIENT}, var(--x, 10px)`, null),
+  backgroundOver(`${GRADIENT}, var(--x, var(--y, none))`, null),
+  backgroundOver(`${GRADIENT}, var(--x, none)`, 'notacolour'),
+  backgroundOver(`${GRADIENT}, var(--x, rgb(1, 2, 3))`, null),
+  backgroundOver('var(--x)', null),
+  backgroundOver(`${GRADIENT}, var(--x)`, 'center'),
+  backgroundOver(`${GRADIENT}, var(--x)`, 'no-repeat'),
+  backgroundOver(`${GRADIENT}, var(--x)`, 'center no-repeat'),
+  backgroundOver(`${GRADIENT}, var(--x)`, 'border-box'),
+  backgroundOver(`${GRADIENT}, var(--x)`, 'center notacolour'),
+  backgroundOver(`${GRADIENT}, var(--x)`, '10px 20px'),
+  backgroundOver(`${GRADIENT}, var(--x)`, '10px 20px 30px'),
+  backgroundOver(`${GRADIENT}, var(--x, center no-repeat)`, null),
+  backgroundOver(`${GRADIENT}, var(--x, center)`, null),
+  backgroundOver(`${GRADIENT}, var(--x, calc(var(--y, 5px) * 2))`, null),
+  backgroundOver(`${GRADIENT}, var(--x, calc(var(--y) * 2))`, null),
+  backgroundOver(
+    'none 20px 20px / 10px 10px no-repeat, var(--x)',
+    'linear-gradient(to right, rgb(0, 0, 0), rgb(1, 1, 1))',
   ),
 ];
 
@@ -1504,6 +1546,7 @@ export const CASES: OracleCase[] = [
   ...CHANNEL_CASES,
   ...INLINE_SHORTHAND_CASES,
   ...INLINE_VALUE_SHORTHAND_CASES,
+  ...BACKGROUND_TOKEN_CASES,
   {
     name: 'background: var() of a colour token is the background colour',
     css: '#probe { --bg: rgb(1, 0, 0); background: var(--bg) }',

@@ -118,4 +118,9 @@ export {
   type Transition,
   type TransitionSpec,
 } from './transition.ts';
-export { backgroundLayers, splitLayers, type BackgroundLayers } from './background-layers.ts';
+export {
+  BACKGROUND_PLACING,
+  backgroundLayers,
+  splitLayers,
+  type BackgroundLayers,
+} from './background-layers.ts';

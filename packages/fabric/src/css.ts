@@ -13,7 +13,11 @@ import {
   mixChannels,
   mixColours,
 } from './color-mix.ts';
-import { type BackgroundLayers, backgroundLayers } from './background-layers.ts';
+import {
+  type BackgroundLayers,
+  BACKGROUND_PLACING,
+  backgroundLayers,
+} from './background-layers.ts';
 import { transformMathRefused } from './inline-transform.ts';
 import {
   MATH_FUNCTION,
@@ -368,6 +372,14 @@ export interface DeferredDeclaration {
    * beside the colour and each is written from its own part of the token. See `layersOf`.
    */
   readonly layers?: true;
+  /**
+   * `background: linear-gradient(...), var(--x)`: the layers written over the token, by prop, the
+   * images and where a stylesheet places them, which are drawn with it, or not at all where it
+   * makes the shorthand invalid.
+   */
+  readonly over?: Readonly<Record<string, readonly unknown[]>>;
+  /** The fallback of such a token as a token, for what it makes of the last layer. */
+  readonly fallbackLayer?: TokenValue;
   /**
    * `inherit`, written for these props: each is the parent's value for it, or nothing where the
    * parent has none.
@@ -5531,27 +5543,48 @@ function writeSettled(
 ): void {
   const one = settled instanceof EachSide ? settled.at(declaration.props, prop) : settled;
   const value = clamped(prop, one) ?? declaration.unset;
-  if (declaration.layers) writeLayer(own, prop, value, layers);
+  if (declaration.layers) writeLayer(own, prop, value, layers, declaration.over);
   else write(own, prop, value, declaration.line !== undefined);
 }
 
 /**
- * One prop of a `background: var()`, whose token may hold the images as well as the colour. The
- * image is written only where the token holds one: a token that is a colour leaves an image
- * another rule declared as it is. Each prop is ranked in the cascade by itself, so an image a
- * later rule declares, or an important one, is not written over by the token's.
+ * One prop of a `background: var()`, whose token may hold the images as well as the colour. A
+ * token that is a colour leaves an image another rule declared as it is, and one that fits no
+ * part of a background makes the shorthand invalid, which unsets the image with the colour.
+ * Layers written over the token are drawn above what it holds, whose images take the initial
+ * place, as a native list shorter than the images starts again from its first, and a written layer
+ * that paints nothing leaves no place ahead of them. Each prop is ranked in the cascade by itself,
+ * so an image a later rule declares, or an important one, is not written over.
  */
 function writeLayer(
   own: Record<string, unknown>,
   prop: string,
   value: unknown,
   layers: BackgroundLayers | undefined,
+  over: DeferredDeclaration['over'],
 ): void {
-  if (prop !== BACKGROUND_IMAGE) write(own, prop, layers?.color ?? value, false);
-  else if (layers) own[prop] = layers.images;
+  if (prop === 'backgroundColor') write(own, prop, layers?.color ?? value, false);
+  else if (layers) own[prop] = layerList(prop, layers.images, over);
+  else if (value === undefined) delete own[prop];
+  else if (over?.[prop]) own[prop] = over[prop];
+}
+
+/** One prop's list for a token's images: what is written over them, then what each takes. */
+function layerList(
+  prop: string,
+  images: readonly object[],
+  over: DeferredDeclaration['over'],
+): unknown[] {
+  const held = prop === BACKGROUND_IMAGE ? images : images.map(() => BACKGROUND_PLACING[prop]);
+  const written = over?.[BACKGROUND_IMAGE]?.length ? over[prop] : undefined;
+  return [...(written ?? []), ...held];
 }
 
 const BACKGROUND_IMAGE = 'experimental_backgroundImage';
+
+/** The words a last layer can be with no colour: its image of `none`, position, repeat and boxes. */
+const LAST_LAYER_WORDS =
+  /^(?:(?:none|center|left|right|top|bottom|repeat|no-repeat|repeat-x|repeat-y|space|round|scroll|fixed|local|border-box|padding-box|content-box|text)(?:\s+|$))+$/i;
 
 /**
  * The gradients a `background: var()` reads where its token is no colour: see `backgroundLayers`.
@@ -5566,8 +5599,17 @@ function layersOf(
 ): BackgroundLayers | undefined {
   if (!declaration.layers) return undefined;
   const names = [declaration.reference!, ...(declaration.alternatives ?? [])];
-  const text = firstSet(names, tokens)?.keyword;
-  return text && /gradient\(/i.test(text) ? backgroundLayers(text) : undefined;
+  const fallback = declaration.fallbackLayer;
+  const token = firstSet(names, tokens) ?? (fallback && substitutedIn(fallback, tokens));
+  const text = token?.keyword;
+  if (text && /gradient\(/i.test(text)) return backgroundLayers(text);
+  return token && isEmptyLastLayer(token) ? { images: [] } : undefined;
+}
+
+/** Whether a token is valid as a last layer with no colour or image: a position or such words. */
+function isEmptyLastLayer(token: TokenValue): boolean {
+  if (token.length !== undefined || token.lengths?.length === 2) return true;
+  return LAST_LAYER_WORDS.test(token.keyword ?? token.family ?? '');
 }
 
 const BOUND_NUMBERS = new Set([

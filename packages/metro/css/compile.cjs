@@ -18,6 +18,7 @@ const {
   calcLength,
   CssUnsupported,
   CURRENT_COLOUR,
+  fallbackChain,
   fallbacks,
   tokenValue,
   formOf,
@@ -741,11 +742,9 @@ const backgroundLayers = () => ({
  * `background: linear-gradient(...), var(--primary)`: layers written out over a token's colour, as
  * design systems in the shadcn family write their buttons. The token is the whole of the last
  * layer, where only a colour can be, so the shorthand is split here: the layers before it are read
- * as `background` reads them, colour aside, and the token is `background-color`'s, read on device.
+ * as `background` reads them, colour aside, and the token is read on device with the images over
+ * it, which go with it where it makes the whole shorthand invalid.
  * False for any other value, a token in another place included, which is refused as before.
- *
- * ponytail: a token that is unset or no colour unsets only the colour, as `background: var()`
- * does, where Chrome finds the whole shorthand invalid and draws no image either.
  */
 function layersOverToken(value, out, deferred, context) {
   if (value?.propertyId?.property !== 'background') return false;
@@ -764,9 +763,23 @@ function layersOverToken(value, out, deferred, context) {
   if (typed?.property !== 'background') return false;
   const layers = {};
   translate('background', typed.value, layers, context);
-  Object.assign(out, layers);
-  deferred.push(deferVar({ propertyId: { property: 'background-color' }, value: last }, context));
+  const { backgroundColor, ...over } = layers;
+  out.backgroundColor = backgroundColor;
+  deferred.push(tokenUnderLayers(last, over, context));
   return true;
+}
+
+/** The token that is a background's last layer, read on device with the layers over it. */
+function tokenUnderLayers(last, over, context) {
+  const token = deferVar({ propertyId: { property: 'background-color' }, value: last }, context);
+  const fallbackLayer = fallbackChain(last[0].value?.fallback, context).token;
+  return {
+    ...token,
+    layers: true,
+    props: ['backgroundColor', ...Object.keys(over)],
+    over,
+    ...(fallbackLayer ? { fallbackLayer } : {}),
+  };
 }
 
 /** The motion a token can be read into whole, and the key and token form each reads it as. */
