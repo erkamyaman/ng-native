@@ -3896,6 +3896,103 @@ const sameStrut = (a: LineStrut | undefined, b: LineStrut): boolean =>
 const clipsFixed = (position: unknown): boolean =>
   position === 'fixed' && nativePlatform() === 'android';
 
+/**
+ * Whether a fixed box is as wide as its content (`shrunkOutOfFlow`), a `width: auto` counting as
+ * none. Yoga measures what is in an out-of-flow box within the box it is committed under, so in a
+ * narrower box its text wraps there, where a browser wraps it in the screen. On an axis it has
+ * no inset on, it is put at its static position from its page: see `staticPlace`.
+ */
+const fixedToContent = (node: EngineNode, position: unknown): boolean =>
+  position === 'fixed' &&
+  (shrunkOutOfFlow(node) || (readStyle(node, 'width') === 'auto' && !betweenInsets(node)));
+
+/** The insets across and down, by every name React Native reads them by. */
+const INLINE_INSETS = [
+  ...['left', 'right', 'start', 'end'],
+  ...['inset', 'insetInline', 'insetInlineStart', 'insetInlineEnd'],
+];
+const BLOCK_INSETS = ['top', 'bottom', 'inset', 'insetBlock', 'insetBlockStart', 'insetBlockEnd'];
+
+/** Whether a style has an inset other than `auto` on any of `sides`. */
+const insetOn = (style: Record<string, unknown>, ...sides: string[]): boolean =>
+  sides.some((side) => style[side] != null && style[side] !== 'auto');
+
+type Alignment = 'start' | 'center' | 'end';
+
+/**
+ * Where an alignment puts a box that is the only one in a line, as a browser puts an out-of-flow
+ * box at its static position: a space between items as the start, and one around them as the
+ * centre. Stretching and a baseline are the start.
+ */
+function alignmentOf(value: unknown): Alignment {
+  if (value === 'center' || value === 'space-around' || value === 'space-evenly') return 'center';
+  return value === 'flex-end' || value === 'end' || value === 'self-end' ? 'end' : 'start';
+}
+
+const flipped = (alignment: Alignment): Alignment =>
+  alignment === 'start' ? 'end' : alignment === 'end' ? 'start' : 'center';
+
+/** A side's points of padding or border, the first of `keys` set: nothing where it is not points. */
+const pointsOf = (style: Record<string, unknown>, keys: readonly string[]): number => {
+  const value = keys.map((key) => style[key]).find((found) => found != null);
+  return typeof value === 'number' ? value : 0;
+};
+
+type AbsoluteAxis = (typeof ABSOLUTE_AXES)[number];
+
+/**
+ * How a box aligns an out-of-flow child at its static position across and down: by its own
+ * alignment and its main axis's, reversed where its direction is, and right to left across.
+ * Everything starts at the start of a box that is not a flex box.
+ */
+function staticAlignments(
+  outer: Record<string, unknown>,
+  style: Record<string, unknown>,
+  flex: boolean,
+): [Alignment, Alignment] {
+  const direction = String(outer['flexDirection'] ?? 'column');
+  const row = direction.startsWith('row');
+  let main = flex ? alignmentOf(outer['justifyContent']) : 'start';
+  if (direction.endsWith('reverse')) main = flipped(main);
+  const self = style['alignSelf'];
+  const cross = flex ? alignmentOf(self && self !== 'auto' ? self : outer['alignItems']) : 'start';
+  const across = row ? main : cross;
+  return [outer['direction'] === 'rtl' ? flipped(across) : across, row ? cross : main];
+}
+
+/** Where a box's content starts and ends along an axis, inside its padding and border. */
+function contentEdges(
+  outer: Record<string, unknown>,
+  at: readonly number[],
+  axis: AbsoluteAxis,
+): [number, number] {
+  // Its padding and border on the left or top, and on the right or bottom.
+  const [pad, border, padEnd, borderEnd] = sides(outer, axis.at === 0 ? 'Width' : 'Height').map(
+    (keys) => pointsOf(outer, keys),
+  ) as [number, number, number, number];
+  return [at[axis.at]! + pad + border, at[axis.at]! + at[axis.size]! - padEnd - borderEnd];
+}
+
+/**
+ * The inset from `page` that puts a box at the start, the end or the centre of `[start, end]`
+ * along an axis. A centred one is placed by its size with its margins (`size`), taken as no
+ * more than twice the room on the nearer side of the centre.
+ */
+function staticInset(
+  alignment: Alignment,
+  axis: AbsoluteAxis,
+  [start, end]: [number, number],
+  page: readonly number[],
+  size: () => number,
+): Record<string, number> {
+  const [from, to] = [page[axis.at]!, page[axis.at]! + page[axis.size]!];
+  if (alignment === 'start') return { [axis.start.toLowerCase()]: start - from };
+  if (alignment === 'end') return { [axis.end.toLowerCase()]: to - end };
+  const centre = (start + end) / 2;
+  const width = Math.min(size(), 2 * Math.min(centre - from, to - centre));
+  return { [axis.start.toLowerCase()]: centre - width / 2 - from };
+}
+
 /** What the view a page's fixed boxes are committed in is: see `fixedHandles`. */
 const FIXED_LAYER = {
   position: 'absolute',
@@ -9679,6 +9776,8 @@ export class Engine implements HostEngine {
   private readonly fixedIn = new Map<EngineNode, Set<EngineNode>>();
   /** Boxes found to be fixed while they were being committed under their parent. */
   private readonly fixedLate = new Set<EngineNode>();
+  /** The boxes that clipped what is in them as they were last styled: see `pinBeneath`. */
+  private readonly clipping = new WeakSet<EngineNode>();
 
   /** What a finger is on, while one is down. */
   private fingerOn: EngineNode | null = null;
@@ -9812,6 +9911,19 @@ export class Engine implements HostEngine {
     return page;
   }
 
+  /** Whether a box out of the flow is committed under its page however wide it is. */
+  private pinsToPage(node: EngineNode, page: EngineNode, position: unknown): boolean {
+    return clipsFixed(position) || this.scrollsOrClips(node, page);
+  }
+
+  /** Whether a scroll view is between a box and its page. */
+  private scrollsBetween(node: EngineNode, page: EngineNode): boolean {
+    for (let up = node.parent; up && up !== page; up = up.parent) {
+      if (up.nodeKind === 'element' && SCROLL_VIEWS.has(viewNameOf(up))) return true;
+    }
+    return false;
+  }
+
   /** Whether anything between a box and its page scrolls or clips what is inside it. */
   private scrollsOrClips(node: EngineNode, page: EngineNode): boolean {
     for (let up = node.parent; up && up !== page; up = up.parent) {
@@ -9826,19 +9938,99 @@ export class Engine implements HostEngine {
    * Note a node that has become `position: fixed` inside something that scrolls or clips, which
    * a fixed box does neither with: it is committed under its page in place of its parent. It is
    * being reconciled under its parent as this is asked, so it is committed there once more and
-   * moved straight after: see `moveFixed`. Anywhere else a fixed box stays where it is, and is
-   * placed against its page by `settleAbsolute`.
+   * moved straight after: see `moveFixed`. So is a fixed box as wide as its content, which Yoga
+   * would measure in the box it is written in (`fixedToContent`). Anywhere else a fixed box
+   * stays where it is, and is placed against its page by `settleAbsolute`.
    */
   private refix(node: EngineNode, position: unknown): void {
-    if (node.fixedTo !== undefined) return;
+    if (node.fixedTo !== undefined) return this.unpinFixed(node, position);
     // A view that is moved loses its touch: one a finger is on is moved when the finger lifts.
     if (isWithin(this.fingerOn, node)) return void this.fixedUnderFinger.add(node);
     const page = position === 'fixed' ? this.pageOf(node) : this.placedAbove(node);
-    if (!page || !(this.scrollsOrClips(node, page) || clipsFixed(position))) return;
+    if (!page || !(this.pinsToPage(node, page, position) || fixedToContent(node, position))) {
+      return;
+    }
     node.fixedTo = page;
     const held = this.fixedIn.get(page) ?? new Set();
     this.fixedIn.set(page, held.add(node));
     this.fixedLate.add(node);
+  }
+
+  /**
+   * Ask again of each fixed box under its page from inside `node` whether it is to stay there,
+   * as `node` is styled: it may have stopped scrolling or clipping, which nothing about the box
+   * itself says. One let go is merged again, to be committed under its parent (`unpinFixed`).
+   */
+  private refixBeneath(node: EngineNode): void {
+    // A box only passed through on the way to another has not changed.
+    if (!node.propsDirty) return;
+    this.pinBeneath(node);
+    // Most pages have none.
+    if (!this.fixedIn.size) return;
+    for (const fixed of this.fixedIn.values()) {
+      for (const box of fixed) {
+        // Only those inside it, of which there are few: one anywhere else is styled as before.
+        if (box === node || !isWithin(box, node)) continue;
+        this.unpinFixed(box, readStyle(box, 'position'));
+        if (box.fixedTo === undefined) this.touch([box]);
+      }
+    }
+  }
+
+  /**
+   * Ask of each fixed or absolute box inside `node` whether it is now to be committed under its
+   * page or the box it is placed against, as `node` starts to clip: nothing about those boxes
+   * says so, and a value set on `node` restyles only `node`. Asked only as it starts, and not of
+   * a box styled for the first time, whose boxes are all styled for the first time too.
+   */
+  private pinBeneath(node: EngineNode): void {
+    const clips = (readStyle(node, 'overflow') ?? 'visible') !== 'visible';
+    if (clips === this.clipping.has(node)) return;
+    if (!clips) return this.unpinBeneath(node);
+    this.clipping.add(node);
+    if (node.committed === null) return;
+    const visit = (box: EngineNode): void => {
+      for (const child of box.childList) {
+        if (child.nodeKind !== 'element') continue;
+        this.styles.resolve(child, this.styleEpoch);
+        const position = readStyle(child, 'position');
+        const out = position === 'fixed' || position === 'absolute';
+        if (out && child.fixedTo === undefined) this.refix(child, position);
+        visit(child);
+      }
+    };
+    visit(node);
+  }
+
+  /**
+   * Have each absolute box inside `node` that is committed under the box it is placed against
+   * asked again as it is committed whether it still is to be, as `node` stops clipping
+   * (`staysFixed`). A fixed one is asked as `node` is styled: see `refixBeneath`.
+   */
+  private unpinBeneath(node: EngineNode): void {
+    this.clipping.delete(node);
+    for (const held of this.fixedIn.values()) {
+      for (const box of held) {
+        const inside = box !== node && isWithin(box, node);
+        if (inside && readStyle(box, 'position') === 'absolute') this.touch([box]);
+      }
+    }
+  }
+
+  /**
+   * Let a fixed box committed under its page go back under its parent, once nothing has it there:
+   * it has a width of its own, and nothing between it and its page scrolls or clips. Asked as it
+   * is styled, before it is placed, so it is placed against its page from under its parent in
+   * the same commit (`settleAbsolute`).
+   */
+  private unpinFixed(node: EngineNode, position: unknown): void {
+    const page = node.fixedTo!;
+    if (position !== 'fixed' || this.pinsToPage(node, page, position)) return;
+    if (fixedToContent(node, position)) return;
+    // A view that is moved loses its touch: one a finger is on goes when the finger lifts.
+    if (isWithin(this.fingerOn, node)) return void this.fixedUnderFinger.add(node);
+    this.fixedIn.get(page)?.delete(node);
+    node.fixedTo = undefined;
   }
 
   /**
@@ -9877,6 +10069,7 @@ export class Engine implements HostEngine {
     if (this.stillCommitted(child, context)) return true;
     this.styles.resolve(child, this.styleEpoch);
     const position = readStyle(child, 'position');
+    // One that is to go back under its parent is let go as it is styled: see `unpinFixed`.
     if (position === 'fixed') return true;
     // An absolute one, for as long as it is placed against the same box and still clipped.
     const above = position === 'absolute' ? this.placedAbove(child) : null;
@@ -10160,6 +10353,7 @@ export class Engine implements HostEngine {
     if (node.mixed && !this.settling) node.mixed.dirty = true;
     if (position === 'fixed' || position === 'absolute') this.refix(node, position);
     else if (position === 'sticky') this.stickies.add(node);
+    this.refixBeneath(node);
     if (position === 'absolute' || position === 'fixed') this.reabsolute(node, position);
     if (!this.settling) this.noteFits(node);
   }
@@ -10991,9 +11185,74 @@ export class Engine implements HostEngine {
       const [room, size, width] = [against[axis.size]!, box[axis.size]!, against[2]!];
       Object.assign(resolved, autoMargins(sized, axis, room, size, width));
     }
+    if (node.fixedTo) Object.assign(resolved, this.staticPlace(node, style, against, box));
+    this.flowStyles.clear();
     const top = this.flowPlace(node, style, by[1]);
     if (top !== undefined) resolved['top'] = top;
     return Object.keys(resolved).length ? resolved : undefined;
+  }
+
+  /**
+   * The insets that put a fixed box committed under its page at its static position on each axis
+   * it has no inset on: where a browser has it, the only child of the box it is written in. Yoga
+   * puts it there only under that box, and under its page at the page's own start.
+   *
+   * That is the start, the centre or the end of the content box of the box it is written in, as
+   * that box aligns its children along the axis, with the start on the right across a box laid
+   * out right to left. A start or an end is an inset from that side, so its text wraps in the
+   * room from there to the far side of the page, as in a browser. A centre is placed by the box's
+   * own size, and as a browser does, no wider than twice the room on the nearer side of it.
+   * `page` is the page's padding box, which the insets are measured from.
+   *
+   * Inside a scroll view it is left at its page's start: what native reads back of a box in one
+   * is where it has scrolled to, where a browser keeps it where it was laid out.
+   */
+  private staticPlace(
+    node: EngineNode,
+    style: Record<string, unknown>,
+    page: readonly number[],
+    box: readonly number[],
+  ): Record<string, number | null> {
+    const parent = node.parent;
+    const out: Record<string, number | null> = {};
+    const own = this.asCommitted(node, style);
+    const free = [!insetOn(own, ...INLINE_INSETS), !insetOn(own, ...BLOCK_INSETS)];
+    if (!parent || parent.nodeKind !== 'element' || !free.some(Boolean)) return out;
+    if (this.scrollsBetween(node, node.fixedTo!)) return out;
+    const at = this.boxOf(parent);
+    if (!at) return out;
+    const outer = this.flowStyle(parent);
+    // In a block or a grid, its children start at the start; in a flex box, as it aligns them.
+    const flex = parent.flow === undefined && parent.grid === undefined;
+    const alignments = staticAlignments(outer, style, flex);
+    for (const axis of ABSOLUTE_AXES) {
+      if (!free[axis.at]) continue;
+      const size = () =>
+        box[axis.size]! +
+        pointsOf(style, [`margin${axis.start}`, `margin${axis.across}`, 'margin']) +
+        pointsOf(style, [`margin${axis.end}`, `margin${axis.across}`, 'margin']);
+      const edges = contentEdges(outer, at, axis);
+      const placed = staticInset(alignments[axis.at]!, axis, edges, page, size);
+      // Each `auto` inset on the axis is taken out, and the static one set over it: Yoga reads
+      // a logical one before a physical one, so a `start: auto` left in would hold it.
+      for (const key of axis.at === 0 ? INLINE_INSETS : BLOCK_INSETS) {
+        if (own[key] != null) out[key] = null;
+      }
+      Object.assign(out, placed);
+    }
+    return out;
+  }
+
+  /**
+   * A box's style as it is committed: an inset set on the element takes the other form of it in a
+   * sheet out (`overOtherForms`).
+   */
+  private asCommitted(node: EngineNode, style: Record<string, unknown>): Record<string, unknown> {
+    const inline = inlineOf(node);
+    if (inline === NO_STYLE) return style;
+    const own = { ...style };
+    this.styles.overOtherForms(inline, own);
+    return own;
   }
 
   /**

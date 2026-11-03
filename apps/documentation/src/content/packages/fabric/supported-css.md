@@ -373,7 +373,23 @@ the page's place back from native to work its insets out, as it does a grid's si
 
 Where something between a fixed box and its page scrolls or clips, a scroll view or an
 `overflow: hidden` box, the fixed box is committed under the page instead, so it neither scrolls
-nor is clipped. There it draws over the page's other content, and an ancestor's `opacity` or
+nor is clipped. So is a fixed box as wide as its content, with no width of its own and not stretched
+between a `left` and a `right`, so that its text wraps in the page and not in a narrower box it is
+written in. On iOS a fixed box goes back under its parent once it has a width of its own or is
+stretched between a `left` and a `right`, and nothing it is in scrolls or clips any more. On
+Android every fixed box is committed under its page.
+
+A fixed box committed under its page keeps its static position on an axis it has no inset on, as in
+a browser: where it would be as the only child of the box it is written in, inside that box's
+padding and border where those are in points, and at its start, centre or end as that box aligns its
+children, with the start on the right in a box laid out right to left. Its text then wraps in the
+room between there and the far side of the page. A centred one is centred by its own size. One wider
+than twice the room on the nearer side of its centre starts that far from its centre, as in a
+browser, but stays as wide as its text, where a browser wraps the text to that width. Inside a
+scroll view it stays at the page's start on that axis instead, since native reads back where a box
+in a scroll view has scrolled to.
+
+Under its page a fixed box draws over the page's other content, and an ancestor's `opacity` or
 `transform` no longer reaches it; it is still styled by rules that match through its parent, its
 events still bubble to its parent, and it is not shown while anything it is inside is
 `display: none`. A transformed ancestor does not become what a fixed box is fixed to, as one does
