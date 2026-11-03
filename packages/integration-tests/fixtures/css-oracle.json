@@ -1984,6 +1984,30 @@
     }
   },
   {
+    "name": "an inline aspect-ratio: calc(16 / 9) / 1",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "1.77778 / 1"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: 16 / calc(3 * 3)",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "16 / 9"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: 16 / 9",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "16 / 9"
+    }
+  },
+  {
     "name": "an inline line-height: calc(1 + 1)",
     "expected": {
       "color": "rgb(0, 0, 0)",
@@ -2021,6 +2045,54 @@
       "color": "rgb(0, 0, 0)",
       "background-color": "rgba(0, 0, 0, 0)",
       "transform": "matrix(1, 0, 0, 1, 2, 0)"
+    }
+  },
+  {
+    "name": "an inline transform: translateX(1px",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "transform": "matrix(1, 0, 0, 1, 1, 0)"
+    }
+  },
+  {
+    "name": "an inline transform: scale(2",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "transform": "matrix(2, 0, 0, 2, 0, 0)"
+    }
+  },
+  {
+    "name": "an inline transform: translate(calc(1px + 1px), 2px",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "transform": "matrix(1, 0, 0, 1, 2, 2)"
+    }
+  },
+  {
+    "name": "an inline width: calc(1px + 2px",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "width": "3px"
+    }
+  },
+  {
+    "name": "an inline width: min(10px, calc(5px + 1px",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "width": "6px"
+    }
+  },
+  {
+    "name": "an inline font-family: \"a(b\", serif",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "font-family": "\"a(b\", serif"
     }
   },
   {
@@ -2069,6 +2141,198 @@
       "color": "rgb(0, 0, 0)",
       "background-color": "rgba(0, 0, 0, 0)",
       "transform": "matrix(1, 0, 0, 1, 16, 0)"
+    }
+  },
+  {
+    "name": "a token bound with a bracket left open, read by a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "width": "3px"
+    }
+  },
+  {
+    "name": "a token bound with a bracket left open, read by a style",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "width": "6px"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: 0.000001 / calc(0.000002), read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "1e-06 / 2e-06"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: 0.000001 / calc(0.000002), read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "1e-06 / 2e-06"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: 0.000001 / 0.000002, read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "1e-06 / 2e-06"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: 0.000001 / 0.000002, read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "1e-06 / 2e-06"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: 1 / 1000000, read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "1 / 1e+06"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: 1 / 1000000, read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "1 / 1e+06"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: 1 / 1e2, read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "1 / 100"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: 1 / 1e2, read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "1 / 100"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: 1 / 0x10, read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: 1 / 0x10, read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: 1 / Infinity, read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: 1 / Infinity, read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: Infinity / 1, read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: Infinity / 1, read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: 0x10 / 1, read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: 0x10 / 1, read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: -1 / 2, read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: -1 / 2, read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: 1 / 2 / 3, read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: 1 / 2 / 3, read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "a rule's aspect-ratio: calc(1px) / 1, read as aspect-ratio",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
+    }
+  },
+  {
+    "name": "an inline aspect-ratio: calc(1px) / 1, read as aspect-ratio, over a rule",
+    "expected": {
+      "color": "rgb(0, 0, 0)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "aspect-ratio": "7 / 1"
     }
   },
   {

@@ -821,6 +821,8 @@ export class MathRows {
       ['color', 'calc(1px + 1px)'],
       ['flexGrow', 'calc(50%)'],
       ['aspectRatio', 'calc(1px)'],
+      ['aspectRatio', '1 / 0x10'],
+      ['aspectRatio', '1 / -2'],
       ['fontWeight', 'calc(1px)'],
     ];
     const LEFT: [string, string][] = [
@@ -838,6 +840,9 @@ export class MathRows {
       ['width', 'calc(2 + 1px + var(--x))'],
       ['scale', 'calc(1 + 1)'],
       ['flexGrow', 'calc(1 / 0)'],
+      ['aspectRatio', '16 / var(--x)'],
+      ['aspectRatio', 'auto 16 / 9'],
+      ['aspectRatio', 'inherit'],
       // A shape the reader gives up on, which is not a type it can name.
       ['width', 'clamp(1px, 2px)'],
       ['width', 'min()'],
@@ -895,8 +900,9 @@ export class MathRefused {
       'translateX(calc(1px + 2))',
       // Chrome reads this one, and the stylesheet refuses it: no form holds it.
       'translateX(calc(50% + 1px))',
-      'translateX(calc(1px)',
-      'translateX(1px ',
+      // A bracket left open is closed where the value ends, as Chrome closes it, so the one left
+      // open here is the math's.
+      'translateX(calc(1px + 2)',
     ];
     const views = REFUSED.map(
       (_, i) => `<view nativeID="r${i}" [style.transform]="rows[${i}]"></view>`,

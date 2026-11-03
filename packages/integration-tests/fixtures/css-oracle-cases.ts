@@ -623,11 +623,20 @@ const INLINE_MATH_CASES = (
     ['flex', 'calc(1 + 1) 1 0px', 'flex-grow'],
     ['flex', '1 calc(1 + 1) 10px', 'flex-shrink'],
     ['aspect-ratio', 'calc(16 / 9)', 'aspect-ratio'],
+    ['aspect-ratio', 'calc(16 / 9) / 1', 'aspect-ratio'],
+    ['aspect-ratio', '16 / calc(3 * 3)', 'aspect-ratio'],
+    ['aspect-ratio', '16 / 9', 'aspect-ratio'],
     ['line-height', 'calc(1 + 1)', 'line-height'],
     ['line-height', 'calc(150%)', 'line-height'],
     ['font-weight', 'calc(300 + 400)', 'font-weight'],
     ['z-index', 'calc(3 / 2)', 'z-index'],
     ['transform', 'translateX(calc(1px + 1px))', 'transform'],
+    ['transform', 'translateX(1px', 'transform'],
+    ['transform', 'scale(2', 'transform'],
+    ['transform', 'translate(calc(1px + 1px), 2px', 'transform'],
+    ['width', 'calc(1px + 2px', 'width'],
+    ['width', 'min(10px, calc(5px + 1px', 'width'],
+    ['font-family', '"a(b", serif', 'font-family'],
     ['transform', 'translate(calc(1px + 1px), calc(1rem * 2))', 'transform'],
     ['transform', 'scale(calc(1 + 1))', 'transform'],
     ['transform', 'rotate(calc(10deg + 20deg))', 'transform'],
@@ -642,6 +651,27 @@ const INLINE_MATH_CASES = (
   inline: { [property]: value },
   extra: [measured],
 }));
+
+/**
+ * A token bound on the element with a bracket left open, closed where its value ends as CSS
+ * closes it, read by a rule and by a style.
+ */
+const OPEN_TOKEN_CASES: OracleCase[] = [
+  {
+    name: 'a token bound with a bracket left open, read by a rule',
+    css: '#probe { display: block; width: var(--size) }',
+    tree: probe({ name: 'view' }),
+    inline: { '--size': 'calc(1px + 2px' },
+    extra: ['width'],
+  },
+  {
+    name: 'a token bound with a bracket left open, read by a style',
+    css: '#probe { display: block }',
+    tree: probe({ name: 'view' }),
+    inline: { '--size': 'min(10px, calc(5px + 1px', width: 'var(--size)' },
+    extra: ['width'],
+  },
+];
 
 /**
  * A sign in a `calc()` of tokens wants whitespace either side, as in one of written values. Without
@@ -916,6 +946,37 @@ const TOKEN_NEGATIVE_CASES = [
   inRule('max-width', 'var(--x, calc(20px - 2em))', 'max-width', false),
 ];
 
+/** An aspect ratio of two sides too small for five decimals, in a rule and in a style. */
+const RATIO_PRECISION_CASES = (
+  [
+    ['aspect-ratio', '0.000001 / calc(0.000002)', 'aspect-ratio'],
+    ['aspect-ratio', '0.000001 / 0.000002', 'aspect-ratio'],
+    ['aspect-ratio', '1 / 1000000', 'aspect-ratio'],
+    ['aspect-ratio', '1 / 1e2', 'aspect-ratio'],
+  ] as const
+).flatMap(([property, value, measured]): OracleCase[] => [
+  inRule(property, value, measured, false),
+  inStyle(property, value, measured),
+]);
+
+/**
+ * An aspect ratio with a side CSS reads no number from: hex and `Infinity`, which JavaScript reads
+ * as numbers, a negative, a length, or a third side. Chrome drops the declaration and keeps the
+ * weaker rule's ratio.
+ */
+const RATIO_SIDE_CASES = [
+  '1 / 0x10',
+  '1 / Infinity',
+  'Infinity / 1',
+  '0x10 / 1',
+  '-1 / 2',
+  '1 / 2 / 3',
+  'calc(1px) / 1',
+].flatMap((value): OracleCase[] => [
+  inRule('aspect-ratio', value, 'aspect-ratio', true),
+  inStyle('aspect-ratio', value, 'aspect-ratio'),
+]);
+
 export const CASES: OracleCase[] = [
   ...MATH_RANGE_CASES,
   ...TOKEN_NEGATIVE_CASES,
@@ -924,6 +985,9 @@ export const CASES: OracleCase[] = [
   ...TOKEN_RANGE_CASES,
   ...TOKEN_TYPE_CASES,
   ...INLINE_MATH_CASES,
+  ...OPEN_TOKEN_CASES,
+  ...RATIO_PRECISION_CASES,
+  ...RATIO_SIDE_CASES,
   ...SIGN_SPACE_CASES,
   {
     name: 'specificity: a class beats a type',

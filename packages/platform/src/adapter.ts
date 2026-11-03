@@ -47,12 +47,14 @@ import {
   installNodeGlobal,
   markComponentHost,
   MATH_FUNCTION,
+  mathNumber,
   mathNumberText,
   nativePlatform,
   onFontsRegistered,
   onFontsSettled,
   platformColourOf,
   reportUnboundFormsInput,
+  splitOutside,
   styleSheetOf,
   type EngineNode,
   type EngineOptions,
@@ -101,7 +103,48 @@ const styleValue = (key: string, value: unknown): unknown =>
       ? parseFloat(value)
       : REM.test(value)
         ? parseFloat(value) * 16
-        : (boundMath(key, value) ?? value);
+        : key === 'aspectRatio'
+          ? (ratio(value) ?? value)
+          : (boundMath(key, value) ?? value);
+
+/**
+ * An `aspect-ratio` of a width and a height, `16 / 9` or `calc(16 / 9) / 1`, as the one number
+ * native takes, either side read as a stylesheet reads it. Undefined for any other value, which
+ * stays as it is: one number, or math of one, is read by `boundMath`.
+ */
+function ratio(text: string): number | undefined {
+  const sides = splitOutside(text, '/');
+  if (sides.length !== 2) return boundMath('aspectRatio', text) as number | undefined;
+  // Each side unrounded, so a small one still divides: only the ratio is rounded.
+  const [width, height] = sides.map((side) => mathNumber(cssTrim(side)) ?? Number(cssTrim(side)));
+  return width! > 0 && height! > 0 ? Math.round((width! / height!) * 1e5) / 1e5 : undefined;
+}
+
+/**
+ * A value with the brackets it leaves open closed, as CSS closes them where a declaration ends:
+ * `translateX(1px` is `translateX(1px)`. A bracket inside quotes is text, and not counted.
+ */
+function closedAtEnd(text: unknown): unknown {
+  if (typeof text !== 'string' || !text.includes('(')) return text;
+  const open = leftOpen(text);
+  return open ? text + ')'.repeat(open) : text;
+}
+
+/** How many brackets `text` leaves open, outside quotes. */
+function leftOpen(text: string): number {
+  let open = 0;
+  let quote = '';
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]!;
+    if (quote) {
+      if (char === '\\') i++;
+      else if (char === quote) quote = '';
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === '(') open++;
+    else if (char === ')' && open > 0) open--;
+  }
+  return open;
+}
 
 /**
  * A `font-family` is a stack, quoted or not, where native takes one family by name: the first,
@@ -457,13 +500,14 @@ class NativeRenderer implements Renderer2 {
 
   setStyle(el: EngineNode, style: string, value: unknown, _flags?: RendererStyleFlags2): void {
     if (style.startsWith('--')) {
-      this.engine.setCustomProperty(el, customPropertyName(style), value);
+      this.engine.setCustomProperty(el, customPropertyName(style), closedAtEnd(value));
       return;
     }
     if (extensions.length && this.restyled(el, style, value)) return;
     // A number bound to the CSS name is a CSS number, a multiple of the font size, as a browser's
     // `style.setProperty` reads it. A style object's `lineHeight: 24` stays React Native's points.
     if (style === 'line-height' && typeof value === 'number') value = String(value);
+    value = closedAtEnd(value);
     const key = styleKey(style);
     if (this.setShorthand(el, key, value)) return;
     // `setDeclaration`, written out: Angular calls this for every declaration of every bound
