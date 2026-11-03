@@ -2471,6 +2471,8 @@ function unparsedValue(value, out, deferred, context) {
         `implement. Write the value it stands for.`,
     );
   }
+  const order = property === 'z-index' ? integerOfMath(parts, context) : undefined;
+  if (order !== undefined) return void (out.zIndex = order);
   // A bare number `markUnitless` tagged, which lightningcss hands over as an unknown dimension.
   const bare = parts.find((part) => /^__(?:unitless|negative)$/.test(part.value?.unit));
   if (bare) length({ type: 'dimension', value: bare.value }, context);
@@ -2765,10 +2767,106 @@ function reparsed(property, text, context) {
   return found;
 }
 
+/**
+ * Whether a term holds no percentage, which a `scale()` takes and a `z-index` does not. A length
+ * is left for the `scale()` to refuse.
+ */
+const noPercentage = (term) =>
+  term?.type === 'function'
+    ? term.value.arguments.every(noPercentage)
+    : term?.value?.type !== 'percentage';
+
+/** The strategies of a `round()` that lightningcss rounds as CSS does. */
+const ROUND_STRATEGIES = new Set(['up', 'down', 'to-zero']);
+
+/**
+ * Whether a term holds a `round()` to the nearest, which lightningcss rounds half away from zero
+ * where CSS rounds half up: `round(-1.5, 1)` is -2 for it and -1 for Chrome.
+ */
+const roundsToNearest = (term) => {
+  if (term?.type !== 'function') return false;
+  const args = term.value.arguments;
+  if (term.value.name.toLowerCase() === 'round') {
+    const first = args.find((arg) => arg.value?.type !== 'white-space');
+    if (!ROUND_STRATEGIES.has(String(first?.value?.value).toLowerCase())) return true;
+  }
+  return args.some(roundsToNearest);
+};
+
+/**
+ * A term with the interval of each `round()` in it made positive, `round(up, 3, abs(-2))`:
+ * lightningcss swaps up and down for a negative interval, where CSS rounds by its size alone.
+ */
+function positiveIntervals(term) {
+  if (term?.type !== 'function') return term;
+  const args = term.value.arguments.map(positiveIntervals);
+  const commas = args.flatMap((arg, i) => (arg.value?.type === 'comma' ? [i] : []));
+  if (term.value.name.toLowerCase() === 'round' && commas.length === 2) {
+    const interval = args.splice(commas[1] + 1);
+    args.push({ type: 'function', value: { name: 'abs', arguments: interval } });
+  }
+  return { ...term, value: { ...term.value, arguments: args } };
+}
+
+/** Whether a term holds no string, which CSS has no number for, and which `termText` unquotes. */
+const noString = (term) =>
+  term?.type === 'function'
+    ? term.value.arguments.every(noString)
+    : !(term?.type === 'token' && term.value?.type === 'string');
+
+/**
+ * Whether `parts` are one math function, of no percentage, no string and no `round()` to the
+ * nearest.
+ */
+const oneMathOfNumbers = ([math, ...rest]) =>
+  !rest.length &&
+  math?.type === 'function' &&
+  noPercentage(math) &&
+  noString(math) &&
+  !roundsToNearest(math);
+
+/** The range of a z-index, a 32-bit integer in Chrome and in React Native. */
+const Z_INDEX_MIN = -(2 ** 31);
+const Z_INDEX_MAX = 2 ** 31 - 1;
+
+/**
+ * A math function of numbers, `calc(3 / 2)`, as the integer CSS rounds it to, half up: lightningcss
+ * reads none in a `z-index`. Undefined for anything else: a number written out, which is no
+ * integer, a length or a percentage, and a `round()` to the nearest. It is worked out as a
+ * `scale()`, which takes any number.
+ */
+function integerOfMath(parts, context) {
+  if (!oneMathOfNumbers(parts)) return undefined;
+  let typed;
+  try {
+    typed = reparsed(
+      'transform',
+      `scale(${cssText(parts.map(positiveIntervals), context)})`,
+      context,
+    );
+  } catch {
+    return undefined;
+  }
+  const value = typed?.property === 'transform' ? typed.value[0]?.value?.[0]?.value : undefined;
+  if (typeof value !== 'number') return undefined;
+  // CSS reads a NaN, `sqrt(-1)`, as 0. lightningcss hands no infinity: it leaves `calc(1 / 0)`
+  // unread, and clamps `calc(infinity)` to the largest float, which is clamped again to the range.
+  if (Number.isNaN(value)) return 0;
+  return Math.min(Math.max(Math.round(value), Z_INDEX_MIN), Z_INDEX_MAX);
+}
+
 /** Unparsed terms as the CSS they were: words, numbers, lengths and functions of them. */
 function cssText(parts, context) {
   return parts.map((part) => termText(part, context)).join('');
 }
+
+/** The tokens with no value of their own, as the text they stand for. */
+const TOKEN_TEXT = {
+  'white-space': ' ',
+  comma: ',',
+  'parenthesis-block': '(',
+  'close-parenthesis': ')',
+};
 
 function termText(part, context) {
   if (part.type === 'function') {
@@ -2779,8 +2877,7 @@ function termText(part, context) {
   if (part.type === 'angle') return `${value.value}${value.type}`;
   if (part.type === 'length') return `${value.value}${value.unit}`;
   if (part.type !== 'token') throw new CssUnsupported(`${context}: '${part.type}' in a shorthand`);
-  if (value.type === 'white-space') return ' ';
-  if (value.type === 'comma') return ',';
+  if (Object.hasOwn(TOKEN_TEXT, value.type)) return TOKEN_TEXT[value.type];
   if (value.type === 'dimension') return `${value.value}${value.unit}`;
   if (value.type === 'percentage') return `${value.value * 100}%`;
   return String(value.value);

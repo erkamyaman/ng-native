@@ -708,6 +708,7 @@ const heldBy = (property: string): string =>
     'aspect-ratio': '7',
     opacity: '0.7',
     transform: 'translateX(7px)',
+    'z-index': '7',
   })[property] ?? '7px';
 
 /** What a border or an outline needs to have a width at all. */
@@ -780,11 +781,46 @@ const MATH_RANGE_CASES = (
     ['margin-left', 'calc(1px - 5px)', 'margin-left'],
     ['margin-top', 'calc(1em - 20px)', 'margin-top'],
     ['top', 'calc(1px - 5px)', 'top'],
+    ['z-index', 'calc(3 / 2)', 'z-index'],
+    ['z-index', 'calc(1 - 2.6)', 'z-index'],
+    ['z-index', 'min(-2.5, 4)', 'z-index'],
+    ['z-index', 'calc((1 + 2) * 3)', 'z-index'],
   ] as const
 ).flatMap(([property, value, measured]): OracleCase[] => [
   inRule(property, value, measured, false),
   inStyle(property, value, measured),
 ]);
+
+/**
+ * A z-index in a rule only, as the engine reads no `sqrt()` or `round()` in a style: one that comes
+ * to NaN, which CSS reads as 0, a `round()` lightningcss rounds as CSS does, with an interval of
+ * either sign, and one past the range of an integer, which Chrome clamps to that range.
+ */
+const SHEET_Z_INDEX_CASES = [
+  'sqrt(-1)',
+  'calc(sqrt(-1) + 1)',
+  'round(up, -1.5, 1)',
+  'round(to-zero, -1.5, 1)',
+  'round(up, 3, -2)',
+  'round(down, 3, -2)',
+  'round(to-zero, -3, -2)',
+  'calc(infinity)',
+  'calc(-infinity)',
+  'calc(1e20)',
+  'round(UP, -1.5, 1)',
+  'ROUND(UP, 3, -2)',
+  'calc(round(down, 3, -2) + 1)',
+].map((value) => inRule('z-index', value, 'z-index', false));
+
+/** A z-index of math with a string in it, which CSS has no number for: dropped, with a warning. */
+const SHEET_Z_INDEX_STRING_CASES = ['calc("2")', 'min("2", 3)'].map((value) =>
+  inRule('z-index', value, 'z-index', true),
+);
+
+/** A z-index of math past the range of an integer, in a style: Chrome clamps it to that range. */
+const STYLE_Z_INDEX_CASES = ['calc(1e20)', 'calc(-1e20)'].map((value) =>
+  inStyle('z-index', value, 'z-index'),
+);
 
 /**
  * A negative written out, which the same properties refuse, unlike a math function, in a rule and
@@ -850,6 +886,7 @@ const MATH_TYPE_CASES = [
       ['margin', 'calc(1px + 2)', 'margin-top'],
       ['font-size', 'calc(1px + 2)', 'font-size'],
       ['line-height', 'calc(1px + 2)', 'line-height'],
+      ['z-index', 'calc(1px + 1px)', 'z-index'],
       ['transform', 'translateX(calc(1px + 2))', 'transform'],
     ] as const
   ).flatMap(([property, value, measured]): OracleCase[] => [
@@ -979,6 +1016,9 @@ const RATIO_SIDE_CASES = [
 
 export const CASES: OracleCase[] = [
   ...MATH_RANGE_CASES,
+  ...SHEET_Z_INDEX_CASES,
+  ...STYLE_Z_INDEX_CASES,
+  ...SHEET_Z_INDEX_STRING_CASES,
   ...TOKEN_NEGATIVE_CASES,
   ...WRITTEN_NEGATIVE_CASES,
   ...MATH_TYPE_CASES,
