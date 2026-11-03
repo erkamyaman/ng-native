@@ -228,6 +228,69 @@ describe('a box as wide as its content between two insets', () => {
     assert.deepEqual(set.box('row'), [292, 70]);
   });
 
+  it('sits at the right of the room in a box that is right to left', () => {
+    const rtl = (row: string, item = 'flex: 1', text = SHORT) =>
+      scene(css('direction: rtl', `${ROW}; ${row}`, item), text);
+    for (const conformance of CONFORMANCES) {
+      const at = (row: string) =>
+        scene(css('direction: rtl', `${ROW}; ${row}`, 'flex: 1'), SHORT, conformance).box('row');
+      assert.deepEqual(at('width: fit-content; left: 0; right: 0'), [292, 70], conformance);
+      assert.deepEqual(at('max-width: max-content; left: 0; right: 0'), [292, 70], conformance);
+      assert.deepEqual(at('width: 70px; left: 0; right: 0'), [292, 70], conformance);
+    }
+    assert.deepEqual(rtl('width: fit-content; left: 10px; right: 20px').box('row'), [272, 70]);
+    const logical = 'width: fit-content; inset-inline-start: 5px; inset-inline-end: 7px';
+    assert.deepEqual(rtl(logical).box('row'), [287, 70]);
+    // A physical and a logical inset together: on one side, the later wins, and on the two
+    // sides, the start is the right.
+    for (const [both, at] of [
+      ['right: 10px; inset-inline-start: 5px', 287],
+      ['inset-inline-start: 5px; right: 10px', 282],
+      ['left: 10px; inset-inline-start: 5px', 287],
+      ['right: 20px; inset-inline-end: 7px', 272],
+    ] as const) {
+      for (const conformance of CONFORMANCES) {
+        const s = scene(
+          css('direction: rtl', `${ROW}; width: fit-content; ${both}`, 'flex: 1'),
+          SHORT,
+          conformance,
+        );
+        assert.deepEqual(s.box('row'), [at, 70], `${both} (${conformance})`);
+      }
+    }
+    // And the room is what the two of them leave.
+    const room = 'width: fit-content; left: 100px; inset-inline-start: 5px';
+    assert.deepEqual(rtl(room, 'flex: 1 1 0px', WORDS).box('row'), [100, 257]);
+    // An inset set on the element over the other form of it in a sheet: only the one it set.
+    for (const [dir, other] of [
+      ['direction: rtl', 'inset-inline-start'],
+      ['', 'inset-inline-end'],
+    ] as const) {
+      const s = scene(
+        css(dir, `${ROW}; width: fit-content; left: 100px; ${other}: 50px`, 'flex: 1 1 0px'),
+        WORDS,
+      );
+      s.engine.setProp(s.row, 'style', { right: 5 });
+      assert.deepEqual(s.box('row'), [100, 257], `${other} under right`);
+    }
+    const centred = 'width: fit-content; left: 0; right: 0; margin: 0 auto';
+    assert.deepEqual(rtl(centred).box('row'), [146, 70]);
+    assert.deepEqual(rtl('width: fit-content; left: 0; right: auto').box('row'), [0, 70]);
+    const wraps = 'width: fit-content; left: 10px; right: 60px';
+    assert.deepEqual(rtl(wraps, 'flex: 1 1 0px', WORDS).box('row'), [10, 292]);
+    // Placed by the box it is placed against, which is left to right here.
+    const own = scene(
+      css('', `${ROW}; direction: rtl; width: fit-content; left: 0; right: 0`, ''),
+      SHORT,
+    );
+    assert.deepEqual(own.box('row'), [0, 70]);
+    // And a row is laid out in its own direction, inherited or set back.
+    const row = (dir: string) =>
+      scene(css('direction: rtl', `flex-direction: row; ${dir}`, ''), SHORT);
+    assert.deepEqual(row('').box('item'), [292, 70]);
+    assert.deepEqual(row('direction: ltr').box('item'), [0, 70]);
+  });
+
   it('counts its own padding', () => {
     const padded = `${ROW}; width: fit-content; left: 0; right: 0; padding: 0 6px`;
     assert.deepEqual(scene(css('', padded, ''), SHORT).box('row'), [0, 82]);
