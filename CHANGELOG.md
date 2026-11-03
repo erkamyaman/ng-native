@@ -1,3 +1,89 @@
+## 0.21.0 (2026-11-03)
+
+### 🩹 Fixes
+
+- `background: <gradient>, var(--x)` now keeps or drops its gradients as Chrome does for a token holding a position, a size or a colour beside them, such as `10% 20%`, `center / cover` or `center red`, and a stylesheet's token can now hold a gradient. ([#1388](https://github.com/ng-native/ng-native/pull/1388))
+
+  A last layer the token holds is read as a whole: a position with an optional size, a repeat, an attachment, up to two boxes and a colour, each at most once, so `none none`, `fixed scroll` and `center center center` now make the shorthand invalid, as in Chrome. This holds for a token in a stylesheet, one set on an element, and a stylesheet fallback such as `var(--x, 10px 20px)`.
+
+  `--g: linear-gradient(...)` in a stylesheet is no longer dropped with a warning, and `background: var(--g)` draws it.
+
+  `background: var(--x)` of a colour now takes away an image a weaker rule declared, as Chrome does, where the image was left before.
+
+  `[style.background-image]` and a `background-image` in a `style` attribute now draw linear gradients and `none`, where the text was committed as it was before. Any other value, a token among them, is dropped with a warning.
+
+- A stylesheet's `background: <gradient>, var(--x, center / cover)` now keeps the gradient when `--x` is unset, as Chrome does, where a fallback of several words with no colour made the shorthand invalid. ([#1390](https://github.com/ng-native/ng-native/pull/1390))
+
+  In development such a fallback no longer draws a warning that the custom property is undefined and the declaration dropped, which it said for `var(--x, none)` too.
+
+- `@ng-native/expo` has a `TextRecognition` service whose `recognize(imageUri, { languages, level })` reads the text in an image on iOS, answering the whole text and each line with its confidence and its box in the image's pixels. ([#1385](https://github.com/ng-native/ng-native/pull/1385))
+
+  It is Vision's `VNRecognizeTextRequest`, from new native code in `@ng-native/expo`, so it needs a new development build. It runs offline and does not need Apple Intelligence. A box is measured from the image's top left corner with the orientation in the file's metadata applied. In Expo Go, on Android, on the web and in Node, `available` is false and `recognize` rejects with a `MissingModuleError`; a test provides a stand-in through `TextRecognition.SOURCE`.
+
+- `@ng-native/router` has a `TabBarInsets` service whose `bottom` signal is what the tab bar covers of the bottom of the window now, for an overlay outside the tabs: 0 while the bar is hidden or covered, or with no tabs. ([#1375](https://github.com/ng-native/ng-native/pull/1375), [#1359](https://github.com/ng-native/ng-native/issues/1359))
+
+  On iOS, each opened tab of a `<native-tabs-outlet>` holds a view of no width after its page to measure the bar, and a `<safe-area-provider>` in the app is what tells an iPad's bar at the top from one along the bottom. On iOS, a page presented in a tab's own stack counts as covering the bar. On Android, it does not, since the bar stays.
+
+  On Android, the height comes from a new native module in `@ng-native/expo`, so the app needs that package and a new development build. In Android Expo Go, which cannot load it, `bottom` stays 0. The value includes the home indicator or the system navigation bar, so an overlay takes the larger of it and the safe-area inset rather than their sum.
+
+- A `box-shadow` with no colour in a stylesheet is now drawn in the element's text colour, as Chrome draws it, where it was dropped with a warning, and a stylesheet's `font` shorthand now puts `font-style` back to `normal`, so a weaker rule's italic no longer shows through. ([#1389](https://github.com/ng-native/ng-native/pull/1389))
+
+  The shadow follows the text colour when it changes, own or inherited, as a border with no colour does. Such a shadow in a `@keyframes` frame is still dropped with a warning, as other uses of `currentColor` there are.
+
+- A box written as wide as its content in a right-to-left box, with a physical inset on one side and a logical one on the other, such as `left: 10px; inset-inline-start: 5px`, is fitted between the two as in a browser, where it was stretched between them. ([#1377](https://github.com/ng-native/ng-native/pull/1377))
+
+  In a right-to-left box `inset-inline-start` is the right, so with `left` it gives the box an inset on each side.
+
+- A development reload while a page of another tab is presented over the tab in front comes back with that page presented, where it logged `NG04002: Cannot match any routes` and came back without it. ([#1379](https://github.com/ng-native/ng-native/pull/1379), [#1368](https://github.com/ng-native/ng-native/issues/1368))
+- A `null` bound to `[width]` on `<native-toolbar-item>`, or to `[titleFontSize]`, `[largeTitleFontSize]` or `[backTitleFontSize]` on `<native-header>`, is now unset as `undefined` is, where it sent native `NaN`. ([#1378](https://github.com/ng-native/ng-native/pull/1378), [#1370](https://github.com/ng-native/ng-native/issues/1370))
+- An item with a percentage `flex-basis` and a width of its own, such as `flex: 0 0 50%; width: 10px`, is measured at that width in a row kept from stretching by `align-self: flex-start` or its column's `align-items`, as in a browser, where it was measured at its content. ([#1381](https://github.com/ng-native/ng-native/pull/1381))
+
+  The share is then taken of the width the row comes to. A change to that width, set on the element or by a class, has the row measured again; before, a row fitted to its content kept its old width until something else in it changed.
+
+- `@ng-native/router` lays a stack's hidden navigation bar out with a large title before the first `<native-header largeTitle>` page is pushed onto it, so on iOS that push no longer starts from the compact bar, with the inline title fading out and the large title dropping into place. ([#1396](https://github.com/ng-native/ng-native/pull/1396), [#1394](https://github.com/ng-native/ng-native/issues/1394))
+
+  The bar is hidden while the stack's root page has no header, and react-native-screens turns large titles on only once the push has started. A header with a large title now asks a new native module in `@ng-native/expo` to lay the hidden bar out once beforehand, so the app needs that package and a new development build. In Expo Go, which cannot load it, the first such push still starts from the compact bar.
+
+- An `aspect-ratio` of a width and a height set in a style, such as `16 / 9` or `calc(16 / 9) / 1`, is now committed as the one number native takes, and a style value or a custom property with a bracket left open, such as `translateX(1px`, is read with it closed, as Chrome reads both. ([#1386](https://github.com/ng-native/ng-native/pull/1386))
+
+  Before, a ratio with math on either side reached native as text and drew no ratio, and a value with a bracket left open was dropped or reached native as text. A ratio with a side of 0, or with `auto` in it, still reaches native as it is written.
+
+  A ratio in a style with a side CSS reads no number from, such as `1 / 0x10`, `1 / Infinity` or `1 / -2`, or with a third side, is dropped with a warning, so the stylesheet's ratio shows, as in Chrome.
+
+- A negative written out in a style, such as `width: -4px`, `-1em` or `-10vw`, on a property with no value below zero is now dropped with a warning, as Chrome drops it, so the stylesheet's value shows instead. ([#1384](https://github.com/ng-native/ng-native/pull/1384))
+
+  This covers the props a math function below zero is clamped on: sizes, padding, font size, line height, border widths and radii, gaps, flex basis, grow and shrink, and aspect ratio. A negative `opacity` is kept, since CSS clamps it. This includes a binding such as `[style.width.px]` that comes out negative, which Angular sends as `-4px`. A style object's own numbers, such as `{ width: -4 }`, are React Native's and are unchanged.
+
+  A shorthand in a style with one part a browser drops, such as `padding: 1px -1px` or `padding: 1px calc(1px + 2)`, is now dropped whole with a warning, where its other sides were kept before.
+
+- A `font-size` of 0 no longer throws on Android or draws its text at the default size on iOS: the engine commits a size of 0.001 in its place, too small to see. ([#1376](https://github.com/ng-native/ng-native/pull/1376), [#1369](https://github.com/ng-native/ng-native/issues/1369))
+
+  React Native on Android requires a font size above zero, so `font-size: 0`, `0em` or a `calc()` clamped to 0 threw `FontSize should be a positive value`, from a stylesheet, an inline style or a token alike. Android draws no text smaller than one device pixel, so there the text leaves a faint mark one pixel tall in a line box about 1dp tall, where Chrome leaves no box.
+
+- `@ng-native/router` lets a `canDeactivate` guard decide a native pop of a pushed screen, and follows a screen native has already dismissed without asking its guards, so a refusing guard no longer leaves the url on a screen that is gone. ([#1380](https://github.com/ng-native/ng-native/pull/1380), [#1366](https://github.com/ng-native/ng-native/issues/1366), [#1367](https://github.com/ng-native/ng-native/issues/1367))
+
+  The pushed screen in front holds `preventNativeDismiss` while leaving it would run a guard, as a presented screen already did, and lets go once it would not. On iOS a swipe back, the back button and a pick from its menu then go to the router, where the guard answers, as Android's Back button and header back arrow already did. On iOS a held push cannot be swiped back interactively: the swipe asks rather than following the finger, as with React Navigation's `usePreventRemove`.
+
+  A screen native dismisses anyway, such as a `formSheet` dragged down or closed by a tap outside it on Android, is followed without asking its guards or those of the routes showing inside it. A refusal used to keep the router on the dismissed screen, where its guard went on refusing the navigations that leave it, such as a tab switch or presenting another screen.
+
+  A stack inside a presented screen no longer passes on the hold of a guarded screen inside it as the page's own refusal, so a swipe down on the presented screen asks about leaving the whole screen.
+
+- On iOS, a `position: fixed` box as wide as its content wraps its text in its page, as in a browser and on Android, where it wrapped in a narrower box it was written in, and on both platforms a fixed box committed under its page keeps its static position on an axis it has no inset on. ([#1382](https://github.com/ng-native/ng-native/pull/1382))
+
+  Such a box, one with no width of its own (`width: auto` counts as none) and not stretched between a `left` and a `right`, is now committed under its page on iOS, as a fixed box inside a scroll view already was. There it draws over the page's other content and an ancestor's `opacity` or `transform` no longer reaches it. On iOS a fixed box goes back under its parent once nothing holds it under its page: it has a width of its own or is stretched between a `left` and a `right`, and nothing between it and its page scrolls or clips, whether the box itself or a box it is in changed. A fixed or absolute box is also taken out from under its parent when a box it is in starts to clip by an `overflow` set on that box as a value, and an absolute one goes back as that box stops, where before only a class or a rule doing so moved it.
+
+  On an axis with no inset, a fixed box under its page was placed at the page's start. It is now placed where a browser has it, as the only child of the box it is written in: inside that box's padding and border in points, aligned as that box aligns its children, and from the right in a box laid out right to left. Inside a scroll view it still starts at the page's start on that axis, on both platforms. An absolute box committed under the box it is placed against, past a parent that clips, is placed at its static position the same way.
+
+- A box in the flow that is `width: fit-content` and holds a percentage width or an item that grows is no narrower than content that cannot get narrower, and overflows its container as in a browser, where it was held to the container's width. ([#1383](https://github.com/ng-native/ng-native/pull/1383))
+
+  For example, a `w-fit` row holding a `width: 500px` box and a `flex-1` label in a 362 point column is 530 wide, and the label keeps its 30, where the row was 362 wide and the label had no width. While such a box is measured, the items whose share is set aside no longer shrink, and nothing out of the flow in it counts. A box in it with a width in points counts at that width, not for what overflows it, one with a `max-width` in points counts no wider than that, an item of a row with a `flex-basis` in points that does not grow counts at that basis, and a box moved by a `left` or `right` in points counts where it was before the move. Both hold for a box on a line, such as an `inline-flex` one, as well. A `width: fit-content` box between two insets, and one holding no percentage width or growing item, is still held to the room it has.
+
+  A change to a box's `box-sizing` is now taken as one that moves boxes, as a change to its padding is, so a box around it that is as wide as its content follows it, where it kept the width it had. On iOS and Android the box whose `box-sizing` alone changed still keeps its old size, since React Native's Yoga does not compare `boxSizing`.
+
+### ❤️ Thank You
+
+- Ashley Hunter
+
 ## 0.20.0 (2026-11-02)
 
 ### 🩹 Fixes
