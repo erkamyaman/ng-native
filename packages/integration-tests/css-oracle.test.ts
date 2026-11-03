@@ -207,8 +207,21 @@ function assertFamily(style: Record<string, unknown>, browser: string): void {
   assert.equal(style['fontFamily'], quoted ?? browser.split(',')[0], 'font-family');
 }
 
+/**
+ * A font size as a commit sends it, read as the browser has it: a size of 0 is sent as one too
+ * small to see, which native takes (`UNSEEN_FONT_SIZE` in the engine, and
+ * `css-font-size-zero.test.ts`). What the resolver settles is compared as it is.
+ */
+const sentFontSize = (size: unknown, browser: string): unknown =>
+  browser === '0px' && size === 0.001 ? 0 : size;
+
 /** One of a case's extra properties against what the browser computed for it. */
-function assertExtra(property: ExtraProperty, style: Record<string, unknown>, browser: string) {
+function assertExtra(
+  property: ExtraProperty,
+  style: Record<string, unknown>,
+  browser: string,
+  committed: boolean,
+) {
   if (property === 'display') {
     // Every view is flex when display is unset. A block container and a grid are kept as the
     // browser has them, for the engine to lay out, and so are none and contents and the boxes
@@ -227,7 +240,8 @@ function assertExtra(property: ExtraProperty, style: Record<string, unknown>, br
   // A length is a number of points here, and `2px` in the browser. An unset one is native's
   // initial value, as the browser reports its own.
   const read = readFrom(property, style).map((key) => style[key]);
-  const ours = read.find((value) => value != null) ?? NATIVE_INITIAL[property];
+  const found = read.find((value) => value != null) ?? NATIVE_INITIAL[property];
+  const ours = committed && property === 'font-size' ? sentFontSize(found, browser) : found;
   const unit = UNITLESS.has(property) ? '' : 'px';
   const value = typeof ours === 'number' ? `${ours}${unit}` : ours;
   assert.equal(value, legacyColour(browser), property);
@@ -326,7 +340,7 @@ describe('what a browser does with the same stylesheet', () => {
           assert.equal(style['aspectRatio'], parseFloat(browser), property);
         } else if (property === 'transform') {
           assert.equal(matrixOf(style['transform'] as TransformList), browser, property);
-        } else assertExtra(property, style, browser);
+        } else assertExtra(property, style, browser, test.inline !== undefined);
       }
     });
   });
