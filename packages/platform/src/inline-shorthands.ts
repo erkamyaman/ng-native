@@ -8,6 +8,7 @@ import {
   splitLayers,
   tokenFromValue,
   type DeferredDeclaration,
+  type TokenValue,
 } from '@ng-native/fabric';
 
 /**
@@ -309,14 +310,18 @@ function wholeToken(layer: string, on: string): Reading {
   return { set: [], deferred: { ...token, props: ['backgroundColor', IMAGE], layers: true } };
 }
 
+/** The layers a token's fallback is, through any `var()` in it, whose names are listed already. */
+function layerFallback(layer: string): { fallbackLayer?: TokenValue } {
+  let fallbackLayer = tokenFromValue(layer);
+  while (fallbackLayer?.alias) fallbackLayer = fallbackLayer.fallback;
+  return fallbackLayer ? { fallbackLayer } : {};
+}
+
 /** Gradients over a token, which is the colour under them. */
 function layersOverToken(layers: readonly string[], on: string): Reading {
   const images = backgroundLayers(layers.slice(0, -1).join(','));
   const token = backgroundToken(layers.at(-1)!, on);
   if (!images || images.color !== undefined || !token) return NO_BACKGROUND;
-  // Through any `var()` in its fallback, whose names the declaration already lists.
-  let fallbackLayer = tokenFromValue(layers.at(-1)!);
-  while (fallbackLayer?.alias) fallbackLayer = fallbackLayer.fallback;
   return {
     set: background(TRANSPARENT, images.images).slice(2),
     deferred: {
@@ -324,7 +329,7 @@ function layersOverToken(layers: readonly string[], on: string): Reading {
       props: ['backgroundColor', IMAGE],
       layers: true,
       over: { [IMAGE]: images.images },
-      ...(fallbackLayer ? { fallbackLayer } : {}),
+      ...layerFallback(layers.at(-1)!),
     },
   };
 }
@@ -340,14 +345,22 @@ function readBackground(text: string, on: string): Reading {
   return read ? { set: background(read.color ?? TRANSPARENT, read.images) } : NO_BACKGROUND;
 }
 
-/** `background-image`, which native names `experimental_backgroundImage`: gradients or `none`. */
-function readBackgroundImage(text: string): Reading {
+/**
+ * `background-image`, which native names `experimental_backgroundImage`: gradients or `none`, or a
+ * token holding them, read on the node as a `background-image: var()` in a stylesheet is.
+ */
+function readBackgroundImage(text: string, on: string): Reading {
   if (/^none$/i.test(text)) return { set: [[IMAGE, []]] };
+  const token = backgroundToken(text, on);
+  if (token) {
+    const images = { ...token, props: [IMAGE], layers: 'images' as const };
+    return { set: [], deferred: { ...images, ...layerFallback(text) } };
+  }
   const read = hasToken(text) ? undefined : backgroundLayers(`${text}, transparent`);
   // The colour is the one written here: a colour of the text's is read as a gradient, and refused.
   return read
     ? { set: [[IMAGE, read.images]] }
-    : 'a background-image is linear gradients or none, with no token';
+    : 'a background-image is linear gradients or none, or one token holding them';
 }
 
 const FONT_STYLE = /^(?:normal|italic|oblique)$/i;

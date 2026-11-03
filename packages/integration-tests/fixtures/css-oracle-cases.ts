@@ -527,6 +527,114 @@ const BACKGROUND_TOKEN_MORE_CASES: OracleCase[] = [
   ]),
 ];
 
+/**
+ * A background over a weaker colour, in a text colour, with `--x` bound on the probe or, where
+ * `bound` is false, written in the stylesheet: `currentColor` in a token is the colour where the
+ * token is used.
+ */
+const currentColourLayer = (written: string, token: string, bound: boolean): OracleCase => ({
+  name: `background: ${written} with --x of ${token}, ${bound ? 'bound' : 'in the stylesheet'}`,
+  css:
+    '#probe { color: rgb(1, 2, 3); background-color: rgb(0, 255, 0); ' +
+    `${bound ? '' : `--x: ${token}; `}background: ${written} }`,
+  tree: probe({ name: 'view' }),
+  ...(bound ? { bound: { '--x': token } } : {}),
+  extra: ['background-image'],
+});
+
+/** Three layers and a colour, which `background-image: var()` has to take the place of. */
+const WEAKER_BACKGROUND = `#probe { background-color: rgb(0, 255, 0); background-image: ${GRADIENT}, ${GRADIENT}, ${GRADIENT} }`;
+
+/** `background-image: <use>` over `WEAKER_BACKGROUND`, with `--g` bound on the probe. */
+const imageToken = (use: string, token: string | null): OracleCase => ({
+  name: `background-image: ${use} with --g of ${token}, bound on the element`,
+  css: `${WEAKER_BACKGROUND} #probe.c { background-image: ${use} }`,
+  tree: probe({ name: 'view', classes: ['c'] }),
+  ...(token === null ? {} : { bound: { '--g': token } }),
+  extra: ['background-image'],
+});
+
+/** `imageToken`, with `--g` written in the stylesheet. */
+const imageTokenInSheet = (use: string, token: string): OracleCase => ({
+  name: `background-image: ${use} with --g of ${token}, in the stylesheet`,
+  css: `${WEAKER_BACKGROUND} #probe.c { --g: ${token}; background-image: ${use} }`,
+  tree: probe({ name: 'view', classes: ['c'] }),
+  extra: ['background-image'],
+});
+
+/** The images a `background-image: var(--g)` token holds, in a sheet and bound on an element. */
+const IMAGE_TOKENS = [
+  GRADIENT,
+  `${GRADIENT}, ${TOKEN_GRADIENT}`,
+  'none',
+  'rgb(1, 2, 3)',
+  `${GRADIENT}, rgb(1, 2, 3)`,
+  `${GRADIENT}, transparent`,
+  'center',
+];
+
+/**
+ * A token's last layer in `currentColor`, `background-image: var()`, and the layers a
+ * background's tokens hold, each in a stylesheet and on an element.
+ */
+const BACKGROUND_LAYER_TOKEN_CASES: OracleCase[] = [
+  ...['center currentColor', 'currentcolor no-repeat', `${GRADIENT}, currentColor`].flatMap(
+    (token) => [
+      currentColourLayer(`${GRADIENT}, var(--x)`, token, true),
+      currentColourLayer(`${GRADIENT}, var(--x)`, token, false),
+      currentColourLayer('var(--x)', token, true),
+      currentColourLayer('var(--x)', token, false),
+    ],
+  ),
+  currentColourLayer('var(--x)', `${GRADIENT} currentColor`, false),
+  {
+    name: 'background: a gradient over an unset token falling back to center currentColor',
+    css: `#probe { color: rgb(1, 2, 3); background: ${GRADIENT}, var(--x, center currentColor) }`,
+    tree: probe({ name: 'view' }),
+    extra: ['background-image'],
+  },
+  {
+    name: 'background: a gradient over a token of center currentColor, in the colour inherited',
+    css:
+      '.outer { color: rgb(4, 5, 6) } ' +
+      `#probe { --x: center currentColor; background: ${GRADIENT}, var(--x) }`,
+    tree: { name: 'view', classes: ['outer'], children: [probe({ name: 'view' })] },
+    extra: ['background-image'],
+  },
+  inlineValue(
+    { background: `${GRADIENT}, var(--x)` },
+    '#probe { color: rgb(1, 2, 3); --x: center currentColor }',
+    ['background-image'],
+  ),
+  inlineValue(
+    { background: `${GRADIENT}, currentColor` },
+    '#probe { color: rgb(1, 2, 3); background-color: rgb(0, 255, 0) }',
+    ['background-image'],
+  ),
+  ...IMAGE_TOKENS.flatMap((token) => [
+    imageToken('var(--g)', token),
+    imageTokenInSheet('var(--g)', token),
+  ]),
+  imageToken('var(--g)', null),
+  imageToken(`var(--g, ${GRADIENT})`, null),
+  imageToken('var(--g, none)', null),
+  imageToken(`var(--g, var(--h, ${GRADIENT}))`, null),
+  imageToken(`var(--g, ${GRADIENT})`, TOKEN_GRADIENT),
+  imageTokenInSheet('var(--g, none)', GRADIENT),
+  ...['var(--g)', `var(--g, ${GRADIENT})`, 'var(--h)', 'var(--h, none)'].map((use) =>
+    inlineValue({ 'background-image': use }, `${WEAKER_BACKGROUND} #probe { --g: ${GRADIENT} }`, [
+      'background-image',
+    ]),
+  ),
+  ...[`var(--h, ${GRADIENT})`, 'var(--c)'].map((use) =>
+    inlineValue(
+      { 'background-image': use },
+      `${WEAKER_BACKGROUND} #probe { --c: ${GRADIENT}, rgb(1, 2, 3) }`,
+      ['background-image'],
+    ),
+  ),
+];
+
 const INLINE_SHORTHAND_CASES: OracleCase[] = [
   inlineOver(
     'an inline padding is over a padding-top in a rule',
@@ -1713,6 +1821,7 @@ export const CASES: OracleCase[] = [
   ...INLINE_VALUE_SHORTHAND_CASES,
   ...BACKGROUND_TOKEN_CASES,
   ...BACKGROUND_TOKEN_MORE_CASES,
+  ...BACKGROUND_LAYER_TOKEN_CASES,
   ...SHADOW_COLOUR_CASES,
   ...SHEET_FONT_CASES,
   {

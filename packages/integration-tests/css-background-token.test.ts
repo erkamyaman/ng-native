@@ -643,3 +643,109 @@ describe('a background token that is no colour, as Chrome reads it', () => {
     assert.equal(count(image()), 0);
   });
 });
+
+describe('currentColor in the last layer a token holds', () => {
+  const LAYERED = '.a { background: linear-gradient(red, blue), var(--x) }';
+  const count = (value: unknown) => (value as unknown[] | undefined)?.length ?? 0;
+
+  it('paints it in the colour the element inherits, and follows that colour', () => {
+    const { engine, outer, image, background } = tree(
+      '.p { color: rgb(1, 2, 3) } .q { color: rgb(4, 5, 6) } ' +
+        '.a { --x: center currentColor; background: linear-gradient(red, blue), var(--x) }',
+      ['p'],
+    );
+    assert.equal(count(image()), 1);
+    assert.equal(background(), 'rgb(1, 2, 3)');
+    engine.removeClass(outer, 'p');
+    engine.addClass(outer, 'q');
+    engine.commit();
+    assert.equal(background(), 'rgb(4, 5, 6)');
+  });
+
+  it('follows a token set on the element, changed and taken away', () => {
+    const { engine, node, image, background } = tree(`.a { color: rgb(1, 2, 3) } ${LAYERED}`);
+    engine.setCustomProperty(node, '--x', 'center currentColor');
+    engine.commit();
+    assert.equal(count(image()), 1);
+    assert.equal(background(), 'rgb(1, 2, 3)');
+    engine.setCustomProperty(node, '--x', 'center rgb(7, 8, 9)');
+    engine.commit();
+    assert.equal(background(), 'rgb(7, 8, 9)');
+    engine.setCustomProperty(node, '--x', 'linear-gradient(to right, red, blue), currentColor');
+    engine.commit();
+    assert.equal(count(image()), 2);
+    assert.equal(background(), 'rgb(1, 2, 3)');
+    engine.setCustomProperty(node, '--x', null);
+    engine.commit();
+    assert.equal(count(image()), 0);
+    assert.equal(background() ?? undefined, undefined);
+  });
+
+  it("takes the element's own colour where a token sets it, whichever rule comes first", () => {
+    const { engine, node, background } = tree(
+      `${LAYERED} .a { --x: currentColor no-repeat } .a { --c: rgb(9, 8, 7); color: var(--c) }`,
+    );
+    assert.equal(background(), 'rgb(9, 8, 7)');
+    engine.setCustomProperty(node, '--c', 'rgb(6, 5, 4)');
+    engine.commit();
+    assert.equal(background(), 'rgb(6, 5, 4)');
+  });
+});
+
+describe('background-image: var()', () => {
+  const count = (value: unknown) => (value as unknown[] | undefined)?.length ?? 0;
+  const WEAKER =
+    '.a { background-color: rgb(0, 255, 0); background-image: linear-gradient(lime, red) }';
+
+  it('compiles with no warning and draws the images a stylesheet token holds', () => {
+    const { image, background, warnings } = tree(
+      `${WEAKER} .a { --g: linear-gradient(red, blue), linear-gradient(to right, red, blue); ` +
+        'background-image: var(--g) }',
+    );
+    assert.deepEqual(warnings, []);
+    assert.equal(count(image()), 2);
+    assert.equal(background(), 'rgb(0, 255, 0)', 'the colour is left as it was');
+  });
+
+  it('follows a token set on the element, changed and taken away', () => {
+    const { engine, node, image } = tree(`${WEAKER} .a { background-image: var(--g) }`);
+    assert.equal(count(image()), 0, 'an unset token leaves no image');
+    engine.setCustomProperty(node, '--g', 'linear-gradient(to right, red, blue)');
+    engine.commit();
+    assert.equal((image() as { direction: { value: number } }[])[0]!.direction.value, 90);
+    engine.setCustomProperty(node, '--g', 'linear-gradient(red, blue), rgb(1, 2, 3)');
+    engine.commit();
+    assert.equal(image(), null, 'a colour makes it invalid, and the image is taken away');
+    engine.setCustomProperty(node, '--g', 'linear-gradient(red, blue), linear-gradient(red, blue)');
+    engine.commit();
+    assert.equal(count(image()), 2);
+    engine.setCustomProperty(node, '--g', null);
+    engine.commit();
+    assert.equal(image(), null);
+  });
+
+  it('follows a token on the parent when it changes', () => {
+    const { engine, outer, image } = tree(
+      '.p { --g: linear-gradient(red, blue) } .q { --g: none } .a { background-image: var(--g) }',
+      ['p'],
+    );
+    assert.equal(count(image()), 1);
+    engine.removeClass(outer, 'p');
+    engine.addClass(outer, 'q');
+    engine.commit();
+    assert.equal(image(), null);
+  });
+
+  it('gives way to an image a later rule declares, and stands when it is important', () => {
+    const later = tree(
+      '.a { --g: linear-gradient(red, blue); background-image: var(--g) } ' +
+        '.a { background-image: linear-gradient(lime, red), linear-gradient(lime, red) }',
+    );
+    assert.equal(count(later.image()), 2);
+    const important = tree(
+      '.a { --g: linear-gradient(red, blue); background-image: var(--g) !important } ' +
+        '.a { background-image: none }',
+    );
+    assert.equal(count(important.image()), 1);
+  });
+});

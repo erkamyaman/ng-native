@@ -135,6 +135,16 @@ describe('a token holding platform-color()', () => {
       const { nativeID: _d, ...expected } = s.committed(direct);
       const { nativeID: _t, ...actual } = s.committed(token);
       assert.ok(Object.keys(expected).length > 0, `${property} commits something written out`);
+      if (property === 'background') {
+        // Written out, the shorthand also puts back the image and its place, as `background: red`
+        // does. A `background: var()` of a colour token unsets the image, as one of a written
+        // colour does: neither draws one.
+        const { experimental_backgroundImage: image, ...colour } = expected;
+        assert.deepEqual(image, []);
+        assert.equal(actual['experimental_backgroundImage'] ?? undefined, undefined);
+        assert.deepEqual(actual['backgroundColor'], colour['backgroundColor']);
+        return;
+      }
       assert.deepEqual(actual, expected);
     });
   }

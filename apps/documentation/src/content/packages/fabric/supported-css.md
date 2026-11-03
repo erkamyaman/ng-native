@@ -124,12 +124,16 @@ color optional. A radial gradient with tokens in its stops takes its shape, size
 keywords and positions (`circle closest-side at 50% 18%`), not an explicit radius; a position
 can be a token too (`at var(--x) 30%`), with a fallback after its name. `background-image` takes
 gradients only - a `url()` in `background-image` is dropped, because there is no image loader
-behind that prop; put an image in an `<image>` element instead.
+behind that prop; put an image in an `<image>` element instead. `background-image: var(--g)` draws
+the gradients its token holds, in a stylesheet's token, one set on an element or a fallback. A
+token of `none`, one with a color in it, `linear-gradient(...), red`, or one that holds no image
+leaves no image, as in a browser, where such a value is invalid.
 
 The `background` shorthand takes the same gradients, one or several, with a position, size,
 repeat and color beside them: `background: linear-gradient(red, blue) center / cover no-repeat`.
-What it leaves out is back at its initial value, as in a browser: `background: red` takes away a
-gradient an earlier rule gave, and `background: linear-gradient(red, blue)` a color. A shorthand
+What it leaves out is back at its initial value, as in a browser: `background: red` or
+`background: platform-color(link)` takes away a gradient an earlier rule gave, and
+`background: linear-gradient(red, blue)` a color. A shorthand
 that is a token, `background: var(--surface)`, is the exception described below.
 
 `background-clip: text` is not a value any native view takes. It marks its rule as one for
@@ -194,9 +198,9 @@ some shorthands than a stylesheet. `border`, its sides and logical sides, `outli
 stylesheet gives them. A line takes a token beside written parts, `border: 1px solid var(--c)`,
 and a `background` takes one as all of it or as its last layer. In these, `background` is a color
 or linear gradients, with no position, size, repeat or `url()`, and no token in a gradient, and
-`background-image` is linear gradients or `none`, with no token. `box-shadow` takes a token only
-as all of it, lengths in `px` or `rem` only, and a color written out, not a `color-mix()`. `font`
-has no `small-caps`, stretch, keyword size or system font.
+`background-image` is linear gradients or `none`, or a token as all of it. `box-shadow` takes a
+token only as all of it, lengths in `px` or `rem` only, and a color written out, not a
+`color-mix()`. `font` has no `small-caps`, stretch, keyword size or system font.
 A value outside that is dropped, with a warning in development.
 
 `skewX()` and `skewY()` are drawn on iOS only. React Native on Android breaks a transform down into
@@ -540,7 +544,8 @@ colour. A token or a fallback that is a valid last layer with no image, a length
 `none`, or a position, size, repeat, attachment and box with a colour or without, keeps the
 gradients, under its colour if it has one. Each part comes at most once, so `none none` or
 `fixed scroll` is invalid. A gradient the token holds is drawn as one more layer under the written
-ones, at the initial position, size and repeat.
+ones, at the initial position, size and repeat. A `currentColor` in the token's last layer,
+`center currentColor`, is the text color where the token is used.
 A bare `background: var(--surface)` takes away an image a weaker rule declared, whatever its token
 holds, as in a browser.
 `flex: var(--grow)` is `flex: <number>`: it grows by the token, shrinks by 1, and starts from a
