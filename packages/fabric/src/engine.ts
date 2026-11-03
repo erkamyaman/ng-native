@@ -4773,7 +4773,11 @@ function aroundALine(props: Record<string, unknown>): number {
  * Yoga's own, a logical side over the physical one, and the start on the left unless the box is
  * right to left. A block's start and end are under the top and bottom.
  */
-function sides(props: Record<string, unknown>, size: 'Height' | 'Width'): string[][] {
+function sides(
+  props: Record<string, unknown>,
+  size: 'Height' | 'Width',
+  rtl = props['direction'] === 'rtl',
+): string[][] {
   if (size === 'Height') {
     const block = ['paddingBlock', 'paddingVertical', 'padding'];
     return [
@@ -4783,7 +4787,6 @@ function sides(props: Record<string, unknown>, size: 'Height' | 'Width'): string
       ['borderBottomWidth', 'borderWidth'],
     ];
   }
-  const rtl = props['direction'] === 'rtl';
   const inline = ['paddingInline', 'paddingHorizontal', 'padding'];
   return (['Left', 'Right'] as const).flatMap((physical, at) => {
     const logical = (at === 0) !== rtl ? 'Start' : 'End';
@@ -4795,9 +4798,9 @@ function sides(props: Record<string, unknown>, size: 'Height' | 'Width'): string
 }
 
 /** The points of padding and border across a view's height or width, where each is a length. */
-function around(props: Record<string, unknown>, size: 'Height' | 'Width'): number {
+function around(props: Record<string, unknown>, size: 'Height' | 'Width', rtl?: boolean): number {
   let total = 0;
-  for (const keys of sides(props, size)) {
+  for (const keys of sides(props, size, rtl)) {
     const found = keys.map((key) => props[key]).find((value) => value != null);
     if (typeof found === 'number') total += found;
   }
@@ -4821,6 +4824,71 @@ function leastWins(props: Record<string, unknown>, size: 'Height' | 'Width'): vo
   let least = typeof written === 'number' ? written : 0;
   if (props['boxSizing'] !== 'content-box') least = Math.max(least, around(props, size));
   if (most < least) props[MOST[size]] = least;
+}
+
+/** The sizes across a box's width and down its height, as committed. */
+const SIZES = {
+  Width: ['width', 'minWidth', 'maxWidth'],
+  Height: ['height', 'minHeight', 'maxHeight'],
+} as const;
+
+/**
+ * A content box's sizes in points as its border box's, with its padding and border added, and
+ * its `box-sizing` committed as `border-box`: the same box. React Native's Yoga leaves
+ * `boxSizing` out of the style it compares (`Style::operator==`, read by `updateYogaProps`), so a
+ * view whose box-sizing alone changes is not laid out again and keeps its old size, where a
+ * changed size is compared and laid out.
+ *
+ * ponytail: a box with a size or a side of padding or border that is not in points is left a
+ * content box, and keeps its old size natively when its box-sizing alone changes. Give it a size
+ * Yoga compares that changes with it if one is seen. A basis is committed as written: by here
+ * only a box out of the flow, which Yoga reads none of, or a grid item being measured has one.
+ */
+function contentAsBorderBox(props: Record<string, unknown>, rtl: boolean): void {
+  const inPoints = (value: unknown) => value == null || typeof value === 'number';
+  const noShare = (value: unknown) => value === 'auto' || inPoints(value);
+  for (const size of ['Width', 'Height'] as const) {
+    if (!SIZES[size].every((key) => noShare(props[key]))) return;
+    const found = sides(props, size, rtl).map((keys) => keys.map((key) => props[key]).find(isSet));
+    if (!found.every(inPoints)) return;
+  }
+  const frame = { Width: around(props, 'Width', rtl), Height: around(props, 'Height', rtl) };
+  const ratio = props['aspectRatio'];
+  if (isSet(ratio) && ratio !== 'auto') {
+    const kept = borderBoxRatio(props, ratio, frame.Width, frame.Height);
+    if (kept === undefined) return;
+    props['aspectRatio'] = kept;
+  }
+  for (const size of ['Width', 'Height'] as const) {
+    for (const key of SIZES[size]) {
+      if (typeof props[key] === 'number') props[key] = (props[key] as number) + frame[size];
+    }
+  }
+  props['boxSizing'] = 'border-box';
+}
+
+/**
+ * A content box's ratio as its border box's, which is what Yoga takes the ratio of once the box
+ * is committed as one: `width: 100px; padding: 0 20px; aspect-ratio: 2` is 140 by 50. Undefined
+ * where that cannot be told here, which leaves the box a content box: neither size is in points,
+ * or there is a least or a most size, which Yoga holds the ratio's size to after it works the
+ * other out.
+ */
+function borderBoxRatio(
+  props: Record<string, unknown>,
+  ratio: unknown,
+  across: number,
+  down: number,
+): number | undefined {
+  if (typeof ratio !== 'number' || ratio <= 0) return undefined;
+  // No padding or border: the two boxes are one, and a size of 0 would make the ratio 0 / 0.
+  if (across === 0 && down === 0) return ratio;
+  const bounds = ['minWidth', 'maxWidth', 'minHeight', 'maxHeight'];
+  if (bounds.some((key) => isSet(props[key]) && props[key] !== 'auto')) return undefined;
+  const [width, height] = [props['width'], props['height']];
+  if (typeof width === 'number') return (width + across) / (width / ratio + down);
+  if (typeof height === 'number') return (height * ratio + across) / (height + down);
+  return undefined;
 }
 
 /**
@@ -12309,6 +12377,10 @@ export class Engine implements HostEngine {
     } else {
       if (merged['maxHeight'] !== undefined) leastWins(merged, 'Height');
       if (merged['maxWidth'] !== undefined) leastWins(merged, 'Width');
+    }
+    // Last of the sizes, once each is written: a content box is committed as its border box.
+    if (merged['boxSizing'] === 'content-box') {
+      contentAsBorderBox(merged, this.styles.readsRightToLeft(merged));
     }
     keptForPaint(node, merged);
     return merged;
