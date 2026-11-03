@@ -379,6 +379,184 @@ describe('a box as wide as its content between two insets', () => {
   });
 });
 
+describe('a box as wide as its content that holds more than the room', () => {
+  /** `item` holds nothing and is 500 wide; `share`, after it, holds three letters. */
+  function overflowing(row: string, share: string, conformance: Conformance = 'classic') {
+    const s = scene(
+      `${css('', row, 'width: 500px')} .share { ${share} } .free { flex: 1 }`,
+      '',
+      conformance,
+    );
+    s.engine.removeChild(s.item, s.item.childList[0]!);
+    const node = s.engine.createElement('view');
+    s.engine.setClasses(node, 'share');
+    s.engine.setProp(node, 'nativeID', 'share');
+    const words = s.engine.createElement('text');
+    s.engine.appendChild(words, s.engine.createText('abc'));
+    s.engine.appendChild(node, words);
+    s.engine.appendChild(s.row, node);
+    return { ...s, share: node };
+  }
+  const BETWEEN = 'position: absolute; left: 0; right: 0';
+
+  it('reaches past the room, as wide as what it holds', () => {
+    for (const conformance of CONFORMANCES) {
+      for (const [row, share, width, shared] of [
+        ['flex-direction: row; width: fit-content', 'flex: 1', 530, 30],
+        ['flex-direction: row; width: fit-content', 'width: 50%', 530, 265],
+        ['width: fit-content', 'width: 50%', 500, 250],
+        ['flex-direction: row; width: fit-content; padding: 0 6px', 'flex: 1', 542, 30],
+      ] as const) {
+        const s = overflowing(row, share, conformance);
+        const named = `${row}, ${share} (${conformance})`;
+        assert.equal(s.box('row')[1], width, named);
+        assert.equal(s.box('share')[1], shared, named);
+      }
+    }
+  });
+
+  it('is held to the room where it is capped at its content, which is no wider', () => {
+    for (const row of ['max-width: max-content', `max-width: max-content; ${BETWEEN}`]) {
+      const s = overflowing(`flex-direction: row; ${row}`, 'flex: 1');
+      assert.equal(s.box('row')[1], 362, row);
+    }
+  });
+
+  it('counts nothing in it that is out of the flow', () => {
+    const s = overflowing('flex-direction: row; width: fit-content', 'flex: 1');
+    s.engine.setProp(s.item, 'style', { position: 'absolute', left: 600, width: 50 });
+    assert.equal(s.box('row')[1], 30);
+  });
+
+  /** A box in `parent`, styled `style`. */
+  function inside(s: ReturnType<typeof overflowing>, parent: EngineNode, style: object) {
+    const node = s.engine.createElement('view');
+    s.engine.setProp(node, 'style', style);
+    s.engine.appendChild(parent, node);
+    return node;
+  }
+
+  it('counts a box in it where it is before a relative offset moves it', () => {
+    // Chrome: 530 for each, as the offset moves the box and not what it contributes.
+    for (const conformance of CONFORMANCES) {
+      const s = overflowing('flex-direction: row; width: fit-content', 'flex: 1', conformance);
+      s.engine.setProp(s.item, 'style', { left: 600 });
+      assert.equal(s.box('row')[1], 530, `an item moved (${conformance})`);
+      s.engine.setProp(s.item, 'style', { width: 'auto', left: 600 });
+      inside(s, s.item, { width: 500, height: 10 });
+      assert.equal(s.box('row')[1], 530, `a box in an item moved (${conformance})`);
+      s.engine.setProp(s.item, 'style', { width: 'auto' });
+      inside(s, s.item, { width: 400, height: 10, left: 300 });
+      assert.equal(s.box('row')[1], 530, `a box moved in an item (${conformance})`);
+    }
+  });
+
+  it('counts a box in it with a width of its own at that width, not what overflows it', () => {
+    // Chrome: 530 in a row, 500 in a column, and 530 under an item as wide as its content.
+    for (const conformance of CONFORMANCES) {
+      const s = overflowing('flex-direction: row; width: fit-content', 'flex: 1', conformance);
+      inside(s, s.item, { width: 900, height: 10 });
+      assert.equal(s.box('row')[1], 530, `in a row (${conformance})`);
+      s.engine.setProp(s.item, 'style', { width: 'auto' });
+      const own = s.item.childList[0]!;
+      s.engine.setProp(own, 'style', { width: 500, height: 10 });
+      inside(s, own, { width: 900, height: 10 });
+      assert.equal(s.box('row')[1], 530, `further down (${conformance})`);
+      const column = overflowing('width: fit-content', 'width: 50%', conformance);
+      inside(column, column.item, { width: 900, height: 10 });
+      assert.equal(column.box('row')[1], 500, `in a column (${conformance})`);
+    }
+  });
+
+  it('counts a box in it capped at a width no wider than that cap', () => {
+    // Chrome: a box capped at 500 holding 900 counts 500, under a minimum of 600 counts that,
+    // under a cap of 50% counts all of it, and holding 400 counts the 400.
+    for (const conformance of CONFORMANCES) {
+      const s = overflowing('flex-direction: row; width: fit-content', 'flex: 1', conformance);
+      const named = (what: string) => `${what} (${conformance})`;
+      s.engine.setProp(s.item, 'style', { width: 'auto', maxWidth: 500 });
+      const held = inside(s, s.item, { width: 900, height: 10 });
+      assert.equal(s.box('row')[1], 530, named('an item capped'));
+      s.engine.setProp(s.item, 'style', { width: 'auto', maxWidth: 500, left: 100 });
+      assert.equal(s.box('row')[1], 530, named('an item capped and moved'));
+      s.engine.setProp(s.item, 'style', { width: 'auto', maxWidth: 500, minWidth: 600 });
+      assert.equal(s.box('row')[1], 630, named('an item capped under a minimum'));
+      s.engine.setProp(s.item, 'style', { width: 'auto', maxWidth: '50%' });
+      assert.equal(s.box('row')[1], 930, named('an item capped at a share'));
+      s.engine.setProp(s.item, 'style', { width: 'auto', maxWidth: 500 });
+      s.engine.setProp(held, 'style', { width: 400, height: 10 });
+      assert.equal(s.box('row')[1], 430, named('an item capped wider than it holds'));
+      s.engine.setProp(s.item, 'style', { width: 'auto' });
+      s.engine.setProp(held, 'style', { maxWidth: 500 });
+      inside(s, held, { width: 900, height: 10 });
+      assert.equal(s.box('row')[1], 530, named('a box capped further down'));
+      const column = overflowing('width: fit-content', 'width: 50%', conformance);
+      column.engine.setProp(column.item, 'style', { width: 'auto', maxWidth: 500 });
+      inside(column, column.item, { width: 900, height: 10 });
+      assert.equal(column.box('row')[1], 500, named('in a column'));
+    }
+  });
+
+  it('follows a box it holds changing its box-sizing', () => {
+    // Chrome: a cap of 500 on a box with 26 of padding and border is of its content for
+    // content-box, so the box is 526 and the row 556, and of the whole box for border-box.
+    for (const conformance of CONFORMANCES) {
+      const s = overflowing('flex-direction: row; width: fit-content', 'flex: 1', conformance);
+      const framed = { paddingLeft: 10, paddingRight: 10, borderLeftWidth: 3, borderRightWidth: 3 };
+      const capped = { width: 'auto', maxWidth: 500, ...framed };
+      s.engine.setProp(s.item, 'style', capped);
+      inside(s, s.item, { width: 900, height: 10 });
+      for (const [boxSizing, width] of [
+        ['border-box', 530],
+        ['content-box', 556],
+        ['border-box', 530],
+      ] as const) {
+        s.engine.setProp(s.item, 'style', { ...capped, boxSizing });
+        assert.equal(s.box('row')[1], width, `${boxSizing} (${conformance})`);
+      }
+    }
+  });
+
+  it('counts an item with a basis in points that does not grow at that basis', () => {
+    // Chrome, for an item holding a 900 wide box: the basis, held to the item's minimum and
+    // maximum, where the item does not grow; all it holds where it grows or the basis is a share.
+    for (const conformance of CONFORMANCES) {
+      for (const [style, width] of [
+        [{ flexBasis: 0, flexShrink: 1, maxWidth: 500 }, 30],
+        [{ flexBasis: 0, flexShrink: 1 }, 30],
+        [{ flexBasis: 0 }, 30],
+        [{ flexBasis: 100 }, 130],
+        [{ flexBasis: 600 }, 630],
+        [{ flexBasis: 0, minWidth: 200 }, 230],
+        [{ flexBasis: 0, flexGrow: 1 }, 930],
+        [{ flexBasis: 0, flexGrow: 1, maxWidth: 500 }, 530],
+        [{ flexBasis: '50%' }, 930],
+      ] as const) {
+        const s = overflowing('flex-direction: row; width: fit-content', 'flex: 1', conformance);
+        s.engine.setProp(s.item, 'style', { width: 'auto', ...style });
+        inside(s, s.item, { width: 900, height: 10 });
+        assert.equal(s.box('row')[1], width, `${JSON.stringify(style)} (${conformance})`);
+      }
+      // In a column the basis is a height, and all it holds counts.
+      for (const flexBasis of [0, 100]) {
+        const column = overflowing('width: fit-content', 'width: 50%', conformance);
+        column.engine.setProp(column.item, 'style', { width: 'auto', flexBasis });
+        inside(column, column.item, { width: 900, height: 10 });
+        assert.equal(column.box('row')[1], 900, `a column, basis ${flexBasis} (${conformance})`);
+      }
+    }
+  });
+
+  it('follows what it holds growing past the room and back', () => {
+    const s = overflowing('flex-direction: row; width: fit-content', 'flex: 1');
+    assert.equal(s.box('row')[1], 530);
+    s.engine.setProp(s.item, 'style', { width: 100 });
+    assert.equal(s.box('row')[1], 130);
+    s.engine.setProp(s.item, 'style', null);
+    assert.equal(s.box('row')[1], 530);
+  });
+});
+
 describe('a percentage basis in a box as wide as its content', () => {
   const ROOMS = [
     ['a column', ''],
