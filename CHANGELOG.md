@@ -1,3 +1,33 @@
+## 0.22.0 (2026-11-04)
+
+### 🩹 Fixes
+
+- On iOS a large title no longer drops into place on every push when a header item holds a `ui-host` with `matchContents`, on a stack whose root page has no header, in a development build with `@ng-native/expo`. ([#1400](https://github.com/ng-native/ng-native/pull/1400), [#1399](https://github.com/ng-native/ng-native/issues/1399), [#1405](https://github.com/ng-native/ng-native/issues/1405))
+
+  react-native-screens lays the navigation bar out at once whenever a header item's size changes, and such a host has its size only once SwiftUI lays it out, during the push. `@ng-native/expo` now defers that layout until the push or pop ends, for every header item. Expo Go keeps the drop; a host with a fixed size, or `systemImageName`, avoids it there.
+
+- A box whose `box-sizing` alone changes is now laid out again on iOS and Android, where it kept the size it had: React Native's Yoga does not compare `boxSizing` when a view's props change. To do that, a `content-box` box whose sizes, padding and border are each in points or unset is committed as the border box it makes, with `boxSizing: 'border-box'` and its padding and border added to its `width`, `height` and their least and most. It lays out the same, but the props a test reads from a commit change for such a box, a web-compat `div` and text field among them. ([#1393](https://github.com/ng-native/ng-native/pull/1393))
+
+  A `content-box` box with a percentage size or padding is committed as it was, and still keeps its size on iOS and Android when its `box-sizing` alone changes.
+
+  A `content-box` box with an `aspect-ratio` and a `width` or `height` in points is committed with the ratio of its border box, so the ratio is of its content box, as in Chrome, where Yoga took it of the border box. One with an `aspect-ratio` and no size in points, or with a least or most size, is committed as it was. The padding added to the width is read in the box's direction, its own, inherited, or the app's.
+
+- A `z-index` of a math function in a stylesheet, such as `calc(3 / 2)` or `min(-2.5, 4)`, now compiles to the integer Chrome rounds it to, as the same value set in a style already did, where it was dropped with a warning. ([#1387](https://github.com/ng-native/ng-native/pull/1387))
+
+  A math function that comes to a length, such as `calc(1px)`, is still dropped with a warning, as Chrome drops it. One that comes to NaN, such as `sqrt(-1)`, compiles to 0, as Chrome reads it. A `round()` to the nearest, such as `round(-1.5, 1)`, is dropped with a warning, since the compiler would round a negative tie away from zero where Chrome rounds it up. A `round()` with a negative interval, such as `round(up, 3, -2)`, rounds as Chrome does, and the function and strategy names are read in any case. A z-index past the range of a 32-bit integer, such as `calc(infinity)` in a stylesheet or `calc(1e20)` in either, is clamped to that range, as Chrome clamps it. One with a string in it, such as `calc("2")`, is dropped with a warning, as Chrome drops it.
+
+- On iOS a stack's root page with a large title now launches with the title expanded, where it showed collapsed in the bar until the page was pulled down. ([#1402](https://github.com/ng-native/ng-native/pull/1402), [#1401](https://github.com/ng-native/ng-native/issues/1401))
+
+  `<native-stack-outlet>` commits its `RNSScreenStack` only once its first screen has joined it, with that screen, as react-native-screens' own JavaScript does. Committed empty, the stack was laid out with a compact bar before the root page arrived, and the page's scroll view kept the offset that bar gave it. A test that reads the committed tree of an outlet with no screen no longer finds an `RNSScreenStack` there.
+
+- On Android a tap on an open `<native-search-bar>` no longer presses the `<native-header>` item hidden under it: while the field is open, the header's other `<native-header-item>`s take no touches. ([#1406](https://github.com/ng-native/ng-native/pull/1406), [#1404](https://github.com/ng-native/ng-native/issues/1404))
+
+  react-native-screens hides those items when the field opens, but a hidden view keeps its bounds, and React Native's Android touch dispatch finds a target by bounds alone. The items' content now inherits `pointer-events: none` between the search bar's `topOpen` and `topClose`, so the props committed for that content change while the field is open, including an item added while it is open. Content that sets its own `pointer-events` to `auto` still takes touches. iOS sends no open or close and is unchanged.
+
+### ❤️ Thank You
+
+- Ashley Hunter
+
 ## 0.21.0 (2026-11-03)
 
 ### 🩹 Fixes
