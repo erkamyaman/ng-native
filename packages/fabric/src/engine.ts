@@ -821,9 +821,10 @@ export interface EngineNode extends HostNode {
   /**
    * The narrowest an item that takes a share of its row goes, read from a commit of it at its
    * content's width with its words a line each, or nothing until it is read: see
-   * `settleMinimums`. Set while `shareMin` says the item's minimum is to be measured.
+   * `settleMinimums`. Set while `shareMin` says the item's minimum is to be measured. `least`
+   * is that, held to its row's room where the minimum is a fitted row's (`fittedMinimum`).
    */
-  shareMin?: { width?: number; share?: number };
+  shareMin?: { width?: number; share?: number; least?: number };
   /** Set while that commit is made: the item is as wide as its content, with no share. */
   shareOff?: boolean;
   /** Whether this node's children were last laid out along a row. See `autoMinimum`. */
@@ -2813,11 +2814,17 @@ function notNative(props: Record<string, unknown>): void {
 
 /**
  * What the engine lays out in Yoga's place, written on a node's props last of all: a box sized
- * from what was read back, and a relative box in a line moved by its offset.
+ * from what was read back, and a relative box in a line moved by its offset. `fitting` is
+ * whether any box is fitted to its content: see `fittedMinimum`.
  */
-function engineLayout(node: EngineNode, props: Record<string, unknown>, asked: number): void {
+function engineLayout(
+  node: EngineNode,
+  props: Record<string, unknown>,
+  asked: number,
+  fitting: boolean,
+): void {
   // Nothing of it is on a node until something asks, and an app of plain flex never does.
-  if (asked !== 0) askedLayout(node, props, asked);
+  if (asked !== 0) askedLayout(node, props, asked, fitting);
   // Asked of every node merged, so asked here first: nearly none has a most size.
   if (props['maxHeight'] !== undefined) leastWins(props, 'Height');
   if (props['maxWidth'] !== undefined) leastWins(props, 'Width');
@@ -2829,7 +2836,12 @@ function engineLayout(node: EngineNode, props: Record<string, unknown>, asked: n
 }
 
 /** The part of `engineLayout` that a layout something asked for sets a node up for. */
-function askedLayout(node: EngineNode, props: Record<string, unknown>, asked: number): void {
+function askedLayout(
+  node: EngineNode,
+  props: Record<string, unknown>,
+  asked: number,
+  fitting: boolean,
+): void {
   const css = (asked & CSS_LAYOUT) !== 0;
   if (css) gridLayout(node, props);
   if (asked & MIXED_SIZES) {
@@ -2840,10 +2852,9 @@ function askedLayout(node: EngineNode, props: Record<string, unknown>, asked: nu
   // Before the minimum: a cell with its share of a row set aside is sized by its content, and
   // does not shrink under it while the box it is in is measured.
   if (node.fitOff) setAsideToFit(node, props);
-  if (css) {
-    autoMinimum(node, props);
-    shareMinimum(node, props);
-  }
+  if (css) autoMinimum(node, props);
+  // A row is fitted to its content by either: `fit-content`, or an item that grows in it.
+  if (css || asked & SHARED_WIDTHS) shareMinimum(node, props, fitting);
   if (node.fit !== undefined || node.fitMin !== undefined) fitted(node, props);
   heldHeight(node, props);
 }
@@ -3442,9 +3453,12 @@ function autoMinimum(node: EngineNode, props: Record<string, unknown>): void {
  * `flex: 1`, which a browser stops at the narrowest its content goes. That has to be measured,
  * so the item is noted for `settleMinimums`, committed once as its content makes it, and given
  * the width that came to as its minimum from then on. Answers whether it is such an item.
+ *
+ * `fitted` is whether any box is fitted to its content, which gives an item that grows from
+ * nothing in a row as wide as one the same minimum: see `fittedMinimum`.
  */
-function shareMinimum(node: EngineNode, props: Record<string, unknown>): boolean {
-  if (!sharesFromContent(node, props)) {
+function shareMinimum(node: EngineNode, props: Record<string, unknown>, fitted: boolean): boolean {
+  if (!sharesFromContent(node, props, fitted)) {
     node.shareMin = undefined;
     return false;
   }
@@ -3453,20 +3467,58 @@ function shareMinimum(node: EngineNode, props: Record<string, unknown>): boolean
     contentSized(props);
     delete props['flexBasis'];
     props['flexShrink'] = 0;
-  } else if (node.shareMin.width !== undefined) {
-    props['minWidth'] = node.shareMin.width;
+  } else if (node.shareMin.width !== undefined && !node.fitOff) {
+    // Not while a box around it is measured, where it is as wide as its content (`setAsideToFit`)
+    // and its share, of the width that box had, says nothing.
+    props['minWidth'] = node.shareMin.least ?? node.shareMin.width;
     sharedOut(props, node.shareMin.share);
   }
   return true;
 }
 
 /** Whether an item's minimum is its content's and it takes a share of a row: see `shareMinimum`. */
-function sharesFromContent(node: EngineNode, props: Record<string, unknown>): boolean {
+function sharesFromContent(
+  node: EngineNode,
+  props: Record<string, unknown>,
+  fitted: boolean,
+): boolean {
   const parent = node.parent;
-  if (!parent || !staysInFlow(props) || !isRow(parent)) return false;
-  if (props['minWidth'] !== 'auto' || !isAuto(props['width']) || sizedByContent(props))
-    return false;
-  return props['aspectRatio'] == null && (props['overflow'] ?? 'visible') === 'visible';
+  if (!parent || !staysInFlow(props) || !isRow(parent) || !isAuto(props['width'])) return false;
+  if (props['aspectRatio'] != null || (props['overflow'] ?? 'visible') !== 'visible') return false;
+  if (props['minWidth'] === 'auto') return !sizedByContent(props);
+  return fitted && fittedMinimum(node, parent);
+}
+
+/**
+ * Whether an item that grows from a basis of nothing, `flex: 1 1 0%`, is held at its longest
+ * word in a row whose width is fitted to its content: tabs of a `w-fit` row. A browser sizes
+ * such a row by what its items hold and shares it out from nothing, so tabs come out the same
+ * width; where that is narrower than a tab's word, Chrome under the layout reset lets the word
+ * overflow the tab, and a device would break it. The item is held at its longest word instead,
+ * as a browser holds one with CSS's own `min-width: auto`. One whose own `min-width` is written
+ * has that minimum, and none other.
+ */
+function fittedMinimum(node: EngineNode, row: EngineNode): boolean {
+  const flex = readStyle(node, 'flex');
+  const fromNothing = typeof flex === 'number' ? flex > 0 : isNoBasis(readStyle(node, 'flexBasis'));
+  if (!fromNothing || readStyle(node, 'minWidth') != null) return false;
+  // While the box around it is measured, the box has no width yet: see `Engine.fitTogether`.
+  return node.fitOff === true || fittedAround(row);
+}
+
+/**
+ * Whether a row is as wide as a box fitted to its content: fitted itself, or stretched across
+ * one, through boxes with no width of their own.
+ */
+function fittedAround(row: EngineNode): boolean {
+  for (let box: EngineNode | null = row; box?.nodeKind === 'element'; box = box.parent) {
+    if (box.fit?.width !== undefined) return true;
+    const around = box.parent;
+    if (around?.nodeKind !== 'element' || !isAuto(readStyle(box, 'width'))) return false;
+    if (OUT_OF_FLOW.has(readStyle(box, 'position') as string)) return false;
+    if (around.flow ? inALine(box) : isRow(around) || !stretched(box, around)) return false;
+  }
+  return false;
 }
 
 /**
@@ -4615,9 +4667,9 @@ function percentBasis(node: EngineNode, props: Record<string, unknown>): void {
     if (props['minHeight'] === 'auto' && !definiteHeight(parent)) delete props['flexBasis'];
     return;
   }
-  // A row fitted already has a size to take a share of. A share of nothing is no size: tabs that
-  // are each `flex: 1 1 0%` keep the width of their words, which cannot get narrower.
-  if (parent.fit?.width !== undefined && isSizedBasis(props['flexBasis'])) return;
+  // A row fitted already has a size to take a share of, `0%` too: tabs that are each
+  // `flex: 1 1 0%` share it out, each held at its longest word (`fittedMinimum`).
+  if (parent.fit?.width !== undefined) return;
   if (rowOfItsContent(parent)) delete props['flexBasis'];
 }
 
@@ -9632,6 +9684,8 @@ export class Engine implements HostEngine {
     this.settleMinimums();
     this.settleGrids();
     this.settleFits();
+    // The items a fit gave a minimum, and the shares of the width a row was fitted to.
+    this.settleMinimums(true);
     this.settleHeld();
     // A sum can size a grid or move what is in a held box: each again, and the sums of it after.
     if (this.settleMixed()) {
@@ -9671,10 +9725,18 @@ export class Engine implements HostEngine {
    * something in the item changed: all of them committed as wide as their content with their
    * words a line each, read, and committed again with that as their minimum. Two commits for
    * all of them together, and none where nothing in any of them moved.
+   *
+   * Again once boxes are fitted (`afterFits`), for the shares of a row's new width, and for the
+   * minimums a fitted row gives (`fittedMinimum`): those are read only then, since the row is
+   * fitted again first when what they hold changes, and an item has one only once it is.
    */
-  private settleMinimums(): void {
+  private settleMinimums(afterFits = false): void {
     if (!this.minimums.size || !this.fabric.getBoundingClientRect) return;
-    const stale = [...this.minimums].filter((node) => this.minimumIsStale(node));
+    const stale = [...this.minimums].filter((node) =>
+      afterFits === this.ofFittedRow(node)
+        ? this.minimumIsStale(node)
+        : afterFits && this.minimumUnread(node),
+    );
     if (!stale.length) return this.reshare();
     const texts = stale.flatMap(textsUnder);
     this.settling = true;
@@ -9733,26 +9795,49 @@ export class Engine implements HostEngine {
     const rows = new Set<EngineNode>();
     for (const node of this.minimums) {
       // A row in no room that can have changed, and whose items did not, shares out as it did.
-      if (node.parent && this.mayHaveMoved(node.parent)) rows.add(node.parent);
+      // An item restyled is committed as its share says, so it moved nothing: how it grows is
+      // read again all the same.
+      const row = node.parent;
+      if (row && (this.changed.has(node) || this.mayHaveMoved(row))) rows.add(row);
     }
     for (const row of rows) {
       const items = row.childList.filter(
         (child) => child.nodeKind === 'element' && this.inFlowOfRow(child),
       );
+      const room = this.roomIn(row);
+      // Held first to the row's room, which the share is then of: see `heldToRoom`.
+      const held = items.filter((item) => item.shareMin && this.heldToRoom(item, room));
       const sharers = items.map((item) => this.sharerOf(item));
       const all = sharers.every((each) => each !== undefined);
-      const room = all ? this.roomIn(row) : Infinity;
-      const widths = Number.isFinite(room)
-        ? lineShares(sharers as Sharer[], room, this.gapOf(row), this.wrapsRow(row))
-        : [];
+      const widths =
+        all && Number.isFinite(room)
+          ? lineShares(sharers as Sharer[], room, this.gapOf(row), this.wrapsRow(row))
+          : [];
       items.forEach((item, at) => {
         const share = widths[at];
-        if (!item.shareMin || sameShare(item.shareMin.share, share)) return;
+        if (!item.shareMin || (sameShare(item.shareMin.share, share) && !held.includes(item))) {
+          return;
+        }
         item.shareMin.share = share;
         changed.push(item);
       });
     }
     return changed;
+  }
+
+  /**
+   * Hold the minimum a fitted row gives an item (`fittedMinimum`) to the row's room, and answer
+   * whether that changed it. A word wider than the row is not reached past it for: Chrome under
+   * the layout reset has the item as wide as the row, and the word overflowing it. A minimum of
+   * the item's own `min-width: auto` is CSS's, and is not held.
+   */
+  private heldToRoom(item: EngineNode, room: number): boolean {
+    const min = item.shareMin!;
+    const own = readStyle(item, 'minWidth') === 'auto' || min.width === undefined;
+    const least = own || !Number.isFinite(room) ? undefined : Math.min(min.width!, room);
+    if (sameShare(min.least, least)) return false;
+    min.least = least;
+    return true;
   }
 
   /** An item of a row that is laid out in it: displayed, and not out of the flow. */
@@ -9764,7 +9849,7 @@ export class Engine implements HostEngine {
   /** An item as `lineShares` takes one, or nothing for one that does not grow from nothing. */
   private sharerOf(node: EngineNode): Sharer | undefined {
     if (!node.shareMin) return this.unsharing(node);
-    const least = node.shareMin?.width;
+    const least = node.shareMin.least ?? node.shareMin.width;
     const basis = readStyle(node, 'flexBasis');
     const flex = readStyle(node, 'flex');
     const grow = typeof flex === 'number' ? flex : readStyle(node, 'flexGrow');
@@ -9796,6 +9881,17 @@ export class Engine implements HostEngine {
   private wrapsRow(row: EngineNode): boolean {
     const wrap = readStyle(row, 'flexWrap');
     return wrap === 'wrap' || wrap === 'wrap-reverse';
+  }
+
+  /** Whether an item's minimum is a fitted row's and not its own `min-width: auto`. */
+  private ofFittedRow(node: EngineNode): boolean {
+    return node.shareMin !== undefined && readStyle(node, 'minWidth') !== 'auto';
+  }
+
+  /** Whether an item still in the tree has a minimum that was never read. */
+  private minimumUnread(node: EngineNode): boolean {
+    const min = node.shareMin;
+    return min !== undefined && min.width === undefined && this.topOf(node) === this.root;
   }
 
   /** Whether an item's minimum is to be read: it never was, or something in it moved or grew. */
@@ -10331,7 +10427,8 @@ export class Engine implements HostEngine {
     this.flowed(node, copy);
     gridLayout(node, copy);
     autoMinimum(node, copy);
-    shareMinimum(node, copy);
+    // Only what CSS's layout asks for: a fitted row's minimum is asked with its share.
+    shareMinimum(node, copy, false);
     notNative(copy);
     const missed = node.autoMin || node.shareMin ? ['a minimum'] : [];
     [node.autoMin, node.shareMin] = [autoMin, shareMin];
@@ -10930,7 +11027,9 @@ export class Engine implements HostEngine {
       this.fits.delete(node);
     }
     if (!had && !grown.length) return;
-    this.touch([node, ...grown]);
+    // An item held at its longest word for the fit is let go of that too: see `fittedMinimum`.
+    const held = this.minimums.size ? this.sizedByRoom(node).filter((each) => each.shareMin) : [];
+    this.touch([node, ...grown, ...held]);
     this.commitTree();
   }
 
@@ -12420,7 +12519,7 @@ export class Engine implements HostEngine {
   private laidOut(node: EngineNode, merged: Record<string, unknown>): void {
     const asked = this.asked;
     if (this.checksAsks) this.checkAsked(node, merged);
-    engineLayout(node, merged, asked);
+    engineLayout(node, merged, asked, this.fits.size > 0);
     const placed = merged['position'] === 'absolute';
     if (placed && !(asked & CSS_LAYOUT) && asksOfPlaced(merged)) {
       this.want(CSS_LAYOUT);

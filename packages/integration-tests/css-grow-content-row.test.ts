@@ -524,3 +524,340 @@ describe('a row as wide as its content by an ancestor, with an item that grows f
     }
   });
 });
+
+/**
+ * Tabs that each grow from a basis of nothing, `flex: 1 1 0%` (Tailwind's `flex-1`), in a row as
+ * wide as its content. Chrome sizes the row by what the tabs hold and then shares it out evenly
+ * from nothing, so tabs of different lengths come out the same width wherever that keeps each
+ * tab's longest word whole: `aa` and `bb cc dd` are 50 each, the second on two lines.
+ *
+ * Where an even share is narrower than a word, Chrome under the layout reset (`min-width: 0`)
+ * lets the word overflow its tab, and a device would break it. The engine holds such a tab at its
+ * longest word, as Chrome does for an item with CSS's own `min-width: auto`, and shares what is
+ * left: `a` and `abcdefg` are 10 and 70, where Chrome under the reset has 40 each.
+ */
+describe('tabs that grow from no basis, in a row as wide as its content', () => {
+  const ROWS = {
+    'a fit-content row in a column': ['col', 'flex-direction: row; width: fit-content'],
+    'a max-content row in a column': ['col', 'flex-direction: row; max-width: max-content'],
+    'a row kept from stretching': ['col', 'flex-direction: row; align-self: flex-start'],
+    'a fit-content row in a column that centres it': [
+      'centre',
+      'flex-direction: row; width: fit-content',
+    ],
+    'an inline-flex row in a block': ['block', 'display: inline-flex; flex-direction: row'],
+    'an absolute fit-content row': [
+      'col',
+      'flex-direction: row; width: fit-content; position: absolute',
+    ],
+    // The tabs are in a row stretched across the box that is fitted.
+    'a fit-content box around a row': ['col', 'width: fit-content'],
+    'a fit-content row, right to left': ['col rtl', 'flex-direction: row; width: fit-content'],
+  } as const;
+  /** Each tab's text, at ten points a character. */
+  const WORDS = ['aa', 'bb cc dd'];
+  const ONE_WORD = ['a', 'abcdefg'];
+  const THREE = ['a', 'bb', 'cccc'];
+  /** Chrome's row and tabs for `WORDS` shared evenly, each as a width and a height. */
+  const EVEN = [
+    [100, 40],
+    [50, 40],
+    [50, 40],
+  ];
+
+  function tabsScene(
+    [around, row]: readonly [string, string],
+    tab: string,
+    texts: readonly string[],
+    conformance: (typeof CONFORMANCES)[number],
+  ) {
+    const css =
+      '.col { width: 362px } .centre { width: 362px; align-items: center }' +
+      ' .block { display: block; width: 362px } .inner { flex-direction: row }' +
+      ' .rtl { direction: rtl }' +
+      ` .row { ${row} } .tab { ${tab} } .stretch { width: auto; max-width: none;` +
+      ' align-self: stretch; display: flex; position: relative } .two { flex-grow: 2 }';
+    const fabric = createLaidOutFabric(conformance);
+    const engine = new Engine(fabric, 1, {
+      globalStyles: compileCss(css, 'app.css') as never,
+      ...(conformance === 'strict' ? { layoutConformance: 'strict' as const } : {}),
+    });
+    const element = (classes: string, id: string, parent: EngineNode) => {
+      const node = engine.createElement('view');
+      engine.setClasses(node, classes);
+      engine.setProp(node, 'nativeID', id);
+      engine.appendChild(parent, node);
+      return node;
+    };
+    const rowNode = element('row', 'row', element(around, 'around', engine.root));
+    const inner = row.includes('flex-direction') ? rowNode : element('inner', 'inner', rowNode);
+    const tabs: EngineNode[] = [];
+    const words: EngineNode[] = [];
+    for (const [i, text] of texts.entries()) {
+      tabs.push(element('tab', `tab${i}`, inner));
+      const node = engine.createElement('text');
+      words.push(engine.createText(text));
+      engine.appendChild(node, words[i]!);
+      engine.appendChild(tabs[i]!, node);
+    }
+    /** Each box's width and height, to the half point: Chrome has 66.67 where Yoga rounds. */
+    const sizes = (...ids: string[]) => {
+      engine.commit();
+      const near = (value: number) => Math.round(value * 2) / 2;
+      return ids.map((id) => [near(fabric.box(id).width), near(fabric.box(id).height)]);
+    };
+    const tabSizes = () => sizes('row', ...texts.map((_, i) => `tab${i}`));
+    return { fabric, engine, row: rowNode, tabs, words, sizes, tabSizes };
+  }
+
+  const GROWING = [
+    'flex: 1 1 0%',
+    'flex: 1',
+    'flex-grow: 1; flex-basis: 0%',
+    'flex: 1 1 0px',
+    'flex: 1 1 0%; min-width: auto',
+  ];
+
+  for (const conformance of CONFORMANCES) {
+    it(`shares the row out evenly where that keeps every word whole (${conformance})`, () => {
+      for (const tab of GROWING) {
+        for (const [name, row] of Object.entries(ROWS)) {
+          const s = tabsScene(row, tab, WORDS, conformance);
+          assert.deepEqual(s.tabSizes(), EVEN, `${name}, ${tab}`);
+        }
+      }
+    });
+
+    it(`holds a tab at its longest word, unbroken (${conformance})`, () => {
+      for (const tab of GROWING) {
+        for (const [name, row] of Object.entries(ROWS)) {
+          const named = `${name}, ${tab}`;
+          const one = tabsScene(row, tab, ONE_WORD, conformance);
+          const oneAt = [
+            [80, 20],
+            [10, 20],
+            [70, 20],
+          ];
+          assert.deepEqual(one.tabSizes(), oneAt, named);
+          const three = tabsScene(row, tab, THREE, conformance);
+          const threeAt = [
+            [70, 20],
+            [10, 20],
+            [20, 20],
+            [40, 20],
+          ];
+          assert.deepEqual(three.tabSizes(), threeAt, named);
+        }
+      }
+    });
+
+    it(`shares the row by how much each tab grows (${conformance})`, () => {
+      for (const [name, row] of Object.entries(ROWS)) {
+        const s = tabsScene(row, 'flex: 1 1 0%', WORDS, conformance);
+        s.engine.setClasses(s.tabs[0]!, 'tab two');
+        const shared = [
+          [100, 60],
+          [66.5, 60],
+          [33.5, 60],
+        ];
+        assert.deepEqual(s.tabSizes(), shared, name);
+      }
+    });
+
+    it(`holds a tab that does not grow at its longest word (${conformance})`, () => {
+      // Chrome under the reset has these tabs 0 wide, each word on a line of its own and
+      // reaching past it; with `min-width: auto` it has them at their longest word, as here.
+      for (const tab of ['flex: 0 1 0%', 'flex: 0 0 0%']) {
+        for (const [name, row] of Object.entries(ROWS)) {
+          const s = tabsScene(row, tab, WORDS, conformance);
+          const held = [
+            [100, 60],
+            [20, 60],
+            [20, 60],
+          ];
+          assert.deepEqual(s.tabSizes(), held, `${name}, ${tab}`);
+        }
+      }
+      // A basis of 0 points that does not grow counts at it, so Chrome's row is 0 wide: a tab is
+      // held no wider than its row, and is 0 wide too.
+      for (const [name, row] of Object.entries(ROWS)) {
+        const s = tabsScene(row, 'flex: 0 1 0px', WORDS, conformance);
+        const none = [
+          [0, 60],
+          [0, 60],
+          [0, 60],
+        ];
+        assert.deepEqual(s.tabSizes(), none, `${name}, flex: 0 1 0px`);
+      }
+    });
+
+    it(`gives a tab no minimum where its own min-width says so (${conformance})`, () => {
+      // As Chrome does: the even share, with the word reaching past the tab.
+      for (const [name, row] of Object.entries(ROWS)) {
+        const s = tabsScene(row, 'flex: 1 1 0%; min-width: 0', ONE_WORD, conformance);
+        assert.deepEqual(
+          s.sizes('row', 'tab0', 'tab1').map(([width]) => width),
+          [80, 40, 40],
+          name,
+        );
+      }
+    });
+
+    it(`follows its basis, its growth, its words and a stretch changing (${conformance})`, () => {
+      const FROM_AUTO = [
+        [100, 20],
+        [20, 20],
+        [80, 20],
+      ];
+      for (const [name, row] of Object.entries(ROWS)) {
+        const s = tabsScene(row, 'flex: 1 1 auto', WORDS, conformance);
+        assert.deepEqual(s.tabSizes(), FROM_AUTO, `${name}, from auto`);
+        for (const tab of s.tabs) s.engine.setProp(tab, 'style', { flexBasis: '0%' });
+        assert.deepEqual(s.tabSizes(), EVEN, `${name}, 0% set`);
+        for (const tab of s.tabs) s.engine.setProp(tab, 'style', { flexGrow: 0, flexBasis: '0%' });
+        const held = [
+          [100, 60],
+          [20, 60],
+          [20, 60],
+        ];
+        assert.deepEqual(s.tabSizes(), held, `${name}, growth taken away`);
+        for (const tab of s.tabs) s.engine.setProp(tab, 'style', { flexBasis: '0%' });
+        assert.deepEqual(s.tabSizes(), EVEN, `${name}, growing again`);
+        // A word longer than the share: the tab is held at it, and the other has the rest.
+        s.engine.setText(s.words[1]!, 'bbbbbbb');
+        const word = [
+          [90, 20],
+          [20, 20],
+          [70, 20],
+        ];
+        assert.deepEqual(s.tabSizes(), word, `${name}, one word`);
+        s.engine.setText(s.words[1]!, 'bb cc dd');
+        assert.deepEqual(s.tabSizes(), EVEN, `${name}, words again`);
+        s.engine.setClasses(s.row, 'row stretch');
+        const stretched = [
+          [362, 20],
+          [181, 20],
+          [181, 20],
+        ];
+        assert.deepEqual(s.tabSizes(), stretched, `${name}, stretched`);
+        s.engine.setClasses(s.row, 'row');
+        assert.deepEqual(s.tabSizes(), EVEN, `${name}, fitted again`);
+        for (const tab of s.tabs) s.engine.setProp(tab, 'style', null);
+        assert.deepEqual(s.tabSizes(), FROM_AUTO, `${name}, auto again`);
+      }
+    });
+  }
+
+  it('is committed once for a change that moves nothing', () => {
+    for (const conformance of CONFORMANCES) {
+      const s = tabsScene(
+        ROWS['a fit-content row in a column'],
+        'flex: 1 1 0%',
+        WORDS,
+        conformance,
+      );
+      assert.deepEqual(s.tabSizes(), EVEN, conformance);
+      const before = s.fabric.calls.completeRoot;
+      s.engine.setProp(s.tabs[0]!, 'style', { backgroundColor: 'red' });
+      assert.deepEqual(s.tabSizes(), EVEN, conformance);
+      assert.equal(s.fabric.calls.completeRoot - before, 1, `nothing measured (${conformance})`);
+    }
+  });
+
+  it('reads the longest words once a fit has the tabs at their content', () => {
+    for (const conformance of CONFORMANCES) {
+      const s = tabsScene(
+        ROWS['a fit-content row in a column'],
+        'flex: 1 1 0%',
+        WORDS,
+        conformance,
+      );
+      assert.deepEqual(s.tabSizes(), EVEN, conformance);
+      // Fitted (two commits), and then the words read (two more), once each.
+      let before = s.fabric.calls.completeRoot;
+      s.engine.setText(s.words[1]!, 'bbbbbbb');
+      s.engine.commit();
+      assert.equal(s.fabric.calls.completeRoot - before, 5, `words changed (${conformance})`);
+      // The room changing fits the row again, and its words, which did not change, are kept.
+      before = s.fabric.calls.completeRoot;
+      s.engine.setProp(s.row.parent!, 'style', { width: 300 });
+      const word = [
+        [90, 20],
+        [20, 20],
+        [70, 20],
+      ];
+      assert.deepEqual(s.tabSizes(), word, conformance);
+      assert.equal(s.fabric.calls.completeRoot - before, 3, `room changed (${conformance})`);
+    }
+  });
+
+  it('lets go of the minimum once the row is stretched', () => {
+    for (const conformance of CONFORMANCES) {
+      const s = tabsScene(
+        ROWS['a fit-content row in a column'],
+        'flex: 1 1 0%',
+        WORDS,
+        conformance,
+      );
+      assert.deepEqual(s.tabSizes(), EVEN, conformance);
+      s.engine.setClasses(s.row, 'row stretch');
+      assert.deepEqual(s.sizes('tab0', 'tab1'), [
+        [181, 20],
+        [181, 20],
+      ]);
+      // Nothing is fitted or read: the words changing is one commit.
+      const before = s.fabric.calls.completeRoot;
+      s.engine.setText(s.words[1]!, 'bbbbbbb');
+      s.engine.commit();
+      assert.equal(s.fabric.calls.completeRoot - before, 1, conformance);
+    }
+  });
+
+  it('lets go of the minimum once the row is given the width it was fitted to', () => {
+    // A row of its own width is not as wide as its content, and Chrome shares it out evenly,
+    // with the word reaching past its tab, as the engine does for any row with a width.
+    for (const conformance of CONFORMANCES) {
+      const s = tabsScene(
+        ROWS['a fit-content row in a column'],
+        'flex: 1 1 0%',
+        ONE_WORD,
+        conformance,
+      );
+      assert.deepEqual(s.sizes('tab0', 'tab1'), [
+        [10, 20],
+        [70, 20],
+      ]);
+      s.engine.setProp(s.row, 'style', { width: 80 });
+      const even = s.sizes('row', 'tab0', 'tab1').map(([width]) => width);
+      assert.deepEqual(even, [80, 40, 40], conformance);
+    }
+  });
+
+  it('holds a tab at its longest word where only the tabs ask for a layout', () => {
+    // No sheet, and nothing that asks for CSS's layout: the row is fitted for its growing items.
+    for (const conformance of CONFORMANCES) {
+      const fabric = createLaidOutFabric(conformance);
+      const engine = new Engine(fabric, 1, {
+        ...(conformance === 'strict' ? { layoutConformance: 'strict' as const } : {}),
+      });
+      const view = (style: Record<string, unknown>, id: string, parent: EngineNode) => {
+        const node = engine.createElement('view');
+        engine.setProp(node, 'style', style);
+        engine.setProp(node, 'nativeID', id);
+        engine.appendChild(parent, node);
+        return node;
+      };
+      const col = view({ width: 362 }, 'col', engine.root);
+      const row = view({ flexDirection: 'row', alignSelf: 'flex-start' }, 'row', col);
+      for (const [i, word] of ONE_WORD.entries()) {
+        const tab = view({ flexGrow: 1, flexShrink: 1, flexBasis: '0%' }, `tab${i}`, row);
+        const text = engine.createElement('text');
+        engine.appendChild(text, engine.createText(word));
+        engine.appendChild(tab, text);
+      }
+      engine.commit();
+      const widths = ['row', 'tab0', 'tab1'].map((id) => fabric.box(id).width);
+      assert.deepEqual(widths, [80, 10, 70], conformance);
+    }
+  });
+});

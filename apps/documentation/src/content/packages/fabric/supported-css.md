@@ -423,9 +423,16 @@ A box out of the flow that is as wide as its content by `width: fit-content` or 
 between a `left` and a `right`, where Yoga would stretch it: the engine fits it within the room
 they leave, reading its width back, at the cost of two more commits when something in it changes.
 A `flex-basis` of a percentage in such a box, or in any box that is fitted, is a share of the
-width it comes to, as in a browser; `0%` stays at the item's content. While that width is worked
-out, the item counts for its own `width` where that is a length, and for its content where it
-has none or its `width` is a percentage, which is of the width being worked out.
+width it comes to, as in a browser. While that width is worked out, the item counts for its own
+`width` where that is a length, and for its content where it has none or its `width` is a
+percentage, which is of the width being worked out.
+Items with a basis of nothing (`0%` or `0`) in such a box, tabs that are each `flex-1` in a
+`w-fit` row, share its width as in a browser: `aa` and `bb cc dd` come out the same width, the
+second on two lines. A tab whose share would be narrower than its longest word is held at that
+word, as a browser holds an item with `min-width: auto`, and the others share what is left, so no
+word is broken; a browser under the layout reset lets the word overflow the tab. One that does not
+grow is held at its longest word too. A tab with a `min-width` of its own keeps that minimum
+instead, and none is held wider than the row.
 `min-content` is dropped with a warning, as is `fit-content` on `min-width`, `max-width`,
 `min-height` and `max-height`.
 
@@ -436,7 +443,8 @@ down a column, and along a row when no text in it has a space to wrap at. An ite
 that wraps still shrinks, under its longest word if the row is that crowded, and so does one with
 a `width`, a `flex-basis`, a `flex` or an `aspect-ratio` of its own. An item with `overflow` other
 than `visible` shrinks as it does in a browser. A native view has no minimum unless it is given
-one, so nothing changes for an item that does not say `auto`.
+one, so nothing changes for an item that does not say `auto`, other than an item with a basis of
+nothing in a box fitted to its content, as above.
 
 `overflow` is one value for both axes - Yoga has no separate `overflow-x`/`overflow-y` - so a rule
 that gives them different values is dropped with a warning rather than silently picking one, and
