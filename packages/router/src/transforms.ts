@@ -5,8 +5,9 @@
  */
 import { booleanAttribute, numberAttribute } from '@angular/core';
 
+/** `null` is unset too, as `undefined` is, where `booleanAttribute` makes it false. */
 export function optionalBoolean(value: unknown): boolean | undefined {
-  return value === undefined ? undefined : booleanAttribute(value);
+  return value == null ? undefined : booleanAttribute(value);
 }
 
 /** `null` is unset too, as the usual way to bind no number, where `numberAttribute` makes it NaN. */
