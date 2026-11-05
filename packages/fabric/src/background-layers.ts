@@ -49,6 +49,13 @@ export function splitLayers(text: string): string[] {
   return parts;
 }
 
+/**
+ * Whether a term is a layer's colour: one native reads, or `currentColor`, the colour where the
+ * token is used, which the node fills in.
+ */
+const isLayerColour = (term: string): boolean =>
+  parseColor(term) !== null || /^currentcolor$/i.test(term);
+
 const rgba = (text: string): string | undefined => {
   const parsed = parseColor(text);
   return parsed ? `rgba(${parsed[0]}, ${parsed[1]}, ${parsed[2]}, ${parsed[3]})` : undefined;
@@ -87,7 +94,7 @@ function linear(layer: string): object | undefined {
 export function backgroundLayers(text: string): BackgroundLayers | undefined {
   const layers = splitLayers(text.trim());
   const last = layers.at(-1)!;
-  const color = parseColor(last) ? last : undefined;
+  const color = isLayerColour(last) ? last : undefined;
   const images = (color === undefined ? layers : layers.slice(0, -1)).map(linear);
   if (!images.length || images.some((each) => each === undefined)) return undefined;
   return { images: images as object[], color };
@@ -200,7 +207,7 @@ function layerPart(terms: readonly string[], at: number): readonly [string, numb
     return ['repeat', REPEAT_EACH.test(terms[at + 1] ?? '') ? at + 2 : at + 1];
   if (ATTACHMENT.test(term)) return ['attachment', at + 1];
   if (BOX.test(term)) return ['box', at + 1];
-  return parseColor(term) ? ['color', at + 1] : undefined;
+  return isLayerColour(term) ? ['color', at + 1] : undefined;
 }
 
 /**

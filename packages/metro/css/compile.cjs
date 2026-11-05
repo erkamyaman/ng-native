@@ -694,6 +694,8 @@ function deferVar(value, context) {
     );
   }
 
+  if (property === 'background-image' && !arithmetic) return imagesOfToken(varPart, context);
+
   // Arithmetic on a length is a length, which a line height takes as it is: `leading-6` is
   // `calc(var(--spacing) * 6)`.
   const declared = kindOf(property);
@@ -772,17 +774,38 @@ function layersOverToken(value, out, deferred, context) {
 /** The token that is a background's last layer, read on device with the layers over it. */
 function tokenUnderLayers(last, over, context) {
   const token = deferVar({ propertyId: { property: 'background-color' }, value: last }, context);
-  const raw = last[0].value?.fallback;
-  const chained = fallbackChain(raw, context).token;
-  const layer = backgroundForm(innermostFallback(raw));
-  const fallbackLayer = chained || layer.background ? { ...chained, ...layer } : null;
   return {
     ...token,
     layers: true,
     props: ['backgroundColor', ...Object.keys(over)],
     over,
-    ...(fallbackLayer ? { fallbackLayer } : {}),
+    ...layerFallback(last[0].value?.fallback, context),
   };
+}
+
+/**
+ * `background-image: var(--g)`: the images the token holds, read on device as the layers of a
+ * `background: var()` are, with the colour left out. A token with a colour in it, or with
+ * nothing that is images or `none`, makes the declaration invalid, which leaves no image.
+ */
+function imagesOfToken(varPart, context) {
+  const token = deferVar(
+    { propertyId: { property: 'background-color' }, value: [varPart] },
+    context,
+  );
+  return {
+    ...token,
+    layers: 'images',
+    props: ['experimental_backgroundImage'],
+    ...layerFallback(varPart.value?.fallback, context),
+  };
+}
+
+/** A token's fallback as the layers it is, through the `var()`s in it: `var(--y, center red)`. */
+function layerFallback(raw, context) {
+  const chained = fallbackChain(raw, context).token;
+  const layer = backgroundForm(innermostFallback(raw));
+  return chained || layer.background ? { fallbackLayer: { ...chained, ...layer } } : {};
 }
 
 /** A fallback through the `var()`s it is made of: `var(--y, 10px 20px)` is `10px 20px`. */
@@ -836,9 +859,14 @@ function backgroundForm(parts) {
     images.some((_, at) => JSON.stringify(out[prop]?.[at]) !== initial),
   );
   if (placed) return {};
-  const color = out.backgroundColor;
+  // `currentColor` is the colour where the token is used, which the device fills in there.
+  const color = out.backgroundColor === CURRENT_COLOUR ? 'currentcolor' : out.backgroundColor;
   if (typeof color !== 'string') return {};
-  return { background: { images, ...(color === 'rgba(0, 0, 0, 0)' ? {} : { color }) } };
+  // lightningcss reads a last layer with no colour as transparent, as it reads `transparent`
+  // written there. Only one written leaves no room for a second, and makes a
+  // `background-image: var()` of the token invalid.
+  const written = color !== 'rgba(0, 0, 0, 0)' || !backgroundWritten(`${writtenText(parts)} red`);
+  return { background: { images, ...(written ? { color } : {}) } };
 }
 
 /** The motion a token can be read into whole, and the key and token form each reads it as. */
@@ -2524,6 +2552,11 @@ function addUnparsed(declaration, out, deferred, context) {
   // the device knows and the build does not. It belongs in the declarations like any colour.
   const platform = asPlatformColor(declaration.value, context);
   if (platform) {
+    // `background` is all of a background, so what it leaves out is back at its initial value: no
+    // image, and the initial place, as `background: red` writes them.
+    if (declaration.value.propertyId?.property === 'background') {
+      Object.assign(out, backgroundWritten('transparent'));
+    }
     for (const prop of platform.props) out[prop] = platform.value;
     return;
   }

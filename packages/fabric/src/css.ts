@@ -378,8 +378,10 @@ export interface DeferredDeclaration {
   /**
    * `background: var()`: the token may hold gradients over a colour, so `props` names the image
    * beside the colour and each is written from its own part of the token. See `layersOf`.
+   * `'images'` for `background-image: var()`, which takes the token's images alone, and none
+   * where the token has a colour.
    */
-  readonly layers?: true;
+  readonly layers?: true | 'images';
   /**
    * `background: linear-gradient(...), var(--x)`: the layers written over the token, by prop, the
    * images and where a stylesheet places them, which are drawn with it, or not at all where it
@@ -4612,7 +4614,8 @@ export class StyleResolver {
       if (unread && this.onUnreadDisplay && !outranked('display')) {
         this.reportDisplay(declaration, tokens);
       }
-      const layers = settled === undefined ? layersOf(declaration, tokens) : undefined;
+      const read = settled === undefined ? layersOf(declaration, tokens) : undefined;
+      const layers = withCurrentColour(read, own, parentInherited);
       for (const prop of declaration.props) {
         if (!outranked(prop)) writeSettled(own, prop, declaration, settled, layers);
       }
@@ -5600,10 +5603,10 @@ function layerList(
 const BACKGROUND_IMAGE = 'experimental_backgroundImage';
 
 /**
- * The layers a `background: var()` reads from its token: see `backgroundLayers`. Only the
- * shorthand, which the compiler marks: `background-color: var()` is a colour or nothing. A
- * stylesheet's token holds them read at build (`background`); one set on an element as text is
- * read here. The token is the one the declaration settles on, the first that is set.
+ * The layers a `background: var()` or a `background-image: var()` reads from its token: see
+ * `backgroundLayers`. Only these, which the compiler marks: `background-color: var()` is a colour
+ * or nothing. A stylesheet's token holds them read at build (`background`); one set on an element
+ * as text is read here. The token is the one the declaration settles on, the first that is set.
  */
 function layersOf(
   declaration: DeferredDeclaration,
@@ -5614,10 +5617,31 @@ function layersOf(
   const fallback = declaration.fallbackLayer;
   const token = firstSet(names, tokens) ?? (fallback && substitutedIn(fallback, tokens));
   if (!token) return undefined;
+  const layers = tokenLayers(token);
+  // `background-image: var()` takes images alone: a colour makes it invalid, and no image is drawn.
+  return declaration.layers === 'images' && layers?.color !== undefined ? { images: [] } : layers;
+}
+
+/** The layers of a background a token holds, read at build or, for one set as text, here. */
+function tokenLayers(token: TokenValue): BackgroundLayers | undefined {
   if (token.background) return token.background;
   const text = token.keyword;
   if (text && /gradient\(/i.test(text)) return backgroundLayers(text);
   return imagelessTokenLayer(token);
+}
+
+/**
+ * A token's layers with a `currentColor` under them as the colour in scope where the token is
+ * used, as CSS substitutes a token before it reads it: the node's own colour, or the one it
+ * inherits. The colour is settled before any other declaration of the node (`settlingOrder`).
+ */
+function withCurrentColour(
+  layers: BackgroundLayers | undefined,
+  own: Record<string, unknown>,
+  parentInherited: Record<string, unknown>,
+): BackgroundLayers | undefined {
+  if (layers?.color?.toLowerCase() !== 'currentcolor') return layers;
+  return { ...layers, color: (own['color'] ?? parentInherited['color'] ?? 'black') as string };
 }
 
 /** A token set on an element as a layer with no image: a length, two lengths, or such words. */

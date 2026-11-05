@@ -12,8 +12,8 @@
 import assert from 'node:assert/strict';
 import { after, afterEach, describe, it } from 'node:test';
 import type { Type } from '@angular/core';
-import { cleanup, compileCss, render } from '@ng-native/testing';
-import { registerPlatformComponents } from '@ng-native/fabric';
+import { cleanup, compileCss, createFakeFabric, render } from '@ng-native/testing';
+import { Engine, registerPlatformComponents } from '@ng-native/fabric';
 import { compileFixture } from './compile.ts';
 
 after(cleanup);
@@ -136,6 +136,62 @@ describe('compiling a platform colour', () => {
 
   it('refuses one with no name, which could only be a colour that never resolves', () => {
     assert.throws(() => declarationsOf('color: platform-color()'), /platform-color/);
+  });
+});
+
+describe('background: platform-color()', () => {
+  const IMAGE = 'linear-gradient(red, blue)';
+  const PLACED =
+    'background-position: 10px 20px; background-size: 5px 6px; background-repeat: no-repeat';
+
+  /**
+   * What a view wearing `.a` and, after the first commit, `.b` commits. `.a` gives it an image
+   * and its place, and `.b` is `background: <written>`: the image is committed under its own key.
+   */
+  function committed(written: string): Record<string, unknown>[] {
+    const sheet = compileCss(`.a { background-image: ${IMAGE}; ${PLACED} } .a.b { ${written} }`);
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1);
+    const node = engine.createElement('view', sheet);
+    engine.addClass(node, 'a');
+    engine.appendChild(engine.root, node);
+    engine.commit();
+    const commits = [{ ...fabric.committed[0]!.props }];
+    engine.addClass(node, 'b');
+    engine.commit();
+    commits.push({ ...fabric.committed[0]!.props });
+    engine.removeClass(node, 'b');
+    engine.commit();
+    commits.push({ ...fabric.committed[0]!.props });
+    return commits;
+  }
+
+  /** The props of a commit other than its colour. */
+  const uncoloured = ({ backgroundColor: _colour, ...rest }: Record<string, unknown>) => rest;
+
+  it('takes away an image and its place another rule gives, as a written colour does', () => {
+    const platform = committed('background: platform-color(link)');
+    const colour = committed('background: rgb(1, 2, 3)');
+    assert.deepEqual(platform[1]!['backgroundColor'], { semantic: ['link'] });
+    assert.deepEqual(platform[1]!['experimental_backgroundImage'], []);
+    assert.deepEqual(platform.map(uncoloured), colour.map(uncoloured));
+    assert.equal((platform[2]!['experimental_backgroundImage'] as unknown[]).length, 1);
+  });
+
+  it('does so when it is important', () => {
+    const platform = committed('background: platform-color(link) !important');
+    assert.deepEqual(platform[1]!['experimental_backgroundImage'], []);
+    assert.deepEqual(
+      platform.map(uncoloured),
+      committed('background: rgb(1, 2, 3) !important').map(uncoloured),
+    );
+  });
+
+  it('does so for a system colour, which is a platform colour by another name', () => {
+    assert.deepEqual(
+      committed('background: LinkText').map(uncoloured),
+      committed('background: platform-color(link)').map(uncoloured),
+    );
   });
 });
 
