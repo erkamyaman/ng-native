@@ -1,3 +1,13 @@
+## 0.22.1 (2026-11-05)
+
+### 🩹 Fixes
+
+- `injectToken('--accent')` from `@ng-native/device` reads a CSS custom property's resolved value as a signal, at the root or at a given node; on iOS and Android it follows the colour scheme, media conditions and stylesheet changes, and on the web it follows class and inline style changes under the mount point, the `dark` class `mount` keeps included. `Engine.token` and `Engine.watchToken` do the same without Angular. A shape's `fill` or `stroke` written as `var()` on the shape itself is resolved against the tokens in scope. ([#1411](https://github.com/ng-native/ng-native/pull/1411), [#1410](https://github.com/ng-native/ng-native/issues/1410))
+
+### ❤️ Thank You
+
+- Ashley Hunter
+
 ## 0.22.0 (2026-11-04)
 
 ### 🩹 Fixes
