@@ -430,8 +430,9 @@ Items with a basis of nothing (`0%` or `0`) in such a box, tabs that are each `f
 `w-fit` row, share its width as in a browser: `aa` and `bb cc dd` come out the same width, the
 second on two lines. A tab whose share would be narrower than its longest word is held at that
 word, as a browser holds an item with `min-width: auto`, and the others share what is left, so no
-word is broken; a browser under the layout reset lets the word overflow the tab. One that does not
-grow is held at its longest word too. A tab with a `min-width` of its own keeps that minimum
+word is broken; a browser under the layout reset lets the word overflow the tab. One with a `0%`
+basis that does not grow is held at its longest word too; one with a basis of `0` points that does
+not grow stays 0 wide, as in a browser. A tab with a `min-width` of its own keeps that minimum
 instead, and none is held wider than the row.
 `min-content` is dropped with a warning, as is `fit-content` on `min-width`, `max-width`,
 `min-height` and `max-height`.
