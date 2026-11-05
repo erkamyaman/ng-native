@@ -451,6 +451,70 @@ const SHADOW_COLOUR_CASES: OracleCase[] = [
     extra: ['box-shadow'],
   },
   inlineValue({ 'box-shadow': '2px 3px 4px' }, '#probe { color: rgb(1, 2, 3) }', ['box-shadow']),
+  {
+    name: 'text-shadow with no colour in a stylesheet is the colour of the text',
+    css: '#probe { color: rgb(1, 2, 3); text-shadow: 2px 3px 4px }',
+    tree: probe(),
+    extra: ['text-shadow'],
+  },
+  {
+    name: 'text-shadow with no colour in a stylesheet is the colour the element inherits',
+    css: '.outer { color: rgb(4, 5, 6) } #probe { text-shadow: 2px 3px }',
+    tree: { name: 'view', classes: ['outer'], children: [probe()] },
+    extra: ['text-shadow'],
+  },
+  {
+    name: 'text-shadow in currentColor in a stylesheet is the colour of the text',
+    css: '#probe { color: rgb(7, 8, 9); text-shadow: 2px 3px 4px currentColor }',
+    tree: probe(),
+    extra: ['text-shadow'],
+  },
+  {
+    name: 'text-shadow with no colour on a parent is drawn in the colour of a text that sets its own',
+    css: '.outer { color: rgb(1, 2, 3); text-shadow: 2px 3px 4px } #probe { color: rgb(4, 5, 6) }',
+    tree: { name: 'text', classes: ['outer'], children: [probe()] },
+    extra: ['text-shadow'],
+  },
+  {
+    name: 'text-shadow with no colour is drawn in the colour of a text two levels down',
+    css: '.outer { color: rgb(1, 2, 3); text-shadow: 2px 3px 4px } .mid { color: rgb(4, 5, 6) } #probe { color: rgb(7, 8, 9) }',
+    tree: {
+      name: 'text',
+      classes: ['outer'],
+      children: [{ name: 'text', classes: ['mid'], children: [probe()] }],
+    },
+    extra: ['text-shadow'],
+  },
+  {
+    name: 'text-shadow in a token holding currentColor is drawn in the colour of a text that sets its own',
+    css: '.outer { --shade: currentColor; color: rgb(1, 2, 3); text-shadow: 2px 3px 4px var(--shade) } #probe { color: rgb(4, 5, 6) }',
+    tree: { name: 'text', classes: ['outer'], children: [probe()] },
+    extra: ['text-shadow'],
+  },
+  {
+    name: 'text-shadow falling back to currentColor is drawn in the colour of a text that sets its own',
+    css: '.outer { color: rgb(1, 2, 3); text-shadow: 2px 3px 4px var(--unset, currentColor) } #probe { color: rgb(4, 5, 6) }',
+    tree: { name: 'text', classes: ['outer'], children: [probe()] },
+    extra: ['text-shadow'],
+  },
+  {
+    name: 'text-shadow in a set token keeps its colour over a fallback of currentColor',
+    css: '.outer { --shade: rgb(9, 9, 9); color: rgb(1, 2, 3); text-shadow: 2px 3px 4px var(--shade, currentColor) } #probe { color: rgb(4, 5, 6) }',
+    tree: { name: 'text', classes: ['outer'], children: [probe()] },
+    extra: ['text-shadow'],
+  },
+  {
+    name: 'text-shadow with a colour of its own on a parent keeps it in a text with another colour',
+    css: '.outer { color: rgb(1, 2, 3); text-shadow: 2px 3px 4px rgb(9, 9, 9) } #probe { color: rgb(4, 5, 6) }',
+    tree: { name: 'text', classes: ['outer'], children: [probe()] },
+    extra: ['text-shadow'],
+  },
+  {
+    name: 'text-shadow with no colour on a parent is inherited in the colour of the parent',
+    css: '.outer { color: rgb(1, 2, 3); text-shadow: 2px 3px 4px } #probe { color: rgb(1, 2, 3) }',
+    tree: { name: 'text', classes: ['outer'], children: [probe()] },
+    extra: ['text-shadow'],
+  },
 ];
 
 /** The `font` shorthand puts back every part it leaves out, in a sheet as in a style. */

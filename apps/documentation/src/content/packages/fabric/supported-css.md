@@ -223,7 +223,8 @@ the exception, since a token is read in one form: write its lengths out, or put 
 the token. A shadow token can have a token in its color too, `--ring: 0 0 0 2px var(--ring-color,
 currentcolor)`, filled in where it is used. `currentcolor` as the fallback of a shadow's color is
 the element's `color`, or the one it inherits, or black. A `text-shadow` takes tokens the same way,
-in its color and its lengths.
+in its color and its lengths. One with no color is inherited as `currentColor`, so a text inside it
+with a color of its own draws the shadow in that color.
 
 Truncation is a paragraph's props on native, not a style, and CSS's three ways of asking for it
 compile to them: `white-space: nowrap` to `numberOfLines: 1`, `line-clamp` or `-webkit-line-clamp`
@@ -517,7 +518,7 @@ computes it, until a rule styles that side again. A border with no color is draw
 text color, its own or inherited, as on the web: `border: 2px solid`, a `border-width` with no
 `border-color`, and a side with a width that no rule gave a color. So is a border color of
 `currentColor`, which is what Tailwind's `border-current` writes. Where no text color is set
-either, the border is black. An outline or a `box-shadow` with no
+either, the border is black. An outline, a `box-shadow` or a `text-shadow` with no
 color, an `outline-color`, a `background-color` and a `text-decoration-color` of `currentColor`, a
 `var()` that falls back to `currentColor` and a custom property that holds it take the text color
 the same way, where they are used. `color: currentColor` and `color: inherit` are the color the

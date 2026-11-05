@@ -96,6 +96,130 @@ describe('a box-shadow with no colour', () => {
   });
 });
 
+describe('a text-shadow with no colour', () => {
+  it('is drawn in the colour the element inherits, with no warning', () => {
+    const { props, warnings } = tree(`.p { color: ${RED} } .a { text-shadow: 2px 2px 4px }`, ['p']);
+    assert.deepEqual(warnings, []);
+    assert.equal(props()['textShadowColor'], RED);
+  });
+
+  it('follows the colour when it changes', () => {
+    const { engine, outer, props } = tree(
+      `.p { color: ${RED} } .q { color: ${BLUE} } .a { text-shadow: 2px 2px currentColor }`,
+      ['p'],
+    );
+    engine.removeClass(outer, 'p');
+    engine.addClass(outer, 'q');
+    engine.commit();
+    assert.equal(props()['textShadowColor'], BLUE);
+  });
+
+  it('is drawn in the colour of a child that sets its own, and follows it', () => {
+    const { engine, node, props } = tree(
+      `.p { color: ${RED}; text-shadow: 2px 2px } .a { color: ${BLUE} } .a.g { color: ${GREY} }`,
+      ['p'],
+    );
+    assert.equal(props()['textShadowColor'], BLUE);
+    engine.addClass(node, 'g');
+    engine.commit();
+    assert.equal(props()['textShadowColor'], GREY);
+  });
+
+  it('gives way to a colour that wins the cascade over it', () => {
+    const over = (css: string) => tree(`.a { color: ${BLUE} } ${css}`).props()['textShadowColor'];
+    const later = '.a { text-shadow: 2px 2px }';
+    assert.equal(over(`${later} .a { text-shadow: 2px 2px var(--y, ${RED}) }`), RED);
+    assert.equal(
+      over(`.a { text-shadow: 2px 2px var(--x, currentColor) } .a { text-shadow: 2px 2px ${RED} }`),
+      RED,
+    );
+    assert.equal(over(`.a { text-shadow: 2px 2px ${RED} !important } ${later}`), RED);
+    assert.equal(over(`.a { text-shadow: 2px 2px ${RED} } ${later}`), BLUE, 'and wins over one');
+  });
+
+  it('leaves a child that sets a shadow colour of its own as it is', () => {
+    const { props } = tree(
+      `.p { color: ${RED}; text-shadow: 2px 2px } .a { color: ${BLUE}; text-shadow: 1px 1px ${GREY} }`,
+      ['p'],
+    );
+    assert.equal(props()['textShadowColor'], GREY);
+  });
+
+  it('leaves the colour a sibling inherits as it is', () => {
+    const sheet = compileCss(`.p { color: ${RED}; text-shadow: 2px 2px } .b { color: ${BLUE} }`);
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1);
+    const outer = engine.createElement('view', sheet);
+    engine.addClass(outer, 'p');
+    const own = engine.createElement('view', sheet);
+    engine.addClass(own, 'b');
+    const plain = engine.createElement('view', sheet);
+    engine.appendChild(outer, own);
+    engine.appendChild(outer, plain);
+    engine.appendChild(engine.root, outer);
+    engine.commit();
+    const [first, second] = fabric.committed[0]!.children;
+    assert.equal(first!.props['textShadowColor'], BLUE);
+    assert.equal(second!.props['textShadowColor'], RED);
+  });
+});
+
+describe('a text-shadow with no colour, over an element no sheet reaches', () => {
+  it('is drawn in the colour its inline style sets, and that of what is under it', () => {
+    const sheet = compileCss(`.p { color: ${RED}; text-shadow: 2px 2px }`, 'current');
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1);
+    const outer = engine.createElement('view', sheet);
+    engine.addClass(outer, 'p');
+    const bare = engine.createElement('view');
+    engine.setProp(bare, 'style', { color: BLUE });
+    const under = engine.createElement('view');
+    engine.appendChild(bare, under);
+    engine.appendChild(outer, bare);
+    engine.appendChild(engine.root, outer);
+    engine.commit();
+    const bareProps = fabric.committed[0]!.children[0]!;
+    assert.equal(bareProps.props['textShadowColor'], BLUE);
+    assert.equal(bareProps.children[0]!.props['textShadowColor'], BLUE);
+  });
+
+  it('hands the keyword on through one whose inline style sets no colour', () => {
+    const sheet = compileCss(`.p { color: ${RED}; text-shadow: 2px 2px }`, 'current');
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1);
+    const outer = engine.createElement('view', sheet);
+    engine.addClass(outer, 'p');
+    const sized = engine.createElement('view');
+    engine.setProp(sized, 'style', { fontSize: 20 });
+    const coloured = engine.createElement('view');
+    engine.setProp(coloured, 'style', { color: BLUE });
+    engine.appendChild(sized, coloured);
+    engine.appendChild(outer, sized);
+    engine.appendChild(engine.root, outer);
+    engine.commit();
+    const under = fabric.committed[0]!.children[0]!.children[0]!;
+    assert.equal(under.props['textShadowColor'], BLUE);
+  });
+
+  it('leaves a shadow colour its inline style sets as it is', () => {
+    const sheet = compileCss(`.p { color: ${RED}; text-shadow: 2px 2px }`, 'current');
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1);
+    const outer = engine.createElement('view', sheet);
+    engine.addClass(outer, 'p');
+    const bare = engine.createElement('view');
+    engine.setProp(bare, 'style', { color: BLUE, textShadowColor: GREY });
+    const under = engine.createElement('view');
+    engine.appendChild(bare, under);
+    engine.appendChild(outer, bare);
+    engine.appendChild(engine.root, outer);
+    engine.commit();
+    const bareProps = fabric.committed[0]!.children[0]!;
+    assert.equal(bareProps.props['textShadowColor'], GREY);
+    assert.equal(bareProps.children[0]!.props['textShadowColor'], GREY, 'and what is under it');
+  });
+});
+
 describe('a background in currentColor', () => {
   it('is the colour of the text, with no warning', () => {
     const { props, warnings } = tree(`.a { color: ${RED}; background-color: currentColor }`);

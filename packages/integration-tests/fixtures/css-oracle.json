@@ -5574,6 +5574,86 @@
     }
   },
   {
+    "name": "text-shadow with no colour in a stylesheet is the colour of the text",
+    "expected": {
+      "color": "rgb(1, 2, 3)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-shadow": "rgb(1, 2, 3) 2px 3px 4px"
+    }
+  },
+  {
+    "name": "text-shadow with no colour in a stylesheet is the colour the element inherits",
+    "expected": {
+      "color": "rgb(4, 5, 6)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-shadow": "rgb(4, 5, 6) 2px 3px 0px"
+    }
+  },
+  {
+    "name": "text-shadow in currentColor in a stylesheet is the colour of the text",
+    "expected": {
+      "color": "rgb(7, 8, 9)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-shadow": "rgb(7, 8, 9) 2px 3px 4px"
+    }
+  },
+  {
+    "name": "text-shadow with no colour on a parent is drawn in the colour of a text that sets its own",
+    "expected": {
+      "color": "rgb(4, 5, 6)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-shadow": "rgb(4, 5, 6) 2px 3px 4px"
+    }
+  },
+  {
+    "name": "text-shadow with no colour is drawn in the colour of a text two levels down",
+    "expected": {
+      "color": "rgb(7, 8, 9)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-shadow": "rgb(7, 8, 9) 2px 3px 4px"
+    }
+  },
+  {
+    "name": "text-shadow in a token holding currentColor is drawn in the colour of a text that sets its own",
+    "expected": {
+      "color": "rgb(4, 5, 6)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-shadow": "rgb(4, 5, 6) 2px 3px 4px"
+    }
+  },
+  {
+    "name": "text-shadow falling back to currentColor is drawn in the colour of a text that sets its own",
+    "expected": {
+      "color": "rgb(4, 5, 6)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-shadow": "rgb(4, 5, 6) 2px 3px 4px"
+    }
+  },
+  {
+    "name": "text-shadow in a set token keeps its colour over a fallback of currentColor",
+    "expected": {
+      "color": "rgb(4, 5, 6)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-shadow": "rgb(9, 9, 9) 2px 3px 4px"
+    }
+  },
+  {
+    "name": "text-shadow with a colour of its own on a parent keeps it in a text with another colour",
+    "expected": {
+      "color": "rgb(4, 5, 6)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-shadow": "rgb(9, 9, 9) 2px 3px 4px"
+    }
+  },
+  {
+    "name": "text-shadow with no colour on a parent is inherited in the colour of the parent",
+    "expected": {
+      "color": "rgb(1, 2, 3)",
+      "background-color": "rgba(0, 0, 0, 0)",
+      "text-shadow": "rgb(1, 2, 3) 2px 3px 4px"
+    }
+  },
+  {
     "name": "font in a stylesheet over a weaker italic and bold",
     "expected": {
       "color": "rgb(0, 0, 0)",
