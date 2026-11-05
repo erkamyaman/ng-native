@@ -860,4 +860,14 @@ describe('tabs that grow from no basis, in a row as wide as its content', () => 
       assert.deepEqual(widths, [80, 10, 70], conformance);
     }
   });
+
+  it('holds no tab wider than its row, where a word is wider than the row', () => {
+    for (const conformance of CONFORMANCES) {
+      const row = ['col', 'flex-direction: row; width: fit-content; max-width: 40px'] as const;
+      const s = tabsScene(row, 'flex: 1 1 0%', ONE_WORD, conformance);
+      const [[rowWidth], , [long]] = s.tabSizes();
+      assert.equal(rowWidth, 40, conformance);
+      assert.equal(long, 40, `${conformance}: the word overflows its tab, as in Chrome`);
+    }
+  });
 });
