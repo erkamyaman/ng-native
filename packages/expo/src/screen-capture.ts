@@ -20,7 +20,7 @@
  */
 import { DestroyRef, InjectionToken, Service, inject, signal, type Signal } from '@angular/core';
 import { onWindowFront, sharedBySource } from '@ng-native/device';
-import { expoModule, present } from './native.ts';
+import { currentPlatform, expoModule, present } from './native.ts';
 import { Permission, UNAVAILABLE } from './permissions.ts';
 
 type Expo = typeof import('expo-screen-capture');
@@ -130,17 +130,32 @@ export class ScreenCapture {
   }
 
   /**
-   * iOS: blurs the app while it is not in focus - in the app switcher, in the background, and
-   * during interruptions - by `blurIntensity` from 0 to 1, half by default. Android already hides
-   * it in the app switcher while capture is prevented.
+   * Hides the app's content in the app switcher, and leaves screenshots allowed. iOS: blurs the
+   * app while it is not in focus - in the app switcher, in the background, and during
+   * interruptions - by `blurIntensity` from 0 to 1, half by default. Android 13 and later: leaves
+   * the app's snapshot out of recent apps, with this package's native half; `blurIntensity` is
+   * not used. Earlier Android, and a build without the native half such as Expo Go, do nothing.
    */
   async protectAppSwitcher(blurIntensity?: number): Promise<void> {
+    const recents = nativeRecents();
+    if (recents?.setScreenshotEnabled) return recents.setScreenshotEnabled(false);
+    if (currentPlatform() === 'android') return;
     await this.native?.enableAppSwitcherProtectionAsync(blurIntensity);
   }
 
+  /** Shows the app's content in the app switcher again. */
   async unprotectAppSwitcher(): Promise<void> {
+    const recents = nativeRecents();
+    if (recents?.setScreenshotEnabled) return recents.setScreenshotEnabled(true);
+    if (currentPlatform() === 'android') return;
     await this.native?.disableAppSwitcherProtectionAsync();
   }
+}
+
+/** `RecentsModule`, this package's Android half. Absent on iOS and in Expo Go. */
+function nativeRecents(): { setScreenshotEnabled?(enabled: boolean): Promise<void> } | undefined {
+  const modules = (globalThis as { expo?: { modules?: Record<string, unknown> } }).expo?.modules;
+  return modules?.['NgNativeRecents'] as ReturnType<typeof nativeRecents>;
 }
 
 /** Screen capture, as every app on one module holds it. */
