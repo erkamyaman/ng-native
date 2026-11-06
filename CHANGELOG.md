@@ -1,3 +1,39 @@
+## 0.22.2 (2026-11-06)
+
+### 🩹 Fixes
+
+- `background-image: var(--g)` now draws the gradients its token holds, `currentColor` in a background token's last layer is now the text colour, and a written `background: platform-color(...)` in a stylesheet now takes away a weaker rule's image, as Chrome does for each. ([#1395](https://github.com/ng-native/ng-native/pull/1395))
+
+  `background-image: var(--g)` was dropped with a warning in a stylesheet and in a `style` attribute or `[style.background-image]` binding. It now reads a token from a stylesheet, one set on an element, or a fallback. A token of `none`, one with a colour in it or one that holds no image leaves no image, as in Chrome, where such a value is invalid.
+
+  A token such as `--x: center currentColor` in `background: linear-gradient(...), var(--x)` or `background: var(--x)` was read as invalid, so nothing was drawn. Its colour is now the element's text colour, its own or inherited, and follows it when it changes. The same holds for a token set on an element, a `var()` fallback, and `background: linear-gradient(...), currentColor` in a `style` attribute or `[style.background]` binding, which was dropped with a warning.
+
+  `background: platform-color(link)` in a stylesheet now writes no image and the initial position, size and repeat, as `background: red` does, where a weaker rule's image stayed. A system colour such as `background: LinkText` already did this, and so did a `style` attribute or a `[style]` binding.
+
+- `ScreenCapture.protectAppSwitcher()` now hides the app's snapshot in recent apps on Android 13 and later without blocking screenshots, where it rejected with an `UnavailabilityError` from `expo-screen-capture`. ([#1414](https://github.com/ng-native/ng-native/pull/1414), [#1413](https://github.com/ng-native/ng-native/issues/1413))
+
+  It calls `Activity.setRecentsScreenshotEnabled(false)` through this package's native half, and `unprotectAppSwitcher()` calls it with `true`. The setting is applied again to an activity that is recreated while it is on. It needs a development build. On Android before 13, and in Expo Go on Android, both calls now resolve without doing anything. `blurIntensity` is used on iOS only, which is unchanged.
+
+- A `text-shadow` with no colour, or in `currentColor` written out, in a token or as the fallback of a `var()`, in a stylesheet is now drawn in the element's text colour, as Chrome draws it, where it was dropped with a warning. It follows the text colour when that changes, as a `box-shadow` with no colour does, and a text inside it with a colour of its own draws the shadow it inherits in that colour, as CSS inherits `currentColor` as the keyword. ([#1398](https://github.com/ng-native/ng-native/pull/1398))
+- A `null` bound to an optional number or boolean input in `@ng-native/components` or `@ng-native/expo`, or to an optional boolean input in `@ng-native/router`, is now unset, as `undefined` is. Before, a number input sent `NaN` to native and a boolean input sent `false`. ([#1409](https://github.com/ng-native/ng-native/pull/1409), [#1408](https://github.com/ng-native/ng-native/issues/1408))
+
+  Among them are `[numberOfLines]` on `<text>`, `[maxLength]` on `<text-input>`, `[spacing]` on `<expo-glass-container>` and `[collapsable]` on `<view>`; `[size]` on `<expo-symbol>` takes its default of 24. A binding that turns from a value to `null` removes the prop, so native goes back to its default. A boolean bound to `null` now takes the default an unset one takes rather than `false`, which shows most where that default is `true`: `[editable]` on `<text-input>` leaves the field editable, `[animating]` on `<activity-indicator>` spins and `[scrollEnabled]` on `<scroll-view>` scrolls. The same goes for `[accessible]` and `[focusable]` on a component that is accessible or focusable by default, `[stickySectionHeadersEnabled]` (sticky on iOS), `[alwaysBounceVertical]` on a vertical scroll view, and `aria-busy`, `aria-checked`, `aria-disabled`, `aria-expanded` and `aria-selected`, which are left out of the accessibility state rather than set to `false`.
+
+- A property children inherit now eases in them while an element transitions or animates it: the text inside a view whose `color` transitions takes each frame's colour, where it jumped to the end colour at once, and the text inside a view whose `color` a `@keyframes` animation plays follows the frames, where it kept no colour at all. A child that sets the property itself keeps its own. ([#1397](https://github.com/ng-native/ng-native/pull/1397))
+- Tabs that are each `flex: 1 1 0%` (Tailwind's `flex-1`) in a row as wide as its content now share the row's width as in Chrome, so tabs of different lengths come out the same width wherever that keeps each word whole, where a `w-fit`, `max-w-max` or `inline-flex` row had each tab at the width of its own text. ([#1403](https://github.com/ng-native/ng-native/pull/1403))
+
+  A tab whose even share would be narrower than its longest word is held at that word, and the other tabs share what is left, so no word is broken. That applies to an item with a `flex-basis` of `0%` or `0` in any row fitted to its content, including one kept from stretching by `align-self: flex-start` and one stretched across a `width: fit-content` box, where such tabs were the same width even when that was narrower than a word. Chrome under the layout reset keeps the even share and lets the word overflow the tab, so there the widths differ from Chrome's. An item with a `min-width` of its own keeps that minimum, and none is held wider than its row.
+
+  An item with a basis of `0%` that does not grow is held at its longest word in such a row, where it was at the width of its text, or 0 wide in a row kept from stretching. One with a basis of `0` points that does not grow stays 0 wide, as in Chrome.
+
+  Reading each tab's longest word takes two more commits when such a row is first laid out or what it holds changes. An item's own `min-width: auto` in such a row now holds as in Chrome too, where it had the even share or the width of its text.
+
+### ❤️ Thank You
+
+- Ashley Hunter
+- erKam @erkamyaman
+- Gabriel Silva @GabeSilvaDev
+
 ## 0.22.1 (2026-11-05)
 
 ### 🩹 Fixes
