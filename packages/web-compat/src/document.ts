@@ -440,6 +440,16 @@ export function documentFor(engine: Engine): CompatDocument {
     required(args, 1, 'querySelector');
     return query(elements(), String(args[0]), engine.root, true)[0] ?? null;
   };
+  type TextHolder = { textContent: string };
+  type Parent = { appendChild(node: unknown): unknown };
+  /** The document's title element: the first HTML `<title>` in it, read each time it is asked. */
+  const titleElement = (): EngineNode | null => {
+    for (const node of elements()) {
+      const named = node as unknown as { localName?: string; namespaceURI?: string };
+      if (named.localName === 'title' && named.namespaceURI === XHTML) return node;
+    }
+    return null;
+  };
   // A listener on the body hears the whole page, as one on the document does.
   const bodyListeners = anywhere(engine, body);
   /** Its `implementation`, made the first time it is asked for. */
@@ -480,6 +490,20 @@ export function documentFor(engine: Engine): CompatDocument {
     },
     set dir(value: unknown) {
       (engine.root as unknown as { dir: unknown }).dir = value;
+    },
+    // The text of the first HTML `<title>`, in the head or anywhere in the page, as Angular's
+    // `Title` reads it. Set, it is that title's text, or a new one's in the head.
+    get title() {
+      const text = (titleElement() as TextHolder | null)?.textContent ?? '';
+      // ASCII white space, which `trim()` is more than: a no-break space stays.
+      return text.replace(/[\t\n\f\r ]+/g, ' ').replace(/^ | $/g, '');
+    },
+    set title(value: unknown) {
+      const made = () =>
+        (head as unknown as Parent).appendChild(
+          elementNamed(engine, { namespace: XHTML, prefix: null, localName: 'title' }),
+        );
+      ((titleElement() ?? made()) as TextHolder).textContent = String(value);
     },
     readyState: 'complete',
     visibilityState: 'visible',
