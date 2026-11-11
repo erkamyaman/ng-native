@@ -14,7 +14,8 @@ listed is not there.
 - Node names and kinds, namespaces and prefixes, attributes (as `Attr` nodes and in a namespace)
   and classes, `classList`, `dataset`, `textContent` and `innerText`.
 - Listeners: `addEventListener`, `removeEventListener` and `dispatchEvent`, on nodes and on the
-  `window`.
+  `window`. The window's stay once the last app has gone, with none of the app's listeners on it,
+  so a root service destroyed after the provider can take its listener off.
 - The tree: live `childNodes` and `children`, the nodes around one, `appendChild`,
   `insertBefore`, `removeChild`, `replaceChild`, `append`, `prepend`, `replaceChildren`, `before`,
   `after`, `replaceWith`, `insertAdjacentElement`, `moveBefore`, `cloneNode`, `getRootNode`,
