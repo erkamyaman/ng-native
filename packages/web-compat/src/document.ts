@@ -427,7 +427,12 @@ export function documentFor(engine: Engine): CompatDocument {
   // A head a script put in the page is found with it, once.
   const apart = () => topOf(head) !== engine.root;
   function* everything(): Generator<EngineNode> {
-    if (apart()) yield* descendants(head);
+    // SPIKE: `<html>` and `<head>` are elements of the document too.
+    yield engine.root;
+    if (apart()) {
+      yield head;
+      yield* descendants(head);
+    }
     yield* descendants(engine.root);
   }
   /** The elements a query of the document looks at: `<html>`, then the head, then the page. */

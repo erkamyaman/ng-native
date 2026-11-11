@@ -91,6 +91,8 @@ function hooksOf(node: EngineNode): Hooks {
       settingStyle(node, () => {
         run();
         noteWritten(node, 'style', styleOf(node).cssText);
+        // SPIKE: a sheet's `[style*=top]` reads the attribute's text, not the style object.
+        engineOf(node).keepAttribute(node, 'style', styleOf(node).cssText || null);
       }),
     declared(name, value, gone) {
       give(node, name, value);
