@@ -39,7 +39,7 @@ import { ProfileForm } from './profile-form.ts';
   template: `
     <native-header title="Account" />
     <tui-root>
-      <scroll-view contentContainerClass="content">
+      <scroll-view contentContainerClass="content" keyboardShouldPersistTaps="handled">
         <section>
           <h2>Profile</h2>
           <app-profile-form />
