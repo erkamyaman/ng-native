@@ -11,6 +11,7 @@ import { createDocumentType } from './document-type.ts';
 import { required } from './dom-error.ts';
 import { implementationFor } from './dom-implementation.ts';
 import { byClassName, byName, byTagName, byTagNameNS } from './elements-by.ts';
+import { childText } from './element-text.ts';
 import type { HTMLCollection } from './live-list.ts';
 import {
   createEvent,
@@ -494,7 +495,9 @@ export function documentFor(engine: Engine): CompatDocument {
     // The text of the first HTML `<title>`, in the head or anywhere in the page, as Angular's
     // `Title` reads it. Set, it is that title's text, or a new one's in the head.
     get title() {
-      const text = (titleElement() as TextHolder | null)?.textContent ?? '';
+      // Only the text directly in it, as HTML's "child text content" is: an element in it is not.
+      const element = titleElement();
+      const text = element ? childText(element) : '';
       // ASCII white space, which `trim()` is more than: a no-break space stays.
       return text.replace(/[\t\n\f\r ]+/g, ' ').replace(/^ | $/g, '');
     },

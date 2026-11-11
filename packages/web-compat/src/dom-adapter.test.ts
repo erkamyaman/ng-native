@@ -95,6 +95,14 @@ describe("Angular's DOM adapter in an app that asked for the package", () => {
     assert.equal(title.getTitle(), 'Written');
     title.setTitle('Set');
     assert.equal(written.textContent, 'Set');
+    // Only the text directly in it, as Chrome reads it: an element in it is passed over.
+    written.textContent = 'A ';
+    const nested = document.createElement('span');
+    nested.textContent = 'B';
+    written.appendChild(nested);
+    written.appendChild(document.createTextNode('  C'));
+    assert.equal(document.title, 'A C');
+    assert.equal(title.getTitle(), 'A C');
   });
 
   it('answers as the browser adapter does from the nodes and the document of the app', async () => {

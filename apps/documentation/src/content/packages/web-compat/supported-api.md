@@ -32,8 +32,8 @@ listed is not there.
   `Comment`, `DocumentFragment`, `NodeList`, `HTMLCollection`, `DOMParser`, `XMLSerializer`,
   `Document`, `Attr`, `CSS`, `MediaList`, the window's size, and an element with an id as a global
   of that name.
-- `document.title`, the text of the first HTML `<title>`, which setting it writes, making one in
-  the head where there is none: what Angular's `Title` reads and sets.
+- `document.title`, the text directly in the first HTML `<title>`, which setting it writes,
+  making one in the head where there is none: what Angular's `Title` reads and sets.
 - Angular's DOM adapter, `getDOM()`, where the app has set none of its own, so Angular's `Meta`
   adds, finds, changes and takes away its tags in the head. It makes elements and documents, sends
   and listens for events, takes an element away, finds the window, the document and the body, and

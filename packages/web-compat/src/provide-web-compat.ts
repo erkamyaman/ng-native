@@ -260,7 +260,9 @@ export interface WebCompatOptions {
  *   native router, it is the router's.
  * - An `<iframe>` is a native web view, or a document of its own: see `WebCompatOptions.frames`.
  * - Angular's DOM adapter, which `Meta` makes and takes away its tags with, is this package's
- *   where the app has none: see `dom-adapter.ts`.
+ *   where the app has none: see `dom-adapter.ts`. `Meta` takes the adapter when it is made, and
+ *   this sets it in its environment initializer, so list it before any provider whose initializer
+ *   uses `Meta`: one listed first makes a `Meta` with no adapter, whose `addTag()` throws.
  *
  * Nothing is added until this is called, and all of it is taken away again when the last app
  * that asked for it is destroyed, but for the window's listening, see `installWindow`, and

@@ -55,6 +55,10 @@ npx expo install react-native-webview
 platform to stand on in an app with no router. In an app with the native router, `Location` is the
 router's, in whichever order the two are listed.
 
+List it before any provider whose initializer uses Angular's `Meta`. `Meta` takes Angular's DOM
+adapter when it is made, and `provideWebCompat()` sets that adapter as its own initializer runs, so
+a `Meta` made in an initializer listed before it has none, and its `addTag()` throws.
+
 ```ts
 import { AppRegistry } from 'react-native';
 import { mount } from '@ng-native/platform';
