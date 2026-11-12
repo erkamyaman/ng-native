@@ -14,9 +14,6 @@ import { Meta } from '@angular/platform-browser';
 import { cleanup, render } from '@ng-native/testing';
 import { provideWebCompat } from './index.ts';
 
-/** What a library sees of the DOM: loosely typed, as its own code would be. */
-type Dom = any;
-
 @Component({ selector: 'x-page', template: '<div></div>' })
 class Page {
   readonly meta = inject(Meta);
@@ -29,7 +26,7 @@ it("leaves an adapter the app set itself, and Meta makes its tags with the app's
   const own = {
     createElement(tagName: string) {
       made.push(tagName);
-      return (globalThis as Dom).document.createElement(tagName);
+      return globalThis.document.createElement(tagName);
     },
   } as unknown as DomAdapter;
   setRootDomAdapter(own);

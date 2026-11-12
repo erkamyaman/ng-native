@@ -15,17 +15,14 @@ import { cleanup, render } from '@ng-native/testing';
 import { WebCompatDomAdapter } from './dom-adapter.ts';
 import { provideWebCompat } from './index.ts';
 
-/** What a library sees of the DOM: loosely typed, as its own code would be. */
-type Dom = any;
-
 @Component({ selector: 'x-page', template: '<div></div>' })
 class Page {
-  readonly document: Dom = inject(DOCUMENT);
+  readonly document: Document = inject(DOCUMENT);
   readonly meta = inject(Meta);
   readonly title = inject(Title);
 }
 
-const metasIn = (document: Dom): Dom[] => [...document.getElementsByTagName('meta')];
+const metasIn = (document: Document): Element[] => [...document.getElementsByTagName('meta')];
 
 afterEach(() => cleanup());
 
@@ -48,10 +45,10 @@ describe("Angular's DOM adapter in an app that asked for the package", () => {
 
   it('lets Meta add a tag to the head, find it, change it and take it away', async () => {
     const { meta, document } = (await render(Page, { providers: [provideWebCompat()] })).instance;
-    const tag = meta.addTag({ name: 'x', content: 'y' }) as Dom;
+    const tag = meta.addTag({ name: 'x', content: 'y' })!;
     assert.equal(tag.localName, 'meta');
     assert.equal(tag.parentNode, document.head);
-    assert.equal((globalThis as Dom).document.head.contains(tag), true);
+    assert.equal(globalThis.document.head.contains(tag), true);
     assert.equal(meta.getTag("name='x'"), tag);
     // Added again, it is the one there.
     assert.equal(meta.addTag({ name: 'x', content: 'y' }), tag);
@@ -77,7 +74,7 @@ describe("Angular's DOM adapter in an app that asked for the package", () => {
     assert.equal(named.textContent, 'Chart');
     assert.equal(title.getTitle(), 'Orders');
     assert.equal(document.title, 'Orders');
-    const element = document.head.querySelector('title');
+    const element = document.head.querySelector('title')!;
     assert.equal(element.textContent, 'Orders');
     title.setTitle('  Open   orders ');
     assert.equal(document.title, 'Open orders');
@@ -133,7 +130,7 @@ describe("Angular's DOM adapter in an app that asked for the package", () => {
     assert.equal(other.title, 'fakeTitle');
     assert.equal(dom.createElement('p', other).ownerDocument, other);
     assert.equal(made.ownerDocument, document);
-    assert.equal(dom.getUserAgent(), (globalThis as Dom).navigator.userAgent);
+    assert.equal(dom.getUserAgent(), globalThis.navigator.userAgent);
     assert.equal(dom.getCookie('session'), null);
   });
 
@@ -169,7 +166,7 @@ describe("Angular's DOM adapter in an app that asked for the package", () => {
     cleanup();
     // Angular keeps it, but it holds nothing of the apps that have gone.
     assert.equal(getDOM(), dom);
-    assert.equal(dom.getDefaultDocument(), (globalThis as Dom).document);
+    assert.equal(dom.getDefaultDocument(), globalThis.document);
     assert.notEqual(dom.getDefaultDocument(), one.document);
     const next = (await render(Page, { providers: [provideWebCompat()] })).instance;
     assert.equal(dom.getDefaultDocument(), next.document);
