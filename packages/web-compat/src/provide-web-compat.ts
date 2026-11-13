@@ -27,6 +27,7 @@ import { characterDataMembers } from './character-data.ts';
 import { forgetCommits } from './commit-watch.ts';
 import { forgetLooks } from './intersection-observer.ts';
 import { forgetBands } from './image-band.ts';
+import { drawMasksOf } from './mask.ts';
 import { eventHandlerMembers } from './event-handlers.ts';
 import { pickWith } from './file-input.ts';
 import { focusMembers, passOverToldBlurs } from './element-focus.ts';
@@ -313,6 +314,8 @@ export function provideWebCompat(options: WebCompatOptions = {}): EnvironmentPro
       // A field's blur is told at once, and native's answer to it passed over: see `element-focus.ts`.
       const heedBlurs = passOverToldBlurs(engine);
       const unwatchStyles = watchStyles(engine);
+      // A library's mask, an icon's, drawn as its SVG in the box's colour: see `mask.ts`.
+      const stopMasks = drawMasksOf(engine);
       const forgetFrames = loadFramesWith(engine, options.loadFrame);
       const forgetFrameMode = showFramesAs(engine, options.frames ?? 'webview');
       const injector = inject(Injector);
@@ -338,6 +341,7 @@ export function provideWebCompat(options: WebCompatOptions = {}): EnvironmentPro
         forgetFrameMode();
         forgetFrames();
         unwatchStyles();
+        stopMasks();
         // Each `finished` it still owed, before its commits go: see `web-animation.ts`.
         cancelAnimations(engine);
         // What an observer still watching in it heard of its commits: see `commit-watch.ts`.

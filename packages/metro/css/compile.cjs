@@ -53,7 +53,13 @@ const {
 } = require('./properties.cjs');
 const { deferGradient, GRADIENTS } = require('./gradients.cjs');
 const { calcWithTokens, motionWithTokens } = require('./token-arithmetic.cjs');
-const { filter, undrawnOnIos } = require('./filters.cjs');
+const {
+  filter,
+  undrawnOnIos,
+  backgroundSize,
+  backgroundRepeat,
+  backgroundPosition,
+} = require('./filters.cjs');
 const { expandShorthand } = require('./shorthands.cjs');
 
 /** Angular's emulated encapsulation marker, which we strip: scoping is per rule set already. */
@@ -1400,6 +1406,145 @@ function tokenedBand({ property, value }, deferred) {
   if (!edges) return false;
   deferred.push({ props: ['clipBand'], band: edges });
   return true;
+}
+
+/** The name of a property of a mask, without a vendor's prefix, or undefined for any other. */
+function maskProperty({ property, value }) {
+  const name = property === 'unparsed' ? value?.propertyId?.property : property;
+  return typeof name === 'string' && /^mask(?:-|$)/.test(name) ? name : undefined;
+}
+
+/** What a mask's layers are joined, clipped and read by: nothing to a mask of one image drawn whole. */
+const MASK_UNREAD = new Set([
+  'mask-composite',
+  'mask-clip',
+  'mask-origin',
+  'mask-mode',
+  'mask-type',
+]);
+
+const ONE_IMAGE = 'native draws a mask of one url() image, or none, and no gradient';
+
+/**
+ * A mask, in a sheet read as a browser reads it: `mask-image` of one `url()` or `none`, kept as
+ * that text (`maskImage`), or a token holding one, settled on the element; and `mask-size`,
+ * `mask-position` and `mask-repeat` kept as the background's are, the first of each list, which
+ * is the one a single image is drawn by. The `mask` shorthand of one layer says all four. The
+ * engine sends none of them to a view, and hands them to what draws the mask
+ * (`Engine.drawMasks`). What a mask of one image has no use for, and a mask of more than one
+ * layer, is refused. Answers whether it was one.
+ */
+function masked(declaration, out, deferred, context) {
+  const name = maskProperty(declaration);
+  if (name === undefined) return false;
+  if (MASK_UNREAD.has(name)) {
+    throw new CssUnsupported(`${context}: '${name}' is not read: a mask is drawn as one image.`);
+  }
+  const { property, value } = declaration;
+  if (property === 'unparsed') maskedByTokens(name, value.value, out, deferred, context);
+  else maskedAsWritten(name, value, out, context);
+  if (holdsMarker(out.maskSize) || holdsMarker(out.maskPosition)) {
+    throw new CssUnsupported(`${context}: '${name}' is read in px or %.`);
+  }
+  return true;
+}
+
+/** A mask's value written out: each part as the background's is, the image as its CSS. */
+function maskedAsWritten(name, value, out, context) {
+  if (name === 'mask-image') out.maskImage = maskImage(value, context);
+  else if (name === 'mask-size') out.maskSize = backgroundSize(value, context)[0];
+  else if (name === 'mask-position') out.maskPosition = backgroundPosition(value, context)[0];
+  else if (name === 'mask-repeat') out.maskRepeat = backgroundRepeat(value, context)[0];
+  else if (name === 'mask') maskShorthand(value, out, context);
+  else throw new CssUnsupported(`${context}: '${name}' is not read.`);
+}
+
+/**
+ * A mask's value with a token in it: an image that is one token, settled where it is used, or a
+ * size kept as its CSS, for the box and the tokens where it is used to settle.
+ */
+function maskedByTokens(name, parts, out, deferred, context) {
+  if (name === 'mask-size') {
+    out.maskSize = { css: firstLayerText(parts, context) };
+    return;
+  }
+  if (name !== 'mask-image') {
+    throw new CssUnsupported(`${context}: '${name}' made of tokens is not read. Write the value.`);
+  }
+  const token = maskToken(parts, context);
+  // In place of any image written before it, as a later declaration is in a browser.
+  supersede(deferred, deferred.length, new Set(['maskImage']));
+  delete out.maskImage;
+  deferred.push(token);
+}
+
+/**
+ * The first layer of a value with a token in it, as the CSS it is: a `mask-size` the size of the
+ * box and the tokens where it is used settle, `calc(min(1em, 100%) + 10 * var(--stroke)) 1em`.
+ */
+function firstLayerText(parts, context) {
+  const comma = parts.findIndex(isComma);
+  return withTokensText(comma < 0 ? parts : parts.slice(0, comma), context).trim();
+}
+
+/** Terms as their CSS, a `var()` among them, inside a function as well. */
+function withTokensText(parts, context) {
+  return parts
+    .map((part) => {
+      if (part.type === 'var') {
+        const { name, fallback } = part.value;
+        const after = fallback ? `, ${withTokensText(fallback, context).trim()}` : '';
+        return `var(${name.ident}${after})`;
+      }
+      if (part.type === 'function') {
+        return `${part.value.name}(${withTokensText(part.value.arguments, context)})`;
+      }
+      return termText(part, context);
+    })
+    .join('');
+}
+
+/** The one image of a `mask-image`, as the CSS that names it. */
+function maskImage(layers, context) {
+  const [image, ...rest] = layers;
+  if (rest.length || (image?.type !== 'none' && image?.type !== 'url')) {
+    throw new CssUnsupported(`${context}: ${ONE_IMAGE}.`);
+  }
+  return image.type === 'none' ? 'none' : `url(${JSON.stringify(image.value.url)})`;
+}
+
+/** `mask` of one layer: its image, place, size and repetition, each at its initial value unsaid. */
+function maskShorthand(layers, out, context) {
+  if (layers.length !== 1) throw new CssUnsupported(`${context}: ${ONE_IMAGE}.`);
+  const [layer] = layers;
+  out.maskImage = maskImage([layer.image], context);
+  out.maskPosition = backgroundPosition([layer.position], context)[0];
+  out.maskSize = backgroundSize([layer.size], context)[0];
+  out.maskRepeat = backgroundRepeat([layer.repeat], context)[0];
+}
+
+/** `mask-image: var(--icon)`: the token's text, settled where it is used. */
+function maskToken(parts, context) {
+  const [only, ...rest] = meaningful(parts);
+  if (rest.length || only?.type !== 'var') {
+    throw new CssUnsupported(`${context}: ${ONE_IMAGE}.`);
+  }
+  const reference = only.value.name.ident;
+  const fallback = only.value.fallback ? maskFallback(only.value.fallback, context) : undefined;
+  return {
+    props: ['maskImage'],
+    kind: 'keyword',
+    reference,
+    ...(fallback === undefined ? {} : { fallback }),
+  };
+}
+
+/** A token's fallback in a `mask-image`: a `url()` or `none`. */
+function maskFallback(parts, context) {
+  const [only, ...rest] = meaningful(parts);
+  if (!rest.length && only?.type === 'url') return `url(${JSON.stringify(only.value.url)})`;
+  if (!rest.length && only?.type === 'token' && only.value.value === 'none') return 'none';
+  throw new CssUnsupported(`${context}: ${ONE_IMAGE}.`);
 }
 
 /** A band's two edges, where `points` are its four corners as `bandEdge` reads each; or null. */
@@ -3485,6 +3630,7 @@ function compileCss(source, context = 'styles', options = {}) {
   function readAsABrowser(declaration, out, deferred, context) {
     if (shapePaint(declaration, out, deferred, context)) return true;
     if (tokenedBand(declaration, deferred)) return true;
+    if (masked(declaration, out, deferred, context)) return true;
     if (!isContent(declaration)) return asABrowserReads(declaration, out);
     declareContent(declaration, out, context);
     return true;

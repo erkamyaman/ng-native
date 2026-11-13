@@ -84,6 +84,8 @@ export {
   type EngineOptions,
   type EngineStats,
   type FabricNode,
+  type Mask,
+  type MaskDrawer,
   type FabricNodeSet,
   type FabricUIManager,
   type HoistOptions,

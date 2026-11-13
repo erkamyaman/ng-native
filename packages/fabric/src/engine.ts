@@ -912,6 +912,8 @@ export interface EngineNode extends HostNode {
   paintTaker?: (color: unknown) => void;
   /** The background colour `paintTaker` was last handed, or is about to be. */
   paintTaken?: unknown;
+  /** The mask this node was last handed to `Engine.drawMasks` with: none while it has none. */
+  maskDrawn?: Mask;
   /**
    * Style weaker than every sheet, where no rule and no inline style says otherwise. What lets the
    * root component's host fill the surface by default and still give way to its own `:host`. See
@@ -2819,6 +2821,7 @@ function notNative(props: Record<string, unknown>): void {
   if (props['justifySelf'] !== undefined) delete props['justifySelf'];
   if (props['tableLayout'] !== undefined) delete props['tableLayout'];
   if (props['clipBand'] !== undefined) delete props['clipBand'];
+  for (const key of MASK_KEYS) if (props[key] !== undefined) delete props[key];
   for (const key of CONTAINING_ONLY) if (props[key] !== undefined) delete props[key];
 }
 
@@ -3152,6 +3155,11 @@ function mixedValues(
 const SIZE_KEYS = new Set([
   ...['width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight', 'flexBasis'],
 ]);
+/**
+ * A mask of a library's sheet, which no view draws: handed to what draws it (`Engine.drawMasks`)
+ * and sent to native as nothing. Taken off with the image, which a mask that is anything has.
+ */
+const MASK_KEYS = ['maskImage', 'maskSize', 'maskPosition', 'maskRepeat'];
 /** What makes a box a containing block that no native view has a style for: `containsAbsolutes`. */
 const CONTAINING_ONLY = ['willChange', 'contain', 'perspective', 'backdropFilter'];
 /**
@@ -3165,6 +3173,7 @@ const LAID_OUT_HERE = new Set([
   'clipped',
   'tableLayout',
   'clipBand',
+  ...MASK_KEYS,
   ...CONTAINING_ONLY,
 ]);
 /**
@@ -6607,6 +6616,7 @@ const ENGINE_NODE_FIELDS = {
   paintsOn: true,
   paintTaker: true,
   paintTaken: true,
+  maskDrawn: true,
   defaultStyle: true,
   dormantHoists: true,
   committed: true,
@@ -7156,6 +7166,43 @@ function applyIntrinsicSize(props: Record<string, unknown>, size: IntrinsicSize)
   if (!ownRatio && size.width > 0 && size.height > 0) {
     props['aspectRatio'] = size.width / size.height;
   }
+}
+
+/** A box's mask, as `Engine.drawMasks` hands it over. */
+export interface Mask {
+  /** `url(...)`, as a stylesheet or a token writes it. */
+  readonly image: string;
+  /** As `experimental_backgroundSize` takes one layer's: `{ x, y }`, `contain` or `cover`. */
+  readonly size: unknown;
+  /** As `experimental_backgroundPosition` takes one layer's: two edges, each a length or a share. */
+  readonly position: unknown;
+  /** As `experimental_backgroundRepeat` takes one layer's: `{ x, y }`. */
+  readonly repeat: unknown;
+  /** The box's background colour, which the mask is drawn in: none where it has none. */
+  readonly color: unknown;
+}
+
+/** What draws a box's mask, told of it after a commit: null where it has none any more. */
+export type MaskDrawer = (node: EngineNode, mask: Mask | null) => void;
+
+/** Each part of a mask a stylesheet leaves out, at its initial value. */
+const MASK_INITIAL = {
+  size: { x: 'auto', y: 'auto' },
+  position: { left: '0%', top: '0%' },
+  repeat: { x: 'repeat', y: 'repeat' },
+};
+
+/** Whether two masks draw the same: of the same image, placed and coloured the same. */
+const sameMask = (a: Mask, b: Mask): boolean =>
+  a.image === b.image &&
+  Object.is(a.color, b.color) &&
+  alike(a.size, b.size) &&
+  alike(a.position, b.position) &&
+  alike(a.repeat, b.repeat);
+
+/** Two of a mask's parts alike: the same value, or objects of the same words and numbers. */
+function alike(a: unknown, b: unknown): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
 }
 
 const now = (): number => globalThis.performance?.now?.() ?? Date.now();
@@ -8876,6 +8923,85 @@ export class Engine implements HostEngine {
     }
   }
 
+  /** What draws each box's mask: see `drawMasks`. */
+  private maskDrawer: MaskDrawer | null = null;
+  /** Nodes whose mask is to be handed over once the commit running ends. */
+  private readonly maskReports = new Set<EngineNode>();
+
+  /**
+   * Hand each box whose styles give it a mask image, a library's `mask-image: url(icon.svg)`, to
+   * `listener` to draw, with its background colour: no view draws a mask, so the box paints no
+   * background of its own while it has one, and what draws the mask paints it in that colour.
+   * Called after each commit that changes a box's mask, the first one included, and with null
+   * when the box has none any more. The mask is `maskImage` as written (`url(...)`), and
+   * `maskSize`, `maskPosition` and `maskRepeat` in the shapes the background's take, each at its
+   * initial value where nothing sets it. One listener an engine: another replaces it. The function
+   * returned stops it, and each box paints its own background again.
+   */
+  drawMasks(listener: MaskDrawer): () => void {
+    this.maskDrawer = listener;
+    return () => {
+      if (this.maskDrawer !== listener) return;
+      this.maskDrawer = null;
+      this.maskReports.clear();
+      if (this.root) this.unmaskBeneath(this.root);
+    };
+  }
+
+  /** Forget the mask of each box under `node` that has one, and have it painted again. */
+  private unmaskBeneath(node: EngineNode): void {
+    if (node.maskDrawn) {
+      node.maskDrawn = undefined;
+      this.markProps(node, false);
+    }
+    for (const child of node.childList) this.unmaskBeneath(child);
+  }
+
+  /**
+   * Leave a box's background to what draws its mask, where it has one, and note the mask where it
+   * changed: see `drawMasks`. Asked of every node merged, once there is a listener.
+   */
+  private handMask(node: EngineNode, merged: Record<string, unknown>): void {
+    const image = merged['maskImage'];
+    if (typeof image !== 'string' || image === 'none') {
+      if (!node.maskDrawn) return;
+      node.maskDrawn = undefined;
+      this.maskReports.add(node);
+      return;
+    }
+    const mask: Mask = {
+      image,
+      size: merged['maskSize'] ?? MASK_INITIAL.size,
+      position: merged['maskPosition'] ?? MASK_INITIAL.position,
+      repeat: merged['maskRepeat'] ?? MASK_INITIAL.repeat,
+      color: merged['backgroundColor'],
+    };
+    // The mask is drawn in the colour: a box under it, or an image, is not painted.
+    delete merged['backgroundColor'];
+    delete merged['experimental_backgroundImage'];
+    // And drawn in the box, by a box placed in it: a static one places nothing in it. What is in
+    // a masked box is seen only through the mask in a browser, wherever it is placed.
+    if (merged['position'] === 'static') merged['position'] = 'relative';
+    if (node.maskDrawn && sameMask(node.maskDrawn, mask)) return;
+    node.maskDrawn = mask;
+    this.maskReports.add(node);
+  }
+
+  private reportMasks(): void {
+    const drawer = this.maskDrawer;
+    const nodes = [...this.maskReports];
+    this.maskReports.clear();
+    if (!drawer) return;
+    // One that throws stops neither the rest nor what the commit does after them.
+    for (const node of nodes) {
+      try {
+        drawer(node, node.maskDrawn ?? null);
+      } catch (error) {
+        this.reportEventError(error, 'mask');
+      }
+    }
+  }
+
   /** Nodes whose background colour is to be handed over once the commit running ends. */
   private readonly paintReports = new Set<EngineNode>();
 
@@ -9599,6 +9725,7 @@ export class Engine implements HostEngine {
 
     this.flushTransitionEvents();
     this.reportPaint();
+    this.reportMasks();
     this.reportTokens();
     this.playSized();
     this.scrollDriver?.afterCommit();
@@ -12625,6 +12752,7 @@ export class Engine implements HostEngine {
     if (this.asked & CSS_LAYOUT) seenByCss(merged);
     this.heldFor(node, merged);
     this.movePaint(node, merged);
+    if (this.maskDrawer) this.handMask(node, merged);
     // Asked of the namespace first: it is asked of every node merged.
     if (node.namespace !== undefined && viewName.startsWith('RNSVG')) {
       drawnAsShape(node, viewName, merged);

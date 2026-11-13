@@ -171,7 +171,7 @@ function draw(node: EngineNode, uri: string, engine: Engine): void {
     });
 }
 
-type Parsed = DefaultTreeAdapterMap['parentNode'];
+export type Parsed = DefaultTreeAdapterMap['parentNode'];
 
 const SVG = 'http://www.w3.org/2000/svg';
 /** What draws no shape, and would fetch, frame or run something: never built from a picture. */
@@ -191,7 +191,7 @@ function prune(parent: Parsed): void {
  * image with nothing in it fetched, framed or run, and here what markup builds is a live element
  * from the moment it is parsed. Parsed apart first, so no element of it is built until then.
  */
-function shapesOf(markup: string): string | undefined {
+export function shapesOf(markup: string, edit?: (drawing: Parsed) => void): string | undefined {
   const find = (parent: Parsed): Parsed | undefined => {
     for (const child of parent.childNodes) {
       if (child.nodeName === 'svg' && 'namespaceURI' in child && child.namespaceURI === SVG) {
@@ -205,6 +205,7 @@ function shapesOf(markup: string): string | undefined {
   const drawing = find(parseFragment(markup));
   if (!drawing) return undefined;
   prune(drawing);
+  edit?.(drawing);
   return serializeOuter(drawing as DefaultTreeAdapterMap['element']);
 }
 
