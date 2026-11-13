@@ -100,6 +100,19 @@ test('the accordion opens a question', async () => {
   await vi.waitFor(() => expect(screen.getByText(answer)).toBeTruthy());
 });
 
+test('the tabs switch what Help shows', async () => {
+  await start();
+  const invoices = 'Invoices are emailed on the first of each month.';
+  const question = 'Where is my data kept?';
+  expect(screen.queryByText(invoices)).toBeNull();
+  await press(screen.getByText('Billing'));
+  await vi.waitFor(() => expect(screen.getByText(invoices)).toBeTruthy());
+  expect(screen.queryByText(question)).toBeNull();
+  await press(screen.getByText('Account'));
+  await vi.waitFor(() => expect(screen.getByText(question)).toBeTruthy());
+  expect(screen.queryByText(invoices)).toBeNull();
+});
+
 test('Contact support opens a dialog, and Got it closes it', async () => {
   await start();
   const body = 'Write to support@example.com and we answer within a working day.';

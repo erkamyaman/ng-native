@@ -9,7 +9,7 @@ runtime those members, so the library runs unchanged.
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | Profile (`src/app/account/profile-form.ts`)        | Text fields, a checkbox and a switch bound with Signal Forms, an inline notification, and a button that shows an alert when it saves |
 | Subscription (`src/app/account/plan-picker.ts`)    | A badge naming the plan, and a dropdown holding a data list that changes it                                                          |
-| Help (`src/app/account/help-section.ts`)           | An accordion of questions, and a dialog opened from `TuiDialogService`                                                               |
+| Help (`src/app/account/help-section.ts`)           | Tabs over an accordion of questions, and a dialog opened from `TuiDialogService`                                                     |
 | Theme (`src/theme/taiga-theme.css`, `manrope.css`) | Taiga's theme tokens, compiled from its LESS, and its Manrope font                                                                   |
 
 ## What it takes
@@ -17,6 +17,8 @@ runtime those members, so the library runs unchanged.
 - `provideWebCompat()` and `provideTaiga()` in `src/app/app.config.ts`, and `withWebCompat()` last
   in `metro.config.js`, naming `@angular/cdk` and Taiga's `cdk`, `core` and `kit` so their
   stylesheets are read as a browser reads them. The app's own components stay native views.
+- `provideEventPlugins()` from `@ng-native/web-compat/event-plugins`, which runs Taiga's
+  `@taiga-ui/event-plugins`: its tabs listen for `tui-tab-activate.stop`, which one of them reads.
 - `tui-root` around the screen (`src/app/account/account-page.ts`): Taiga presents its dialogs,
   dropdowns and alerts in it.
 - Taiga's components imported from their secondary entry points, such as
@@ -43,8 +45,6 @@ runtime those members, so the library runs unchanged.
   stylesheet.
 - **Avatar.** Its initials are a pseudo-element's `content: attr(...)`, and its icon a mask: the
   engine creates no node for a pseudo-element.
-- **Tabs.** Taiga's tabs listen through `@taiga-ui/event-plugins` modifiers, which the renderer
-  does not run. How event plugins should work here is still open.
 
 ## Run it
 
