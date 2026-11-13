@@ -1,0 +1,12 @@
+[
+  { "name": "icon", "painted": [0, 0, 24, 24], "colour": "rgb(200, 0, 0)" },
+  { "name": "centred", "painted": [15, 5, 10, 10], "colour": "rgb(200, 0, 0)" },
+  { "name": "shape-only", "painted": [0, 10, 40, 20], "colour": "rgb(200, 0, 0)" },
+  { "name": "contain", "painted": [10, 0, 20, 20], "colour": "rgb(200, 0, 0)" },
+  { "name": "sized-from-the-end", "painted": [32, 16, 4, 4], "colour": "rgb(200, 0, 0)" },
+  { "name": "by-shares", "painted": [10, 15, 10, 10], "colour": "rgb(200, 0, 0)" },
+  { "name": "half-wide", "painted": [0, 0, 20, 10], "colour": "rgb(200, 0, 0)" },
+  { "name": "stroked", "painted": [0, 0, 24, 24], "colour": "rgb(200, 0, 0)" },
+  { "name": "taiga", "painted": [0, 11, 24, 2], "colour": "rgb(200, 0, 0)" },
+  { "name": "taiga-large", "painted": [0, 15, 32, 2], "colour": "rgb(200, 0, 0)" }
+]

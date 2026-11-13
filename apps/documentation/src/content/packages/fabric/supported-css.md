@@ -682,6 +682,16 @@ write another way:
   native view is sent it, and without that package nothing is drawn of it. A band with an edge
   that is a length or a token, and any other polygon, is dropped with a warning.
 - Any other clip is dropped with a warning, as everywhere.
+- `mask-image` of one `url()`, or `none`, or a token holding one, with `mask-size`,
+  `mask-position`, `mask-repeat` and the `mask` shorthand of one layer, is kept for
+  [`@ng-native/web-compat`](/packages/web-compat), which draws the SVG it names in the box's
+  background colour: how an icon library such as Taiga UI draws its icons. A masked box paints no
+  background of its own, and a `position: static` one is placed as `relative`, for the drawing to
+  be placed in it. No native view is sent them, and without that package the box paints its
+  background as it would with no mask. A `mask-size` with a token in it is kept as written, for
+  the box's size to settle. A mask of a gradient or of more than one layer, a `mask-position`
+  made of tokens, and `mask-composite`, `mask-clip`, `mask-origin`, `mask-mode` and `mask-type`
+  are dropped with a warning.
 - `will-change`, `contain`, `perspective` and `backdrop-filter` make a `position: static` box the
   one an absolute box inside it is placed against, as in a browser: a `will-change` naming
   `transform`, `translate`, `rotate`, `scale`, `perspective`, `filter`, `backdrop-filter`,

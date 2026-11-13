@@ -352,12 +352,25 @@ elements.
   library's stylesheet's or one a script sets in `style.clipPath`, and the image follows it as it
   moves and is whole once it goes.
 
-Gaps: `srcset`, `sizes`, `loading` and `decoding` are kept as attributes, and the picture is the
-one `src` names. An image whose picture is an SVG is drawn whole, and a band of a `<style>` made
-while the app runs is not read. `width` and `height` read the attribute or the picture, not the size
-the image is
-laid out at. There is no `Image` constructor. A `src` is resolved when it is set, and not again
-when the page's address changes.
+- A box with a mask, as an icon library draws an icon (`background: currentColor` and
+  `mask-image: url(icon.svg)`), is the SVG's shapes in the box's background colour, each paint of
+  the drawing that is not `none` in that colour with its opacity kept. It is placed by `mask-size`
+  (`auto`, `contain`, `cover`, or a size of each side) and `mask-position` where Chrome places it,
+  and what is past the box is not drawn. A `mask-size` with a token in it, Taiga UI's
+  `calc(min(1em, 100%) + 10 * var(--tui-stroke-width))`, is settled against the box as it is laid
+  out, and again when the box is resized, and a length of the viewport in the SVG,
+  `stroke-width="calc((100vw - 100vh) / 10)"`, for the size the drawing is drawn at. The SVG is a
+  `data:` URL's, or is fetched from its URL resolved against the page's address, once for an app;
+  one not found is asked for again. A device has no server the page came from, so an app gives a
+  library's icons as `data:` URLs: Taiga UI's `tuiIconsProvider({ '@tui.check': markup })` does.
+
+Gaps: a mask is drawn once whatever `mask-repeat` says, a mask that is no SVG draws nothing, and
+each says so once in development. Only a box's background is masked, not what it holds. A mask over
+a platform colour draws nothing. `srcset`, `sizes`, `loading` and `decoding` are kept as attributes,
+and the picture is the one `src` names. An image whose picture is an SVG is drawn whole, and a band
+of a `<style>` made while the app runs is not read. `width` and `height` read the attribute or the
+picture, not the size the image is laid out at. There is no `Image` constructor. A `src` is resolved
+when it is set, and not again when the page's address changes.
 
 ## Canvas
 
