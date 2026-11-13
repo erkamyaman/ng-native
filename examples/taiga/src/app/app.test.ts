@@ -1,5 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { cleanup, render, screen, settle, userEvent } from '@ng-native/testing';
+import {
+  cleanup,
+  render,
+  screen,
+  settle,
+  userEvent,
+  type FakeFabricNode,
+} from '@ng-native/testing';
 import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import { App } from './app.ts';
 import { appConfig } from './app.config.ts';
@@ -34,6 +41,17 @@ async function fillProfile(name: string, email: string) {
 
 const saveButton = () => screen.getByRole('button', { name: 'Save' });
 
+const flatten = (nodes: readonly FakeFabricNode[]): FakeFabricNode[] =>
+  nodes.flatMap((node) => [node, ...flatten(node.children)]);
+
+/** What Taiga's loader in the Save button draws: its drawing and the ring in it, while it shows. */
+function loader() {
+  const drawn = flatten([screen.getByTestId('profile-save')]);
+  const svg = drawn.find((node) => node.viewName.startsWith('RNSVGSvgView'));
+  const ring = drawn.find((node) => node.viewName === 'RNSVGCircle');
+  return svg && ring ? { svg: svg.props, ring: ring.props } : undefined;
+}
+
 test('text is set in Manrope, in the weight Taiga gives it', async () => {
   await start();
   expect(screen.getByText('Save').props['fontFamily']).toBe('Manrope-700');
@@ -47,14 +65,13 @@ test('an inline notification says what the email is for', async () => {
 
 test('the text fields take typing, and Save waits for a name, an email and the terms', async () => {
   await start();
-  expect(saveButton().props['accessibilityState']).toMatchObject({ disabled: true });
+  // Taiga's loading directive owns aria-disabled, so the native disabled prop is the real gate.
+  expect(saveButton().props['disabled']).toBe(true);
   await fillProfile('Ada', 'ada@example.com');
   expect(screen.getByTestId('profile-name').props['text']).toBe('Ada');
-  expect(saveButton().props['accessibilityState']).toMatchObject({ disabled: true });
+  expect(saveButton().props['disabled']).toBe(true);
   await press(screen.getByTestId('profile-terms'));
-  await vi.waitFor(() =>
-    expect(saveButton().props['accessibilityState']).not.toMatchObject({ disabled: true }),
-  );
+  await vi.waitFor(() => expect(saveButton().props['disabled']).toBe(false));
 });
 
 test('the checkbox and the switch show what they hold', async () => {
@@ -76,8 +93,30 @@ test('Save shows an alert, which says what the switch chose', async () => {
   await press(screen.getByTestId('profile-terms'));
   await press(screen.getByTestId('profile-news'));
   await press(saveButton());
-  await vi.waitFor(() => expect(screen.getByText('Saved, Ada')).toBeTruthy());
+  await vi.waitFor(() => expect(screen.getByText('Saved, Ada')).toBeTruthy(), { timeout: 5_000 });
   expect(screen.getByText('No news emails.')).toBeTruthy();
+});
+
+test("Save shows Taiga's loader while it saves: a ring with a dash, turning", async () => {
+  await start();
+  await fillProfile('Ada', 'ada@example.com');
+  await press(screen.getByTestId('profile-terms'));
+  expect(loader()).toBeUndefined();
+  await press(saveButton());
+  await vi.waitFor(() => expect(loader()).toBeDefined());
+  const { svg, ring } = loader()!;
+  // The drawing is 24 square and turned a quarter back, the ring is 10 across with a dash round
+  // it, its line rounded, drawn in the button's own colour.
+  expect([svg['width'], svg['height']]).toEqual([24, 24]);
+  expect((svg['transform'] as { rotate: string }[])[0]).toEqual({ rotate: '-90deg' });
+  expect(ring['r']).toBeCloseTo(10);
+  expect(ring['strokeDasharray']).toBeCloseTo(62.832);
+  expect(ring['strokeWidth']).toBe(2);
+  expect(ring['strokeLinecap']).toBe(1);
+  expect(ring['stroke']).toEqual({ type: 2 });
+  // And it is gone once the save lands.
+  await vi.waitFor(() => expect(screen.getByText('Saved, Ada')).toBeTruthy(), { timeout: 5_000 });
+  expect(loader()).toBeUndefined();
 });
 
 test('the badge names the plan, and the dropdown changes it', async () => {

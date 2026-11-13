@@ -5,12 +5,12 @@ native views through `@ng-native/web-compat`. Taiga's components reach for the D
 render, and for the window and document around it, and web-compat gives the engine's nodes and the
 runtime those members, so the library runs unchanged.
 
-| Part                                               | What it shows                                                                                                                        |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Profile (`src/app/account/profile-form.ts`)        | Text fields, a checkbox and a switch bound with Signal Forms, an inline notification, and a button that shows an alert when it saves |
-| Subscription (`src/app/account/plan-picker.ts`)    | A badge naming the plan, and a dropdown holding a data list that changes it                                                          |
-| Help (`src/app/account/help-section.ts`)           | An accordion of questions, and a dialog opened from `TuiDialogService`                                                               |
-| Theme (`src/theme/taiga-theme.css`, `manrope.css`) | Taiga's theme tokens, compiled from its LESS, and its Manrope font                                                                   |
+| Part                                               | What it shows                                                                                                                                                |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Profile (`src/app/account/profile-form.ts`)        | Text fields, a checkbox and a switch bound with Signal Forms, an inline notification, and a Save button that shows a loader while it saves and then an alert |
+| Subscription (`src/app/account/plan-picker.ts`)    | A badge naming the plan, and a dropdown holding a data list that changes it                                                                                  |
+| Help (`src/app/account/help-section.ts`)           | An accordion of questions, and a dialog opened from `TuiDialogService`                                                                                       |
+| Theme (`src/theme/taiga-theme.css`, `manrope.css`) | Taiga's theme tokens, compiled from its LESS, and its Manrope font                                                                                           |
 
 ## What it takes
 
@@ -38,9 +38,6 @@ runtime those members, so the library runs unchanged.
 - **Icons.** Taiga draws an icon as a CSS `mask-image` of an SVG file, which a native view has no
   equivalent for, so `tui-icon` and the icons inside other components (the checkbox's tick, the
   accordion's chevron, a notification's symbol) draw nothing. Taiga's icon SVGs are not bundled.
-- **Loader.** Its spinner is an SVG circle whose radius, centre and dash are CSS properties (`r`,
-  `cx`, `cy`, `stroke-dasharray`), animated by CSS, which the native SVG view does not take from a
-  stylesheet.
 - **Avatar.** Its initials are a pseudo-element's `content: attr(...)`, and its icon a mask: the
   engine creates no node for a pseudo-element.
 - **Tabs.** Taiga's tabs listen through `@taiga-ui/event-plugins` modifiers, which the renderer
