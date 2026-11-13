@@ -487,3 +487,46 @@ describe('a var() fallback made of other tokens inside a colour', () => {
     assert.equal(committedProps(fabric, node)['backgroundColor'], 'rgb(255, 128, 128)');
   });
 });
+
+describe('a token worked out from a token in em', () => {
+  // Taiga's loader: `--tui-thickness: calc(var(--t-diameter) / 12)` on its host, where
+  // `--t-diameter` is `1.5em`. Chrome keeps the em in the token and works it out where it is used.
+  const CSS =
+    '.host { font-size: 20px; --d: 1.5em; --t: calc(var(--d) / 12); --s: calc(var(--d) * 2 + 4px) } ' +
+    '.small { --d: 0.75em } .x { font-size: 16px } .big { font-size: 32px } ' +
+    '.a { width: var(--t) } .b { width: calc(var(--d) / 2 - var(--t)) } ' +
+    '.c { width: max(var(--t), 1.5px) } .d { width: var(--s) }';
+
+  function scene(hostClasses: string, classes: string) {
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1, { globalStyles: compileCss(CSS, 'global') });
+    const host = engine.createElement('view', null);
+    engine.setClasses(host, hostClasses);
+    const node = engine.createElement('view', null);
+    engine.setClasses(node, classes);
+    engine.appendChild(host, node);
+    engine.appendChild(engine.root, host);
+    engine.commit();
+    return { width: () => committedProps(fabric, node)['width'], engine, node };
+  }
+
+  it('is worked out in ems of where it is used, as Chrome does', () => {
+    // Chrome, with the host at 20px and the element at 16px: 2px, 10px and 52px.
+    assert.equal(scene('host', 'x a').width(), 2);
+    assert.equal(scene('host', 'x b').width(), 10);
+    assert.equal(scene('host', 'x d').width(), 52);
+  });
+
+  it('keeps the floor a max() puts under it', () => {
+    // Chrome: `max(var(--t), 1.5px)` with `--d: 0.75em` at 16px, 1px under the floor, is 1.5px.
+    assert.equal(scene('host small', 'x c').width(), 1.5);
+  });
+
+  it('is worked out again when the font size where it is used changes', () => {
+    // Chrome: the same `width: var(--t)` at 32px is 4px.
+    const { width, engine, node } = scene('host', 'x a');
+    engine.setClasses(node, 'x a big');
+    engine.commit();
+    assert.equal(width(), 4);
+  });
+});

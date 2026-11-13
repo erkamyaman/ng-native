@@ -601,7 +601,11 @@ every argument is absolute. A `calc()` may have any number of tokens in it, with
 absolute lengths, `+ - * /` and brackets: `calc((var(--end) - var(--start)) * 1px)` is worked
 out on device, where a token that is a length counts in points and a bare number multiplies. A
 percentage, an em or a viewport unit beside a token is dropped, since it needs layout the device
-does not do there, except a percentage added to a token for the properties below.
+does not do there, except a percentage added to a token for the properties below. A token that is
+in em or a viewport unit itself may be added, scaled and divided, in a `calc()` or in the token of
+another made from it: `--thickness: calc(var(--diameter) / 12)` with `--diameter: 1.5em` keeps the
+em, and is worked out at the font size of the element that uses it, as in a browser. A `max()` or
+`min()` of such a token is worked out there only as a floor, `max(var(--thickness), 1.5px)`.
 
 `calc()` may also add a length to a percentage, `calc(100% - 2rem)`, for a box's `width` and
 `height`, their minimums and maximums, its insets, its margins and its padding: Tailwind's

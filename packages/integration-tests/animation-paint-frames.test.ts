@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createRequire } from 'node:module';
-import { Engine, type EngineNode, type FabricUIManager } from '@ng-native/fabric';
+import { Engine, registerViewName, type EngineNode, type FabricUIManager } from '@ng-native/fabric';
 import { createLaidOutFabric } from './laid-out-fabric.ts';
 
 const require = createRequire(import.meta.url);
@@ -216,5 +216,58 @@ describe('a frame that only paints, beside a sticky box and a sum', () => {
     engine.setClasses(scroll, 'scroll narrow');
     assert.ok(frame().includes('head'));
     assert.equal(fabric.box('sum').width, 180);
+  });
+});
+
+describe("a frame of a drawing's dash running round its shape", () => {
+  it('reads no sticky box back from native, as a spinner turning does not', () => {
+    // Taiga's loader runs `stroke-dashoffset` round its ring for as long as it is shown.
+    const fabric = createLaidOutFabric();
+    let reads = new Set<unknown>();
+    const read = (fabric as FabricUIManager).getBoundingClientRect!;
+    (fabric as FabricUIManager).getBoundingClientRect = (...args) => {
+      reads.add((args[0] as { props?: Record<string, unknown> }).props?.['nativeID']);
+      return read(...args);
+    };
+    let now = 0;
+    const sheet = compileCss(
+      '@keyframes dash { from { stroke-dashoffset: 60px } to { stroke-dashoffset: 3px } } ' +
+        '.scroll { height: 300px } .head { position: sticky; top: 0; height: 20px } ' +
+        '.ring { r: 10px; stroke-dasharray: 60px; animation: dash 4s linear infinite }',
+      'library.css',
+      { generated: true },
+    );
+    const undo = registerViewName('x-circle', 'RNSVGCircle');
+    try {
+      const engine = new Engine(fabric, 1, { globalStyles: sheet as never, now: () => now });
+      const add = (element: string, name: string, parent: EngineNode) => {
+        const node = engine.createElement(element);
+        engine.setClasses(node, name);
+        engine.setProp(node, 'nativeID', name);
+        engine.appendChild(parent, node);
+        return node;
+      };
+      const scroll = add('scroll-view', 'scroll', engine.root);
+      add('view', 'head', scroll);
+      const ring = engine.createElement('x-circle');
+      ring.namespace = 'svg';
+      engine.setClasses(ring, 'ring');
+      engine.appendChild(scroll, ring);
+      engine.commit();
+      const frame = () => {
+        reads = new Set();
+        now += 100;
+        engine.advanceAnimations();
+        engine.commit();
+        return [...reads];
+      };
+      const offset = () => fabric.committed[0]!.children[1]!.props['strokeDashoffset'];
+      assert.deepEqual(frame(), []);
+      const before = offset();
+      assert.deepEqual(frame(), []);
+      assert.notEqual(offset(), before, 'and the dash moved');
+    } finally {
+      undo();
+    }
   });
 });

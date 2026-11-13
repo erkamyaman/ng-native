@@ -2257,6 +2257,8 @@ const PAINT_ONLY_KEYS = new Set([
   ...['borderColor', 'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor'],
   ...['shadowColor', 'shadowOpacity', 'shadowRadius', 'shadowOffset', 'outlineColor'],
   ...['textDecorationColor', 'textShadowColor'],
+  // How far a drawing's dash runs round its shape: Taiga's loader, for as long as it spins.
+  'strokeDashoffset',
 ]);
 
 const LINE_KEYS = ['gridColumnStart', 'gridColumnEnd', 'gridRowStart', 'gridRowEnd'];
@@ -6858,7 +6860,46 @@ function attributesFirst(byProp: ReadonlyMap<string, DeferredDeclaration>): Defe
 const CURRENT_BRUSH = { type: 2 };
 
 /** The paint a stylesheet can give a shape, which native reads only where `propList` names it. */
-const SHAPE_PAINT = ['fill', 'stroke', 'strokeWidth', 'strokeDasharray', 'strokeDashoffset'];
+const SHAPE_PAINT = [
+  ...['fill', 'stroke', 'strokeWidth', 'strokeDasharray', 'strokeDashoffset'],
+  ...['strokeLinecap', 'strokeLinejoin'],
+];
+
+/**
+ * Where a shape is and how big, which a library's sheet can say as CSS: `r`, `cx`, `cy`, `rx`,
+ * `ry`, `x` and `y`. Each is the native shape's own prop of the same name, and only the shapes
+ * below have it: a rule's `x` moves no text in Chrome, and a text's `x` is a list.
+ */
+const GEOMETRY_OF: Readonly<Record<string, readonly string[]>> = {
+  RNSVGCircle: ['cx', 'cy', 'r'],
+  RNSVGEllipse: ['cx', 'cy', 'rx', 'ry'],
+  RNSVGRect: ['x', 'y', 'rx', 'ry'],
+};
+const GEOMETRY = ['r', 'cx', 'cy', 'rx', 'ry', 'x', 'y'];
+
+/**
+ * The geometry a sheet gave a shape of a drawing, kept to be put back over the shape's own
+ * attributes once they are written: a browser ranks CSS over the attribute of the same name, so
+ * `<circle r="2">` under `.dot { r: 7px }` is drawn 7 across. None for a shape the sheet gave none.
+ */
+function sheetGeometry(props: Record<string, unknown>): Record<string, unknown> | undefined {
+  let geometry: Record<string, unknown> | undefined;
+  for (const key of GEOMETRY) if (props[key] !== undefined) (geometry ??= {})[key] = props[key];
+  return geometry;
+}
+
+/**
+ * Take a sheet's or an animation's geometry off a view of a drawing that has none of it, and put
+ * back the attribute it covered: the drawing itself, a text, a path.
+ */
+function ownGeometry(node: EngineNode, viewName: string, merged: Record<string, unknown>): void {
+  const has = GEOMETRY_OF[viewName];
+  for (const key of GEOMETRY) {
+    if (merged[key] === undefined || has?.includes(key)) continue;
+    if (node.props[key] === undefined) delete merged[key];
+    else merged[key] = node.props[key];
+  }
+}
 
 /**
  * Name in a shape's `propList` each paint its style gave it. react-native-svg takes a paint from
@@ -6963,6 +7004,7 @@ function currentPaint(merged: Record<string, unknown>): void {
  */
 function drawnAsShape(node: EngineNode, viewName: string, merged: Record<string, unknown>): void {
   noBoxOnShape(viewName, merged);
+  ownGeometry(node, viewName, merged);
   currentPaint(merged);
   namePaint(node, merged);
   if (platformOS === 'android' && FONTED.has(viewName)) fontInOne(node, merged);
@@ -12554,7 +12596,10 @@ export class Engine implements HostEngine {
         : this.ruleStyle(node),
     );
     const resolved = props['pointerEvents'];
+    // Asked of the namespace first: it is asked of every node merged.
+    const geometry = node.namespace === undefined ? undefined : sheetGeometry(props);
     writeOwnProps(node.props, props, node.attributeOnly);
+    if (geometry) Object.assign(props, geometry);
     withTextContent(node, viewName, props);
     truncatedAs(node, props);
     const cascaded = props['transform'];

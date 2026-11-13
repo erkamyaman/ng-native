@@ -303,6 +303,11 @@ a page written right to left too, and a date's or a time's `valueAsNumber` is `N
 - Its elements have SVG's names and namespace, `className` as an object with `baseVal`,
   `getBBox`, `getComputedTextLength`, a text's `getNumberOfChars` and `getSubStringLength`,
   `ownerSVGElement` and `createSVGRect`.
+- A library's stylesheet places and sizes a shape as Chrome does: `r`, `cx`, `cy`, `rx`, `ry`, `x`
+  and `y` win over the attribute of the same name, on the shapes that have each (a rule's `x` moves
+  a rectangle and not a text), and a value from tokens or in `em` is worked out at the shape. The
+  stylesheet also caps and joins a line, runs a dash of one length from a token round a shape, and
+  animates a shape's dash and paint in its `@keyframes`: Taiga UI's loader draws its ring and spins.
 - A style a script sets on a shape is its paint or its font, a paint that names a token is that
   token's colour, and a `light-dark()` paint is the side for the app's colour scheme, drawn again
   as the scheme changes.
@@ -324,9 +329,12 @@ a page written right to left too, and a date's or a time's `valueAsNumber` is `N
 Gaps: without react-native-svg's native views a drawing shows nothing, as an icon does. A
 stylesheet's attribute selector does not match a drawing's attributes: `svg[width="16"]` matches
 nothing. A marker is drawn from the `marker-start`, `marker-mid` and `marker-end` attributes, not
-from a style. A filter draws its drop shadow and its blur; each other step passes on what it
-is given. A paint written as `var()` is not followed to its token. `getBBox` does not follow a
-rotation or a skew, and a curve's box includes its handles. A path native finds no touch on is
+from a style. A stylesheet's paint, dash and line cap are under a shape's own attribute of the same
+name, where Chrome puts them over it. `rx` or `ry` as `auto`, and a dash of several lengths with a
+token in it, are dropped with a build warning. A filter draws its drop shadow and its blur; each
+other step passes on what it is given. A paint written as `var()` is not followed to its token.
+`getBBox` does not follow a rotation or a skew, and a curve's box includes its handles. A path
+native finds no touch on is
 not found by its box, and the mouse a touch is goes over a drawing's shapes only, not over other
 elements.
 

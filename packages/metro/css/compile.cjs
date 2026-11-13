@@ -2890,7 +2890,15 @@ function integerOfMath(parts, context) {
 
 /** Unparsed terms as the CSS they were: words, numbers, lengths and functions of them. */
 function cssText(parts, context) {
-  return parts.map((part) => termText(part, context)).join('');
+  return parts
+    .map((part) => (part.type === 'var' ? varText(part, context) : termText(part, context)))
+    .join('');
+}
+
+/** A `var()` as it was written, with its fallback: a shape's `r` is read again as a width. */
+function varText(part, context) {
+  const fallback = part.value.fallback ? `,${cssText(part.value.fallback, context)}` : '';
+  return `var(${part.value.name.ident}${fallback})`;
 }
 
 /** The tokens with no value of their own, as the text they stand for. */
@@ -3316,26 +3324,81 @@ const SHAPE_LENGTHS = {
 const PAINTS = new Set(['fill', 'stroke']);
 
 /**
+ * Where a shape is and how big, which a browser reads from CSS over the attribute of the same name:
+ * Taiga's loader sizes its ring with `r: calc(var(--t-diameter) / 2 - var(--tui-thickness))`. Each
+ * is the native shape's prop of the same name, and the engine gives it to the shapes that have it.
+ */
+const GEOMETRY = new Set(['r', 'cx', 'cy', 'rx', 'ry', 'x', 'y']);
+
+/** How a line's ends are capped and its corners joined, as the numbers react-native-svg takes. */
+const LINE_ENDS = {
+  'stroke-linecap': ['strokeLinecap', { butt: 0, round: 1, square: 2 }],
+  'stroke-linejoin': ['strokeLinejoin', { miter: 0, round: 1, bevel: 2 }],
+};
+
+/**
+ * A shape's geometry, `r: 7px` or `cx: 50%`: a length or a percentage, a bare number as pixels as
+ * Chrome reads one, or a token, read as a width is and written to the shape's own prop. lightningcss
+ * knows none of these properties, so each arrives as the tokens it was written as.
+ */
+function shapeGeometry(declaration, out, deferred, context) {
+  const { name, value: parts } = declaration.value;
+  const written = parts.filter((part) => part.value?.type !== 'white-space');
+  if (written.length === 1 && written[0].type === 'token' && written[0].value.type === 'number') {
+    strokeLength(name, round(written[0].value.value), out, deferred);
+    return;
+  }
+  const typed = reparsed('width', cssText(parts, context), context);
+  if (typed?.property === 'unparsed') {
+    const read = deferVar({ ...typed.value, propertyId: { property: 'width' } }, context);
+    deferred.push({ ...read, props: [name] });
+    return;
+  }
+  const read = typed?.property === 'width' ? length(typed.value, context) : undefined;
+  if (read === undefined || read === 'auto') {
+    throw new CssUnsupported(
+      `${context}: '${name}: ${cssText(parts, context)}' is no length a shape is drawn at here. ` +
+        `A length, a percentage or a token is; write the length out.`,
+    );
+  }
+  strokeLength(name, read, out, deferred);
+}
+
+/**
+ * A shape's paint or line as the one it is in has it, `stroke: inherit` as Taiga's loader writes
+ * it, or `unset`, which is the same for what SVG hands down. Answers whether it was one of these;
+ * another CSS-wide word is refused.
+ */
+function paintInherited(prop, name, parts, deferred, context) {
+  const word = onlyWord(parts)?.toLowerCase();
+  if (!CSS_WIDE.has(word)) return false;
+  if (word !== 'inherit' && word !== 'unset') {
+    throw new CssUnsupported(`${context}: '${name}: ${word}' is not drawn; 'inherit' is`);
+  }
+  deferred.push({ props: [prop], inherit: true });
+  return true;
+}
+
+/** Whether a dash pattern from a token is one dash, which native takes as a number: `var(--dash)`. */
+const oneDash = (parts) =>
+  parts.filter((part) => !(part.type === 'token' && part.value?.type === 'white-space')).length ===
+  1;
+
+/**
  * A declaration that paints an SVG shape, as the props a native shape is drawn with: for a sheet
  * compiled with `generated`, read as a browser reads a library's, whose `<svg>` is drawn
  * natively. Answers whether the declaration was one. A paint is kept as written, `none` and
- * `currentColor` included, for the engine to make the brush of.
+ * `currentColor` included, for the engine to make the brush of. A shape's geometry and how its
+ * line ends are read here too, as is a dash of one length from a token, which Taiga's loader
+ * runs round its ring.
  */
 function shapePaint(declaration, out, deferred, context) {
-  if (declaration.property === 'unparsed') {
-    const name = declaration.value?.propertyId?.property;
-    if (SHAPE_LENGTHS[name]) {
-      // As a length is read, with its fallbacks, and written to the shape's own prop.
-      const read = deferVar({ ...declaration.value, propertyId: { property: 'width' } }, context);
-      deferred.push({ ...read, props: [SHAPE_LENGTHS[name]] });
-      return true;
-    }
-    if (!PAINTS.has(name)) return false;
-    // As a colour is read, with its fallbacks, and written to the paint it is for.
-    const read = deferVar({ ...declaration.value, propertyId: { property: 'color' } }, context);
-    deferred.push({ ...read, props: [name] });
+  if (declaration.property === 'custom' && GEOMETRY.has(declaration.value?.name)) {
+    shapeGeometry(declaration, out, deferred, context);
     return true;
   }
+  if (declaration.property === 'unparsed')
+    return shapeFromTokens(declaration.value, deferred, context);
   const { property: name, value } = declaration;
   if (PAINTS.has(name)) {
     out[name] = value.type === 'none' ? 'none' : paintOf(value.value, context);
@@ -3345,11 +3408,45 @@ function shapePaint(declaration, out, deferred, context) {
     strokeLength(SHAPE_LENGTHS[name], length(value, context), out, deferred);
     return true;
   }
+  if (LINE_ENDS[name]) return lineEnd(name, value, out, context);
   if (name !== 'stroke-dasharray') return false;
   // `none` is a dash the shape names as its own and sets to nothing, which react-native-svg
   // draws solid over a dash it would otherwise take from the group it is in.
   const dashes = value.type === 'none' ? null : value.value.map((dash) => length(dash, context));
   strokeLength('strokeDasharray', dashes, out, deferred);
+  return true;
+}
+
+/**
+ * A shape's paint or length with a token in it, which lightningcss leaves `unparsed`: read as a
+ * colour or a width is, with its fallbacks, and written to the shape's own prop.
+ */
+function shapeFromTokens(value, deferred, context) {
+  const name = value?.propertyId?.property;
+  const parts = value?.value ?? [];
+  const prop = tokenedShapeProp(name, parts);
+  if (!prop) return false;
+  if (paintInherited(prop, name, parts, deferred, context)) return true;
+  const as = PAINTS.has(name) ? 'color' : 'width';
+  const read = deferVar({ ...value, propertyId: { property: as } }, context);
+  deferred.push({ ...read, props: [prop] });
+  return true;
+}
+
+/** The prop of a shape a property with a token in it is written to, or none for another. */
+function tokenedShapeProp(name, parts) {
+  if (SHAPE_LENGTHS[name]) return SHAPE_LENGTHS[name];
+  if (name === 'stroke-dasharray') return oneDash(parts) ? 'strokeDasharray' : undefined;
+  return PAINTS.has(name) ? name : undefined;
+}
+
+/** A line's cap or join, as the number react-native-svg takes. */
+function lineEnd(name, value, out, context) {
+  const [prop, kinds] = LINE_ENDS[name];
+  if (!Object.hasOwn(kinds, value)) {
+    throw new CssUnsupported(`${context}: '${name}: ${value}' has no line native draws`);
+  }
+  out[prop] = kinds[value];
   return true;
 }
 
@@ -3504,7 +3601,7 @@ function compileCss(source, context = 'styles', options = {}) {
    * any: a value refused costs only that declaration, reported, and what it writes replaces what
    * an earlier one left to settle on device. Answers whether it was one.
    */
-  function readBrowsers(declaration, out, deferred, context) {
+  function readBrowsers(declaration, out, deferred, context, read = readAsABrowser) {
     const before = deferred.length;
     const written = new Set();
     const tracked = new Proxy(out, {
@@ -3515,15 +3612,18 @@ function compileCss(source, context = 'styles', options = {}) {
       },
     });
     try {
-      if (!readAsABrowser(declaration, tracked, deferred, context)) return false;
+      if (!read(declaration, tracked, deferred, context)) return false;
       supersede(deferred, before, written);
     } catch (error) {
       if (!onUnsupported || !(error instanceof CssUnsupported)) throw error;
-      // A declaration with a token in it is `unparsed`, named by the property it is for.
+      // A declaration with a token in it is `unparsed`, named by the property it is for, and one
+      // lightningcss does not know, a shape's `r`, is `custom`, named by its own name.
       const name =
         declaration.property === 'unparsed'
           ? declaration.value?.propertyId?.property
-          : declaration.property;
+          : declaration.property === 'custom'
+            ? declaration.value?.name
+            : declaration.property;
       onUnsupported(reported(context, `dropped '${name}'`, error.message));
     }
     return true;
@@ -3892,6 +3992,13 @@ function compileCss(source, context = 'styles', options = {}) {
     // What waits for the element that plays the frame, kept for the engine to settle.
     const deferred = [];
     for (const declaration of frame.declarations?.declarations ?? []) {
+      // A shape's paint in a library's frame, as Taiga's loader runs its dash round its ring.
+      if (
+        options.generated &&
+        readBrowsers(declaration, declarations, deferred, context, shapePaint)
+      ) {
+        continue;
+      }
       declare(declaration, declarations, {}, deferred, context, addFrameDeclaration, targets);
     }
     finishBox(declarations, context);

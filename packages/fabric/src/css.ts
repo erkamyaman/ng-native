@@ -474,6 +474,8 @@ export interface DeferredDeclaration {
     readonly unit: 'em' | 'vw' | 'vh' | 'vmin' | 'vmax';
     readonly factor: number;
     readonly offset?: number;
+    /** The least it comes to, from a `max()` with a length: `max(var(--thickness), 1.5px)`. */
+    readonly floor?: number;
     /**
      * A unitless line-height: the node renders `factor` em, and what it hands down is the number,
      * which each text under it multiplies its own font size by. See `LineHeightMultiple`.
@@ -5005,11 +5007,13 @@ export class StyleResolver {
       return (ownColour ?? parentInherited['color'] ?? 'black') as string;
     };
     const marked = settledMarker(value, tokens, current);
+    // A length still to be worked out against this node: the value's own, or what a calc() of a
+    // token in em came to (`inUnitsOfUse`).
+    const owed = owedIn(marked, value);
+    if (owed) return this.computed({ ...declaration, compute: owed }, own, parentInherited);
     const settled = marked === 'currentcolor' ? current() : marked;
     if (isPlatformColour(settled) && !whole) return UNSETTLED;
     if (marked !== NOT_A_MARKER) return settled ?? UNSETTLED;
-    const pending = (value as { __defer?: DeferredDeclaration['compute'] }).__defer;
-    if (pending) return this.computed({ ...declaration, compute: pending }, own, parentInherited);
     const out: Record<string, unknown> = {};
     for (const [key, part] of Object.entries(value)) {
       const filled = fill(part);
@@ -5052,7 +5056,15 @@ export class StyleResolver {
     own: Record<string, unknown>,
     parentInherited: Record<string, unknown>,
   ): unknown {
-    const { unit, factor, offset = 0, multiple } = declaration.compute!;
+    const { unit, factor, offset = 0, multiple, floor } = declaration.compute!;
+    if (floor !== undefined) {
+      const points = this.computed(
+        { ...declaration, compute: { unit, factor, offset } },
+        own,
+        parentInherited,
+      );
+      return Math.max(points as number, floor);
+    }
     if (unit !== 'em') return this.viewportLength(unit, factor) + offset;
     if (multiple && !offset) return { multiple: Math.max(factor, 0) } satisfies LineHeightMultiple;
     // The font size in scope. On `font-size` itself that is the inherited size rather than the
@@ -5436,9 +5448,10 @@ function calcToken(
 ): TokenValue | undefined {
   let token: TokenValue | undefined;
   for (const marker of markers) {
-    const value = resolveCalc(marker, tokens);
+    const value = resolveCalc(marker, tokens) ?? inUnitsOfUse(marker, tokens);
     if (value === undefined) continue;
-    if (marker.kind === 'length') token = { ...token, length: value };
+    // A length in em is held as the compiler holds a token written in em: see `inUnitsOfUse`.
+    if (marker.kind === 'length') token = { ...token, length: value as TokenValue['length'] };
     else if (typeof value === 'number') token = { ...token, number: value };
     // Arithmetic of a percentage, `calc(var(--half) * 2)`, is a percentage, as a token written
     // `100%` is, so an hsl() does not read it as a bare number of percent.
@@ -6555,6 +6568,99 @@ function resolveCalc(
 }
 
 /**
+ * A length a calc() of tokens makes where a token in it is in em or a viewport unit, which has no
+ * number where it is defined: `calc(var(--diameter) / 12)` with `--diameter: 1.5em`. Chrome keeps
+ * the unit in the token and works it out where the token is used, so this is the length still to
+ * be worked out, as a token written `0.125em` is. Only a sum of one unit and points, scaled by
+ * numbers: a `max()` of one, or two units, has no such form, and is undefined as before.
+ */
+function inUnitsOfUse(
+  marker: CalcMarker,
+  tokens: Readonly<Record<string, TokenValue>>,
+): { __defer: DeferredEm } | undefined {
+  if (marker.kind !== 'length') return undefined;
+  const sum = linearOf(marker.expression, tokens);
+  if (!sum?.unit || !Number.isFinite(sum.per) || !Number.isFinite(sum.points)) return undefined;
+  const round = (value: number) => Math.round(value * 1e5) / 1e5;
+  const offset = round(sum.points);
+  return { __defer: { unit: sum.unit, factor: round(sum.per), ...(offset ? { offset } : {}) } };
+}
+
+/** The length a value still owes a font size or a viewport, where it is one. */
+const owedOf = (value: unknown): DeferredDeclaration['compute'] | undefined =>
+  (value as { __defer?: DeferredDeclaration['compute'] } | null)?.__defer;
+
+/** What a marker settled to still owes, or else the value it was settled from. */
+const owedIn = (marked: unknown, value: unknown): DeferredDeclaration['compute'] | undefined =>
+  owedOf(marked) ?? owedOf(value);
+
+/** A length as points and a share of one unit worked out later: `1.5em / 12 + 4px`. */
+interface Linear {
+  readonly points: number;
+  readonly per: number;
+  readonly unit?: string;
+}
+
+function linearOf(
+  expression: CalcExpression,
+  tokens: Readonly<Record<string, TokenValue>>,
+): Linear | undefined {
+  if (typeof expression === 'number') return { points: expression, per: 0 };
+  if (!Array.isArray(expression)) return linearLeaf(expression as CalcLeaf, tokens);
+  const [op, a, b] = expression as readonly [string, CalcExpression, CalcExpression];
+  const left = linearOf(a, tokens);
+  const right = linearOf(b, tokens);
+  return left && right ? LINEAR[op]?.(left, right) : undefined;
+}
+
+/** Each operation of a calc() on lengths still to be worked out, where it keeps them a sum. */
+const LINEAR: Readonly<Record<string, (left: Linear, right: Linear) => Linear | undefined>> = {
+  '+': (left, right) => summed(left, right, 1),
+  '-': (left, right) => summed(left, right, -1),
+  '*': (left, right) =>
+    left.per && right.per
+      ? undefined
+      : left.per
+        ? scaled(left, right.points)
+        : scaled(right, left.points),
+  '/': (left, right) => (right.per || !right.points ? undefined : scaled(left, 1 / right.points)),
+  // A max() or a min() of what is worked out later is not known until then.
+  max: (left, right) =>
+    left.per || right.per ? undefined : { points: Math.max(left.points, right.points), per: 0 },
+  min: (left, right) =>
+    left.per || right.per ? undefined : { points: Math.min(left.points, right.points), per: 0 },
+};
+
+/** Two such lengths added, or one taken from the other: of one unit, or none. */
+function summed(left: Linear, right: Linear, sign: 1 | -1): Linear | undefined {
+  if (left.per && right.per && left.unit !== right.unit) return undefined;
+  const unit = left.unit ?? right.unit;
+  return { points: left.points + sign * right.points, per: left.per + sign * right.per, unit };
+}
+
+const scaled = (length: Linear, by: number): Linear => ({
+  points: length.points * by,
+  per: length.per * by,
+  unit: length.unit,
+});
+
+/** A token in a calc() as `linearOf` reads it: its fallback where it is not set. */
+function linearLeaf(
+  leaf: CalcLeaf,
+  tokens: Readonly<Record<string, TokenValue>>,
+): Linear | undefined {
+  if ('percentage' in leaf) return undefined;
+  const token = tokens[leaf.reference];
+  if (!token) return leaf.fallback === undefined ? undefined : linearOf(leaf.fallback, tokens);
+  const owed = (token.length as { __defer?: DeferredEm } | undefined)?.__defer;
+  if (owed && owed.floor === undefined) {
+    return { points: owed.offset ?? 0, per: owed.factor, unit: owed.unit };
+  }
+  const points = tokenNumber(token, 'length');
+  return points === undefined ? undefined : { points, per: 0 };
+}
+
+/**
  * Whether a length is one token holding a bare number other than 0: `--tw-translate-x: 3`, from
  * `translate-x-[3]`, which a browser drops. Inside arithmetic a bare number is a factor, and fine.
  */
@@ -6748,7 +6854,7 @@ function settledMarker(
   const token = (value as { __length?: LengthMarker }).__length;
   if (token) return resolveLength(token, tokens);
   const sum = (value as { __calc?: CalcMarker }).__calc;
-  if (sum) return resolveCalc(sum, tokens);
+  if (sum) return resolveCalc(sum, tokens) ?? inUnitsOfUse(sum, tokens);
   const shadow = (value as { __dropShadow?: { reference: string } }).__dropShadow;
   if (shadow) return dropShadowOf(tokens[shadow.reference]?.shadow);
   return NOT_A_MARKER;
@@ -6889,7 +6995,7 @@ function adjusted(value: unknown, adjust: NonNullable<DeferredDeclaration['adjus
     return isPlatformColour(value) ? undefined : faded(value, adjust.alpha);
   const em = (value as { __defer?: DeferredEm } | null)?.__defer;
   if (adjust.percent !== undefined) return withPercent(value, adjust);
-  if (em && adjust.floor === undefined) return adjustedEm(em, adjust);
+  if (em) return adjustedEm(em, adjust);
   if (typeof value !== 'number') return value;
   const scaled = value * (adjust.scale ?? 1) + (adjust.offset ?? 0);
   return adjust.floor === undefined ? scaled : Math.max(scaled, adjust.floor);
@@ -6899,6 +7005,7 @@ interface DeferredEm {
   readonly unit: string;
   readonly factor: number;
   readonly offset?: number;
+  readonly floor?: number;
 }
 
 /** A length in em, worked out against the font size later, with the arithmetic moved inside it. */
@@ -6908,7 +7015,17 @@ function adjustedEm(
 ): { __defer: DeferredEm } {
   const scale = adjust.scale ?? 1;
   const offset = (em.offset ?? 0) * scale + (adjust.offset ?? 0);
-  return { __defer: { ...em, factor: em.factor * scale, ...(offset ? { offset } : {}) } };
+  // A floor on one already floored is the higher of the two, as `max()` inside `max()` is.
+  const floor =
+    adjust.floor === undefined ? em.floor : Math.max(adjust.floor, em.floor ?? -Infinity);
+  return {
+    __defer: {
+      ...em,
+      factor: em.factor * scale,
+      ...(offset ? { offset } : {}),
+      ...(floor === undefined ? {} : { floor }),
+    },
+  };
 }
 
 /** `rgb(r, g, b)` and `rgba(r, g, b, a)`, which is every colour the compiler emits. */

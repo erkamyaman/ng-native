@@ -443,6 +443,186 @@ describe("a shape's paint, in a sheet read as a browser reads it", () => {
   });
 });
 
+describe("a shape's geometry, in a sheet read as a browser reads it", () => {
+  const GEOMETRY = {
+    ...SHAPES,
+    'x-circle': 'RNSVGCircle',
+    'x-ellipse': 'RNSVGEllipse',
+    'x-rect': 'RNSVGRect',
+    'x-text': 'RNSVGText',
+    'x-box': 'RCTView',
+  };
+
+  /** An engine on a clock of the test's, with a library's sheet: see `scene`. */
+  function clocked(css: string) {
+    let now = 0;
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1, { globalStyles: generated(css) as never, now: () => now });
+    const add = (name: string, parent: EngineNode, classes = '') => {
+      const node = engine.createElement(name);
+      node.namespace = 'svg';
+      if (classes) engine.setClasses(node, classes);
+      engine.appendChild(parent, node);
+      return node;
+    };
+    const frame = (ms: number) => {
+      now += ms;
+      engine.advanceAnimations();
+      engine.commit();
+    };
+    return { fabric, engine, add, frame };
+  }
+
+  /** To a thousandth of a point, as the engine works a length out. */
+  const near = (value: unknown) => Math.round(Number(value) * 1e3) / 1e3;
+
+  // Taiga's loader, as `@taiga-ui/core` writes it, its host and its box as classes.
+  const LOADER =
+    '.host { font-size: 20px; --t-diameter: var(--tui-diameter, 1.5em); ' +
+    '--tui-thickness: calc(var(--t-diameter) / 12) } ' +
+    '.t-loader { font-size: 16px; stroke: #ff0000 } ' +
+    '@keyframes tuiLoaderRotate { 0% { transform: rotate(-90deg) } ' +
+    '50% { transform: rotate(-90deg) rotate(1turn) } to { transform: rotate(-90deg) rotate(3turn) } } ' +
+    '.t-icon { inline-size: var(--t-diameter); block-size: var(--t-diameter); ' +
+    'animation: tuiLoaderRotate 4s linear infinite } ' +
+    '@keyframes tuiLoaderDashOffset { ' +
+    '0% { stroke-dashoffset: calc(2 * 3.14159265 * calc(var(--t-diameter) / 2 - var(--tui-thickness))) } ' +
+    '50% { stroke-dashoffset: calc(.05 * calc(2 * 3.14159265 * calc(var(--t-diameter) / 2 - var(--tui-thickness)))) } ' +
+    'to { stroke-dashoffset: calc(2 * 3.14159265 * calc(var(--t-diameter) / 2 - var(--tui-thickness))) } } ' +
+    '.t-circle { r: calc(var(--t-diameter) / 2 - var(--tui-thickness)); cx: 50%; cy: 50%; ' +
+    'stroke-dasharray: calc(2 * 3.14159265 * calc(var(--t-diameter) / 2 - var(--tui-thickness))); ' +
+    'fill: none; stroke: inherit; stroke-width: max(var(--tui-thickness), 1.5px); ' +
+    'stroke-linecap: round; animation: tuiLoaderDashOffset 4s linear infinite }';
+
+  /** The loader's ring: a host, its box, the drawing and the circle in it. */
+  function loader() {
+    const scene = clocked(LOADER);
+    const { engine, add } = scene;
+    const host = add('x-box', engine.root, 'host');
+    host.namespace = undefined;
+    const box = add('x-box', host, 't-loader');
+    box.namespace = undefined;
+    const circle = add('x-circle', add('x-svg', box, 't-icon'), 't-circle');
+    engine.commit();
+    const drawn = () => {
+      const svg = scene.fabric.committed[0]!.children[0]!.children[0]!;
+      return { svg: svg.props, circle: svg.children[0]!.props };
+    };
+    return { ...scene, circle, drawn };
+  }
+
+  it('is refused in any other sheet', () => {
+    const dropped: string[] = [];
+    compileCss('.dot { r: 7px; cx: 50%; cy: 1px; rx: 2px; ry: 2px; x: 1px; y: 1px }', 'app.css', {
+      onUnsupported: (message) => dropped.push(message),
+    });
+    assert.equal(dropped.length, 7);
+  });
+
+  it("is the shape's own over its attribute, as a browser ranks one, and the attribute's again without the rule", () => {
+    // Chrome: `<circle r="2" cx="1" class="dot">` under `.dot { r: 7px; cx: 50%; cy: 4 }` has a
+    // box 14 wide, at the middle of the drawing: a bare number is read as pixels.
+    withViews(GEOMETRY, () => {
+      const { fabric, engine, add } = scene('.dot { r: 7px; cx: 50%; cy: 4 }');
+      const dot = add('x-circle', engine.root, 'dot');
+      engine.setProp(dot, 'r', '2');
+      engine.setProp(dot, 'cx', '1');
+      engine.commit();
+      const props = () => fabric.committed[0]!.props;
+      assert.deepEqual([props()['r'], props()['cx'], props()['cy']], [7, '50%', 4]);
+      engine.setClasses(dot, '');
+      engine.commit();
+      assert.deepEqual([props()['r'], props()['cx'], props()['cy'] ?? null], ['2', '1', null]);
+    });
+  });
+
+  it('is taken only by the shapes that have it, as a browser moves no text by a rule', () => {
+    // Chrome: `x` and `y` move a rect and not a text, a circle has no `rx` and a rect no `r`.
+    withViews(GEOMETRY, () => {
+      const css = '.g { x: 3px; y: 4px; r: 5px; rx: 9px; ry: 2px; cx: 1px; cy: 1px }';
+      const { fabric, engine, add } = scene(css);
+      add('x-rect', engine.root, 'g');
+      add('x-circle', engine.root, 'g');
+      add('x-ellipse', engine.root, 'g');
+      const text = add('x-text', engine.root, 'g');
+      engine.setProp(text, 'x', ['1']);
+      const svg = add('x-svg', engine.root, 'g');
+      engine.commit();
+      const pick = (props: Record<string, unknown>) =>
+        Object.fromEntries(
+          ['x', 'y', 'r', 'rx', 'ry', 'cx', 'cy']
+            .filter((key) => key in props)
+            .map((key) => [key, props[key]]),
+        );
+      const [rect, circle, ellipse, words] = fabric.committed;
+      assert.deepEqual(pick(rect!.props), { x: 3, y: 4, rx: 9, ry: 2 });
+      assert.deepEqual(pick(circle!.props), { r: 5, cx: 1, cy: 1 });
+      assert.deepEqual(pick(ellipse!.props), { rx: 9, ry: 2, cx: 1, cy: 1 });
+      assert.deepEqual(pick(words!.props), { x: ['1'] });
+      assert.deepEqual(pick(fabric.committed[4]!.props), {});
+      assert.ok(svg);
+    });
+  });
+
+  it("drops what it cannot draw from a library's sheet, with a warning", () => {
+    const dropped: string[] = [];
+    compileCss('.d { rx: auto; stroke-dasharray: var(--dash) 2px }', 'library.css', {
+      generated: true,
+      onUnsupported: (message) => dropped.push(message),
+    });
+    assert.equal(dropped.length, 2, dropped.join('\n'));
+    assert.match(dropped[0]!, /'rx'/);
+    assert.match(dropped[1]!, /'stroke-dasharray'/);
+  });
+
+  it('caps and joins its line as a rule says, named as its own', () => {
+    // Chrome: `stroke-linecap: round` and `stroke-linejoin: bevel` from a rule.
+    withViews(GEOMETRY, () => {
+      const { fabric, engine, add } = scene('.l { stroke-linecap: round; stroke-linejoin: bevel }');
+      add('x-path', engine.root, 'l');
+      engine.commit();
+      const props = fabric.committed[0]!.props;
+      assert.deepEqual([props['strokeLinecap'], props['strokeLinejoin']], [1, 2]);
+      assert.deepEqual([...(props['propList'] as string[])].sort(), [
+        'strokeLinecap',
+        'strokeLinejoin',
+      ]);
+    });
+  });
+
+  it("sizes Taiga's loader ring from its tokens, in ems of the ring and not of the host", () => {
+    // Chrome, with the host at 20px and the loader's box at 16px: r 10px, a dash of 62.8319px,
+    // a stroke 2px wide and a drawing 24px square.
+    withViews(GEOMETRY, () => {
+      const { drawn, engine } = loader();
+      const { svg, circle } = drawn();
+      assert.deepEqual([svg['width'], svg['height']], [24, 24]);
+      assert.equal(near(circle['r']), 10);
+      assert.deepEqual([circle['cx'], circle['cy']], ['50%', '50%']);
+      assert.equal(near(circle['strokeDasharray']), 62.832);
+      assert.equal(circle['strokeWidth'], 2);
+      assert.equal(circle['strokeLinecap'], 1);
+      assert.equal(circle['fill'], null);
+      assert.deepEqual(circle['stroke'], { type: 0, payload: engine.color('rgb(255, 0, 0)') });
+    });
+  });
+
+  it("turns Taiga's loader and runs its dash round it, as Chrome does a second at a time", () => {
+    // Chrome, at 0s, 1s, 2s and 3s: an offset of 62.8319px, 32.9867px, 3.14159px and 32.9867px.
+    withViews(GEOMETRY, () => {
+      const { drawn, frame } = loader();
+      const offsets = [near(drawn().circle['strokeDashoffset'])];
+      for (let second = 1; second < 4; second++) {
+        frame(1000);
+        offsets.push(near(drawn().circle['strokeDashoffset']));
+      }
+      assert.deepEqual(offsets, [62.832, 32.987, 3.142, 32.987]);
+      // And the drawing turns: a quarter back, and on by one and a half turns at 3s.
+      assert.deepEqual(drawn().svg['transform'], [{ rotate: '-90deg' }, { rotate: '720deg' }]);
+    });
+  });
+});
+
 describe('a paint written in a style', () => {
   const painted = (drawing: boolean) =>
     withViews(SHAPES, () => {
