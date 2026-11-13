@@ -1367,6 +1367,9 @@ importers:
       '@taiga-ui/i18n':
         specifier: 5.32.0
         version: 5.32.0(@angular/core@22.2.0(@angular/compiler@22.2.0)(rxjs@7.8.2))(@ng-web-apis/common@5.4.1(@angular/common@22.2.0(@angular/core@22.2.0(@angular/compiler@22.2.0)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.2.0(@angular/compiler@22.2.0)(rxjs@7.8.2))(@types/dom-speech-recognition@0.0.12)(rxjs@7.8.2))(rxjs@7.8.2)
+      '@taiga-ui/icons':
+        specifier: 5.32.0
+        version: 5.32.0
       '@taiga-ui/kit':
         specifier: 5.32.0
         version: 5.32.0(4ad0d9e2cfb8e97c214d86d3251c41a0)
@@ -5110,6 +5113,9 @@ packages:
       '@angular/core': '>=19.0.0'
       '@ng-web-apis/common': ^5.4.1
       rxjs: '>=7.0.0'
+
+  '@taiga-ui/icons@5.32.0':
+    resolution: {integrity: sha512-ZF5KStdNC68qNbUCj2kWzCsCcf6+8kLZUaDBjYrutjozFeVFhjs59XNhvy5fiQnaXgTwU45Me8fzC03NVTyGIA==}
 
   '@taiga-ui/kit@5.32.0':
     resolution: {integrity: sha512-mGXw8DwXDseNEL6RhfrwiZ9ZIagI5NdvhEpt2QcUTjwCJ2wrGmnj7uVgHnWHrapE34dkvlxqrfr20KBwSWGcLQ==}
@@ -11978,6 +11984,10 @@ snapshots:
       '@angular/core': 22.2.0(@angular/compiler@22.2.0)(rxjs@7.8.2)
       '@ng-web-apis/common': 5.4.1(@angular/common@22.2.0(@angular/core@22.2.0(@angular/compiler@22.2.0)(rxjs@7.8.2))(rxjs@7.8.2))(@angular/core@22.2.0(@angular/compiler@22.2.0)(rxjs@7.8.2))(@types/dom-speech-recognition@0.0.12)(rxjs@7.8.2)
       rxjs: 7.8.2
+      tslib: 2.8.1
+
+  '@taiga-ui/icons@5.32.0':
+    dependencies:
       tslib: 2.8.1
 
   '@taiga-ui/kit@5.32.0(4ad0d9e2cfb8e97c214d86d3251c41a0)':

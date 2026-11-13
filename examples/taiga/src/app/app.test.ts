@@ -34,6 +34,28 @@ async function fillProfile(name: string, email: string) {
 
 const saveButton = () => screen.getByRole('button', { name: 'Save' });
 
+type Drawn = ReturnType<typeof screen.getByTestId>;
+
+/**
+ * The shapes drawn in a view and what it holds, by their path: Taiga's icons are masks of its SVGs,
+ * which web-compat draws as the SVG's shapes in the colour under the mask.
+ */
+function iconPaths(node: Drawn): string[] {
+  const own = node.viewName === 'RNSVGPath' ? [String(node.props['d'])] : [];
+  return [...own, ...node.children.flatMap((child) => iconPaths(child as Drawn))];
+}
+
+/** The colour a drawn shape is stroked in. */
+function strokeOf(node: Drawn): unknown {
+  if (node.viewName === 'RNSVGPath')
+    return (node.props['stroke'] as { payload?: unknown })?.payload;
+  for (const child of node.children) {
+    const found = strokeOf(child as Drawn);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 test('text is set in Manrope, in the weight Taiga gives it', async () => {
   await start();
   expect(screen.getByText('Save').props['fontFamily']).toBe('Manrope-700');
@@ -131,4 +153,16 @@ test('the app tears down without an error, with a dialog and an alert open', asy
   await press(screen.getByText('Contact support'));
   await vi.waitFor(() => expect(screen.getByText('Got it')).toBeTruthy());
   expect(() => cleanup()).not.toThrow();
+});
+
+test("Taiga's icons are drawn: a tui-icon, a notification's symbol and an accordion's chevron", async () => {
+  await start();
+  // `@tui.credit-card` and `@tui.info`, by their first stroke.
+  const card = screen.getByTestId('plan-icon');
+  expect(iconPaths(card)).toContain('M6 14h2');
+  expect(strokeOf(card)).toMatch(/^rgb/);
+  const note = screen.getByText('Your email is only used to sign in.');
+  await vi.waitFor(() => expect(iconPaths(note.parent as Drawn)).toContain('M12 16v-4'));
+  const question = screen.getByRole('button', { name: 'Where is my data kept?' });
+  expect(iconPaths(question)).toContain('m6 9 6 6 6-6');
 });

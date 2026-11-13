@@ -1,6 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { TuiButton } from '@taiga-ui/core/components/button';
 import { TuiDataList } from '@taiga-ui/core/components/data-list';
+import { TuiIcon } from '@taiga-ui/core/components/icon';
 import { TuiDropdown } from '@taiga-ui/core/portals/dropdown';
 import { TuiBadge } from '@taiga-ui/kit/components/badge';
 
@@ -19,7 +20,7 @@ const PLANS: readonly Plan[] = [
 /** The plan: a badge naming it, and a dropdown of Taiga's data list to change it. */
 @Component({
   selector: 'app-plan-picker',
-  imports: [TuiBadge, TuiButton, TuiDataList, TuiDropdown],
+  imports: [TuiBadge, TuiButton, TuiDataList, TuiDropdown, TuiIcon],
   styles: `
     :host {
       display: flex;
@@ -36,6 +37,7 @@ const PLANS: readonly Plan[] = [
   `,
   template: `
     <div class="current">
+      <tui-icon icon="@tui.credit-card" testID="plan-icon" />
       <span>Plan</span>
       <span tuiBadge testID="plan-badge" [appearance]="plan().appearance">{{ plan().name }}</span>
     </div>

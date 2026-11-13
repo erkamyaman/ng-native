@@ -11,6 +11,7 @@ runtime those members, so the library runs unchanged.
 | Subscription (`src/app/account/plan-picker.ts`)    | A badge naming the plan, and a dropdown holding a data list that changes it                                                          |
 | Help (`src/app/account/help-section.ts`)           | Tabs over an accordion of questions, and a dialog opened from `TuiDialogService`                                                     |
 | Theme (`src/theme/taiga-theme.css`, `manrope.css`) | Taiga's theme tokens, compiled from its LESS, and its Manrope font                                                                   |
+| Icons (`src/theme/taiga-icons.ts`)                 | A `tui-icon` beside the plan, a notification's symbol and an accordion's chevron: Taiga's icon masks, drawn as their SVGs            |
 
 ## What it takes
 
@@ -32,19 +33,25 @@ runtime those members, so the library runs unchanged.
 - Manrope from `@expo-google-fonts/manrope`, declared in `src/theme/manrope.css` and registered by
   `loadFonts()` before mounting. Taiga sets its type with `font` shorthands of its tokens, which
   the engine cannot split on a device, so the screen sets the face and size its text inherits.
+- Taiga draws an icon as a CSS mask of `assets/taiga-ui/icons/<name>.svg`, which a browser fetches
+  from the server the page came from. A device has none, so `src/theme/taiga-icons.ts` holds the
+  markup of the icons the screen uses, from `@taiga-ui/icons`, and `tuiIconsProvider()` in
+  `src/app/app.config.ts` gives them to Taiga as `data:` URLs, which web-compat draws in the
+  icon's colour. After adding an icon to `scripts/build-icons.mjs` or changing the
+  `@taiga-ui/icons` version, run `pnpm icons`.
 - The theme is Taiga's light one: its dark palette applies under `tuiTheme="dark"`, which the app
   does not set, so `app.json` keeps the app light.
 
 ## Not yet
 
-- **Icons.** Taiga draws an icon as a CSS `mask-image` of an SVG file, which a native view has no
-  equivalent for, so `tui-icon` and the icons inside other components (the checkbox's tick, the
-  accordion's chevron, a notification's symbol) draw nothing. Taiga's icon SVGs are not bundled.
+- **The checkbox's tick.** It is drawn once the box matches `:checked`, and a stylesheet's
+  `:checked` matches the `checked` attribute in web-compat, not the state a tap gives the box, so
+  the tick does not show. A repeated mask, a mask of a gradient, and Taiga's badge cut out of an
+  icon (`mask-composite`) are not drawn either.
 - **Loader.** Its spinner is an SVG circle whose radius, centre and dash are CSS properties (`r`,
   `cx`, `cy`, `stroke-dasharray`), animated by CSS, which the native SVG view does not take from a
   stylesheet.
-- **Avatar.** Its initials are a pseudo-element's `content: attr(...)`, and its icon a mask: the
-  engine creates no node for a pseudo-element.
+- **Avatar.** Its initials are a pseudo-element's `content: attr(...)`, which draws no box.
 
 ## Run it
 
