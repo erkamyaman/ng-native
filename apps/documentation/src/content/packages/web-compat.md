@@ -127,6 +127,26 @@ export default defineConfig({
 });
 ```
 
+## A library's event-manager plugins
+
+Some libraries listen by names that Angular's event-manager plugins read: Taiga UI's tabs listen for
+`tui-tab-activate.stop`, which a plugin from `@taiga-ui/event-plugins` attaches as a
+`tui-tab-activate` listener that stops the event going further. `provideEventPlugins()`, from
+`@ng-native/web-compat/event-plugins`, runs the plugins the app provides as
+`EVENT_MANAGER_PLUGINS`, so a listener whose name one of them claims is attached by it. It needs
+`@angular/platform-browser`, which such a library depends on already.
+
+```ts
+import { provideEventPlugins } from '@ng-native/web-compat/event-plugins';
+
+export const appConfig = {
+  providers: [provideWebCompat(), provideEventPlugins(), provideTaiga()],
+};
+```
+
+A plugin that claims every name, as Angular's own DOM plugin does, is left out, and the renderer
+attaches those listeners itself.
+
 ## A library that asks whether it is in a browser
 
 Angular's `PLATFORM_ID` is `native` on a device, and some libraries open an overlay or measure only
