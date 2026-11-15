@@ -8,9 +8,68 @@
 #include <react/renderer/components/view/ViewProps.h>
 #include <react/renderer/mounting/ShadowView.h>
 
+#include <atomic>
+#include <chrono>
 #include <memory>
+#include <stdexcept>
+#include <thread>
 
 namespace ngn::testing {
+
+// Whether dropping a listener's handle waits for a call to it already running on another thread,
+// so a module a reload destroys is never called after. `listen` adds the listener and answers its
+// handle; `send` makes the host call it. The call is held until the drop has had time to finish,
+// and the answer is whether the drop finished only once the call was let go. A call that never
+// comes answers false rather than hanging, and a held call that gives up at `deadline` throws.
+template <typename Listen, typename Send>
+bool dropWaitsForRunningCall(Listen listen, Send send, std::chrono::milliseconds deadline = std::chrono::seconds(10)) {
+  using Clock = std::chrono::steady_clock;
+  auto waitFor = [](const std::atomic<bool> &flag, Clock::duration limit) {
+    auto until = Clock::now() + limit;
+    while (!flag && Clock::now() < until) {
+      std::this_thread::yield();
+    }
+    return flag.load();
+  };
+  std::atomic<bool> running{false};
+  std::atomic<bool> release{false};
+  std::atomic<bool> dropping{false};
+  std::atomic<bool> dropped{false};
+  std::atomic<bool> gaveUp{false};
+  std::shared_ptr<void> handle = listen([&](const auto &) {
+    running = true;
+    if (!waitFor(release, deadline)) {
+      gaveUp = true;
+    }
+  });
+  std::thread sender(send);
+  if (!waitFor(running, deadline)) {
+    sender.join();
+    return false;
+  }
+  std::thread dropper([&] {
+    dropping = true;
+    handle.reset();
+    dropped = true;
+  });
+  // The time allowed starts once the dropper is dropping, so one slow to start cannot pass for a
+  // drop that waits. A drop that does not wait finishes at once; one that waits is still held when
+  // this gives up.
+  bool started = waitFor(dropping, deadline);
+  bool droppedWhileRunning = started && waitFor(dropped, std::chrono::milliseconds(200));
+  release = true;
+  dropper.join();
+  sender.join();
+  if (!started) {
+    throw std::runtime_error("dropWaitsForRunningCall: the drop never started");
+  }
+  // A held call that gave up before the drop was measured lets even a drop that waits finish, so
+  // the answer would say nothing about the handle.
+  if (gaveUp) {
+    throw std::runtime_error("dropWaitsForRunningCall: the held call gave up before the drop was measured");
+  }
+  return !droppedWhileRunning;
+}
 
 inline facebook::react::ShadowView shadowView(
     facebook::react::Tag tag,
