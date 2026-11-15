@@ -150,6 +150,7 @@ void MountingManager::ensureRoot(SurfaceId surfaceId, Tag tag) {
 }
 
 void MountingManager::apply(SurfaceId surfaceId, const ShadowViewMutationList &mutations) {
+  mountedBy_[surfaceId] = applying_;
   for (const auto &m : mutations) {
     switch (m.type) {
       case ShadowViewMutation::Create: {
@@ -165,6 +166,9 @@ void MountingManager::apply(SurfaceId surfaceId, const ShadowViewMutationList &m
         break;
       }
       case ShadowViewMutation::Delete:
+        if (auto sizes = controlSizes()) {
+          sizes->forget(m.oldChildShadowView.tag);
+        }
         screens_->deleted(m.oldChildShadowView.tag);
         sidebars_.deleted(m.oldChildShadowView.tag);
         tabs_->deleted(m.oldChildShadowView.tag);
@@ -216,6 +220,9 @@ void MountingManager::apply(SurfaceId surfaceId, const ShadowViewMutationList &m
         }
         if (old.state != view.state) {
           backend_->updateState(view);
+          if (auto sizes = controlSizes()) {
+            sizes->relaidOut(view.tag);
+          }
         }
         if (old.layoutMetrics != view.layoutMetrics) {
           backend_->updateLayout(view);
@@ -260,6 +267,49 @@ void MountingManager::apply(SurfaceId surfaceId, const ShadowViewMutationList &m
   if (afterMount_) {
     afterMount_(surfaceId);
   }
+}
+
+uint64_t MountingManager::beginInstance() {
+  uint64_t instance = ++instances_;
+  // Queued behind every transaction the last instance posted.
+  std::weak_ptr<MountingManager> weak = weak_from_this();
+  backend_->runOnUiThread([weak, instance] {
+    if (auto self = weak.lock()) {
+      self->applying_ = instance;
+    }
+  });
+  return instance;
+}
+
+std::shared_ptr<ControlSizes> MountingManager::startControlSizes(
+    std::shared_ptr<const ControlMeasurer> measurer,
+    ControlSizes::Relayout relayout) {
+  std::weak_ptr<MountingBackend> weak = backend_;
+  auto sizes = std::make_shared<ControlSizes>(
+      std::move(measurer),
+      [weak](std::function<void()> task) {
+        if (auto backend = weak.lock()) {
+          backend->runOnUiThread(std::move(task));
+        }
+      },
+      [weak] {
+        auto backend = weak.lock();
+        return backend && backend->onUiThread();
+      },
+      std::move(relayout));
+  std::lock_guard lock(controlSizesMutex_);
+  controlSizes_ = sizes;
+  return sizes;
+}
+
+std::shared_ptr<ControlSizes> MountingManager::controlSizes() const {
+  std::lock_guard lock(controlSizesMutex_);
+  return controlSizes_;
+}
+
+bool MountingManager::controlSizesSettled() const {
+  auto sizes = controlSizes();
+  return !sizes || sizes->settled();
 }
 
 void MountingManager::applyTabs(SurfaceId surfaceId) {

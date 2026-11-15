@@ -227,9 +227,13 @@ class FileWatcher {
     bool removed{false};
     bool renamed{false};
     bool modified{false};
+    // The OS lost track of what changed under the path (FSEvents' must-scan-subdirs, after events
+    // were dropped): the changes are found by listing it again.
+    bool rescan{false};
   };
   virtual ~FileWatcher() = default;
-  // Starts reporting batches of events under `path`, on any thread, until stop. A handle.
+  // Starts reporting batches of events under `path`, on any thread, until stop. A handle, or 0
+  // when the OS would not start watching.
   virtual int start(const std::string &path, std::function<void(std::vector<Event>)> events) = 0;
   virtual void stop(int handle) = 0;
 };
@@ -237,17 +241,31 @@ class FileWatcher {
 // The changes batches of events make to `watched` (a file, or a folder and what is directly in
 // it), as `ngNativeFileSystem` reports them without the watch id. It remembers the paths it has
 // seen, from those there when the watch began, since FSEvents keeps a file's created flag on its
-// later events. `exists` says whether a path is there now: what coalesced flags cannot.
+// later events. `exists` says whether a path is there now, what coalesced flags cannot, or nothing
+// when it cannot tell (a folder that cannot be searched): that event is left out and the folder
+// listed again at the next one.
 class FileChanges {
  public:
-  using Exists = std::function<bool(const std::string &)>;
+  using Exists = std::function<std::optional<bool>(const std::string &)>;
   FileChanges(std::string watched, const Exists &exists);
   folly::dynamic changes(const std::vector<FileWatcher::Event> &events, const Exists &exists);
+  // Whether what was there when the watch began was listed in full: a folder that could not be
+  // listed has nothing to tell an entry already there from a new one.
+  bool listed() const {
+    return listed_;
+  }
 
  private:
   bool concerns(const std::string &path) const;
+  // A rescan's changes: what is there now against what was seen.
+  void rescan(folly::dynamic &out, const Exists &exists);
+  // Adds the folder's entries to `into`; false when it could not be listed in full.
+  bool list(std::set<std::string> &into) const;
   std::string watched_;
   bool folder_{false};
+  bool listed_{true};
+  // The last listing failed: the next events start with another.
+  bool rescanOwed_{false};
   std::set<std::string> seen_;
 };
 

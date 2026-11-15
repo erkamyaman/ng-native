@@ -24,12 +24,22 @@ void FakeSystem::openSettings(std::function<void(bool)> done) {
 }
 
 std::string FakeSystem::colorScheme() {
-  return schemeOverride.value_or(systemScheme);
+  return schemeOverride.value_or(readSystemScheme);
 }
 
-void FakeSystem::setColorScheme(std::optional<std::string> scheme) {
+void FakeSystem::setColorScheme(std::optional<std::string> scheme, std::function<void(std::string)> applied) {
   log.push_back("scheme " + scheme.value_or("system"));
-  schemeOverride = std::move(scheme);
+  schemeOverride = scheme;
+  // Each change reports the scheme it applied, not a later change's override.
+  auto apply = [this, requested = std::move(scheme), applied = std::move(applied)] {
+    readSystemScheme = systemScheme;
+    applied(requested.value_or(readSystemScheme));
+  };
+  if (holdSchemes) {
+    heldSchemes.push_back(std::move(apply));
+  } else {
+    apply();
+  }
 }
 
 void FakeSystem::announce(const Announcement &announcement) {

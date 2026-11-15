@@ -79,7 +79,12 @@ struct FakeWatcher final : ngn::FileWatcher {
   int next{0};
   // A batch sent from inside start, before the watch's id is answered.
   std::vector<Event> early;
+  // The OS would not start the watch.
+  bool refuse{false};
   int start(const std::string &path, std::function<void(std::vector<Event>)> events) override {
+    if (refuse) {
+      return 0;
+    }
     if (!early.empty()) {
       events(std::exchange(early, {}));
     }
@@ -925,6 +930,195 @@ TEST_CASE("a watch keeps its pick open until it stops, and a refused start opens
   bookmarks->refuse = true;
   auto use = access->use(picked + "/x");
   CHECK_FALSE(use.started());
+}
+
+TEST_CASE("FileChanges lists the folder again when the OS dropped events, and reports what came and went") {
+  TempDir dir;
+  write(dir.path / "kept.txt", "");
+  write(dir.path / "gone.txt", "");
+  auto exists = [](const std::string &p) { return fs::exists(p); };
+  auto at = [&](const char *name) { return (dir.path / name).string(); };
+  using E = ngn::FileWatcher::Event;
+  ngn::FileChanges tracker(dir.path.string(), exists);
+  fs::remove(dir.path / "gone.txt");
+  write(dir.path / "missed.txt", "");
+  auto rescanned = tracker.changes({E{.path = dir.path.string(), .rescan = true}}, exists);
+  CHECK(rescanned == dynamic::array(dynamic::object("type", "deleted")("uri", ngn::fileUri(at("gone.txt"))),
+                                    dynamic::object("type", "created")("uri", ngn::fileUri(at("missed.txt")))));
+  // Seen now: another rescan finds nothing new, and a later write is a modification.
+  CHECK(tracker.changes({E{.path = dir.path.string(), .rescan = true}}, exists).empty());
+  CHECK(tracker.changes({E{.path = at("missed.txt"), .modified = true}}, exists) ==
+        dynamic::array(dynamic::object("type", "modified")("uri", ngn::fileUri(at("missed.txt")))));
+}
+
+TEST_CASE("FileChanges keeps what it saw when the folder cannot be listed, and lists it again at the next event") {
+  TempDir dir;
+  write(dir.path / "kept.txt", "");
+  auto exists = [](const std::string &p) { return fs::exists(p); };
+  auto at = [&](const char *name) { return (dir.path / name).string(); };
+  using E = ngn::FileWatcher::Event;
+  ngn::FileChanges tracker(dir.path.string(), exists);
+  write(dir.path / "missed.txt", "");
+  // Still there, but unreadable: an empty listing would report kept.txt deleted.
+  fs::permissions(dir.path, fs::perms::owner_all, fs::perm_options::remove);
+  folly::dynamic unreadable;
+  try {
+    unreadable = tracker.changes({E{.path = dir.path.string(), .rescan = true}}, exists);
+  } catch (...) {
+    fs::permissions(dir.path, fs::perms::owner_all, fs::perm_options::add);
+    throw;
+  }
+  fs::permissions(dir.path, fs::perms::owner_all, fs::perm_options::add);
+  CHECK(unreadable.empty());
+  // Readable again: the next event, of any kind, brings the listing that was owed.
+  CHECK(tracker.changes({E{.path = at("kept.txt"), .modified = true}}, exists) ==
+        dynamic::array(dynamic::object("type", "created")("uri", ngn::fileUri(at("missed.txt"))),
+                       dynamic::object("type", "modified")("uri", ngn::fileUri(at("kept.txt")))));
+  CHECK(tracker.changes({E{.path = dir.path.string(), .rescan = true}}, exists).empty());
+}
+
+TEST_CASE("FileChanges reports a watched folder's entries deleted once a file takes its place") {
+  TempDir dir;
+  fs::create_directories(dir.path / "watched");
+  write(dir.path / "watched/kept.txt", "");
+  auto watched = (dir.path / "watched").string();
+  auto exists = [](const std::string &p) { return fs::exists(p); };
+  using E = ngn::FileWatcher::Event;
+  ngn::FileChanges tracker(watched, exists);
+  fs::remove_all(watched);
+  write(watched, "a file now");
+  // Not a folder that cannot be listed for now: what was in it is gone, and nothing is owed.
+  CHECK(tracker.changes({E{.path = watched, .rescan = true}}, exists) ==
+        dynamic::array(dynamic::object("type", "deleted")("uri", ngn::fileUri(watched + "/kept.txt"))));
+  CHECK(tracker.changes({E{.path = watched, .modified = true}}, exists) ==
+        dynamic::array(dynamic::object("type", "modified")("uri", ngn::fileUri(watched))));
+}
+
+TEST_CASE("FileChanges keeps a watched folder that a dangling link replaced, and reports its entries deleted") {
+  TempDir dir;
+  fs::create_directories(dir.path / "watched");
+  write(dir.path / "watched/kept.txt", "");
+  auto watched = (dir.path / "watched").string();
+  // As the module checks: the entry itself, not where a link leads.
+  auto exists = [](const std::string &p) {
+    std::error_code error;
+    return fs::symlink_status(p, error).type() != fs::file_type::not_found;
+  };
+  ngn::FileChanges tracker(watched, exists);
+  fs::remove_all(watched);
+  fs::create_directory_symlink(dir.path / "nowhere", watched);
+  using E = ngn::FileWatcher::Event;
+  // The link is still there, so the watched entry stays; what was in the folder is gone.
+  CHECK(tracker.changes({E{.path = watched, .rescan = true}}, exists) ==
+        dynamic::array(dynamic::object("type", "deleted")("uri", ngn::fileUri(watched + "/kept.txt"))));
+}
+
+TEST_CASE("FileChanges keeps what it saw when a folder it cannot list has a type it cannot read either") {
+  TempDir dir;
+  fs::create_directories(dir.path / "parent/watched");
+  write(dir.path / "parent/watched/kept.txt", "");
+  auto parent = dir.path / "parent";
+  auto watched = (parent / "watched").string();
+  // The first check found the folder there; the parent stops being searchable before the rest.
+  auto there = [](const std::string &) { return std::optional<bool>(true); };
+  auto exists = [](const std::string &p) { return fs::exists(p); };
+  using E = ngn::FileWatcher::Event;
+  ngn::FileChanges tracker(watched, exists);
+  write(dir.path / "parent/watched/missed.txt", "");
+  fs::permissions(parent, fs::perms::owner_exec, fs::perm_options::remove);
+  folly::dynamic unknown;
+  try {
+    unknown = tracker.changes({E{.path = watched, .rescan = true}}, there);
+  } catch (...) {
+    fs::permissions(parent, fs::perms::owner_exec, fs::perm_options::add);
+    throw;
+  }
+  fs::permissions(parent, fs::perms::owner_exec, fs::perm_options::add);
+  // Not a confirmed removal: kept.txt is not reported deleted, and the listing is owed.
+  CHECK(unknown.empty());
+  CHECK(tracker.changes({E{.path = watched + "/kept.txt", .modified = true}}, exists) ==
+        dynamic::array(dynamic::object("type", "created")("uri", ngn::fileUri(watched + "/missed.txt")),
+                       dynamic::object("type", "modified")("uri", ngn::fileUri(watched + "/kept.txt"))));
+}
+
+TEST_CASE("FileChanges reports a watched folder and its entries deleted when it goes after the check that found it") {
+  TempDir dir;
+  fs::create_directories(dir.path / "watched");
+  write(dir.path / "watched/kept.txt", "");
+  auto watched = (dir.path / "watched").string();
+  auto exists = [](const std::string &p) { return fs::exists(p); };
+  auto there = [](const std::string &) { return std::optional<bool>(true); };
+  using E = ngn::FileWatcher::Event;
+  ngn::FileChanges tracker(watched, exists);
+  fs::remove_all(watched);
+  CHECK(tracker.changes({E{.path = watched, .rescan = true}}, there) ==
+        dynamic::array(dynamic::object("type", "deleted")("uri", ngn::fileUri(watched)),
+                       dynamic::object("type", "deleted")("uri", ngn::fileUri(watched + "/kept.txt"))));
+  // Confirmed: nothing is owed.
+  CHECK(tracker.changes({E{.path = watched, .rescan = true}}, exists).empty());
+}
+
+TEST_CASE("a folder that cannot be listed when the watch begins is no watch, and holds nothing open") {
+  TempDir dir;
+  auto folders = foldersIn(dir.path);
+  write(fs::path(folders.cache) / "there.txt", "");
+  auto watcher = std::make_shared<FakeWatcher>();
+  auto module = ngn::makeFileSystemModule(std::make_shared<ngn::FileAccess>(folders, dynamic::array()), watcher);
+  // Its listing would start without there.txt, which a later write would report as created.
+  fs::permissions(folders.cache, fs::perms::owner_all, fs::perm_options::remove);
+  dynamic id;
+  try {
+    id = module->call("watch", dynamic::array(ngn::fileUri(folders.cache)));
+  } catch (...) {
+    fs::permissions(folders.cache, fs::perms::owner_all, fs::perm_options::add);
+    throw;
+  }
+  fs::permissions(folders.cache, fs::perms::owner_all, fs::perm_options::add);
+  CHECK(id == dynamic(nullptr));
+  CHECK(watcher->watches.empty());
+}
+
+TEST_CASE("a watched folder's child event with search permission gone is unknown, not deleted, and listed again later") {
+  TempDir dir;
+  auto folders = foldersIn(dir.path);
+  auto kept = folders.cache + "/kept.txt";
+  write(kept, "");
+  auto watcher = std::make_shared<FakeWatcher>();
+  auto module = ngn::makeFileSystemModule(std::make_shared<ngn::FileAccess>(folders, dynamic::array()), watcher);
+  std::vector<dynamic> events;
+  module->setEmitter([&](const std::string &, dynamic body) { events.push_back(body); });
+  auto id = module->call("watch", dynamic::array(ngn::fileUri(folders.cache)));
+  REQUIRE(id.isInt());
+  auto send = watcher->watches.begin()->second.second;
+  // Listable, but nothing in it can be looked up: whether kept.txt is there is unknown.
+  fs::permissions(folders.cache, fs::perms::owner_exec, fs::perm_options::remove);
+  try {
+    CHECK_NOTHROW(send({{.path = kept, .modified = true}}));
+  } catch (...) {
+    fs::permissions(folders.cache, fs::perms::owner_exec, fs::perm_options::add);
+    throw;
+  }
+  fs::permissions(folders.cache, fs::perms::owner_exec, fs::perm_options::add);
+  CHECK(events.empty());
+  // Searchable again: the next event lists the folder again (nothing came or went) and is told.
+  send({{.path = kept, .modified = true}});
+  CHECK(events == std::vector<dynamic>{dynamic::object("watch", id)("type", "modified")("uri", ngn::fileUri(kept))});
+}
+
+TEST_CASE("a watch the OS would not start is no watch, and holds nothing open") {
+  TempDir dir;
+  auto folders = foldersIn(dir.path);
+  auto picked = (dir.path / "outside").string();
+  Saved saved;
+  auto bookmarks = std::make_shared<FakeBookmarks>();
+  auto access = std::make_shared<ngn::FileAccess>(folders, dynamic::array());
+  access->keepPicks(std::make_shared<ngn::PickStore>(saved.persistence(), bookmarks));
+  access->allowPicked(picked);
+  auto watcher = std::make_shared<FakeWatcher>();
+  watcher->refuse = true;
+  auto module = ngn::makeFileSystemModule(access, watcher);
+  CHECK(module->call("watch", dynamic::array(ngn::fileUri(picked))) == dynamic(nullptr));
+  CHECK(bookmarks->opened() == 0);
 }
 
 TEST_CASE("a web view page read with its folder holds the folder's pick open, not only its own") {

@@ -2,6 +2,7 @@
 #include "../scrollers.h"
 
 #include <doctest/doctest.h>
+#include <objc/runtime.h>
 
 namespace {
 
@@ -55,4 +56,53 @@ TEST_CASE("the observer hears the preferred style change, until it is released")
   [NSNotificationCenter.defaultCenter postNotificationName:NSPreferredScrollerStyleDidChangeNotification object:nil];
   drain();
   CHECK(changes == 1);
+}
+
+@interface NGNWheelRecorder : NSResponder
+@property (nonatomic) int wheels;
+@end
+
+@implementation NGNWheelRecorder
+- (void)scrollWheel:(NSEvent *)event {
+  self.wheels++;
+}
+@end
+
+TEST_CASE("a scroll view with scrolling disabled lets a wheel turn go past it, and scrolls with it enabled") {
+  NGNWheelScrollView *scroll = [[NGNWheelScrollView alloc] initWithFrame:NSMakeRect(0, 0, 200, 300)];
+  scroll.hasVerticalScroller = YES;
+  NSView *document = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 200, 900)];
+  scroll.documentView = document;
+  [scroll tile];
+  NGNWheelRecorder *above = [NGNWheelRecorder new];
+  scroll.nextResponder = above;
+  CGEventRef cg = CGEventCreateScrollWheelEvent(nullptr, kCGScrollEventUnitPixel, 1, -60);
+  NSEvent *wheel = [NSEvent eventWithCGEvent:cg];
+  CFRelease(cg);
+  REQUIRE((wheel != nil));
+
+  scroll.scrollingDisabled = YES;
+  [document scrollWheel:wheel];
+  CHECK(above.wheels == 1);
+  CHECK(scroll.contentView.bounds.origin.y == 0);
+
+  // Enabled, the wheel is NSScrollView's own to scroll with. A synthesized wheel moves no
+  // offscreen scroll view, so its hand-off to AppKit is counted instead.
+  scroll.scrollingDisabled = NO;
+  Method method = class_getInstanceMethod(NSScrollView.class, @selector(scrollWheel:));
+  IMP original = method_getImplementation(method);
+  __block int handled = 0;
+  IMP counting = imp_implementationWithBlock(^(NSScrollView *view, NSEvent *event) {
+    handled++;
+    ((void (*)(id, SEL, NSEvent *))original)(view, @selector(scrollWheel:), event);
+  });
+  method_setImplementation(method, counting);
+  @try {
+    [document scrollWheel:wheel];
+  } @finally {
+    method_setImplementation(method, original);
+    imp_removeBlock(counting);
+  }
+  CHECK(above.wheels == 1);
+  CHECK(handled == 1);
 }
