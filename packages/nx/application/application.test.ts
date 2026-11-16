@@ -6,7 +6,9 @@
  * since 20 and what the TypeScript and Expo presets make.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import type { Tree } from '@nx/devkit';
 
@@ -1084,5 +1086,102 @@ describe('generators.json', () => {
     }>(generators)) {
       assert.equal(require(`../${schema}`).description, description, name);
     }
+  });
+});
+
+describe('with --desktopOnly', () => {
+  it("writes the desktop template's app: macOS alone, with its starter screen", async () => {
+    const tree = pnpmWorkspace();
+    await generate(tree, { directory: 'apps/desktop', desktopOnly: true });
+    const { expo } = JSON.parse(tree.read('apps/desktop/app.json', 'utf-8')!);
+    assert.deepEqual(expo.platforms, ['macos']);
+    assert.deepEqual(expo.experiments, { outOfTreePlatforms: true });
+    assert.ok(expo.plugins.includes('@ng-native/desktop'));
+    assert.equal(expo.android, undefined);
+    for (const file of native.DESKTOP_SOURCE_FILES) {
+      assert.equal(tree.read(`apps/desktop/${file}`, 'utf-8'), native.sourceFile(file, true), file);
+    }
+    assert.match(tree.read('apps/desktop/src/app/app.ts', 'utf-8')!, /<split-view>/);
+    assert.equal(
+      tree.read('apps/desktop/src/main.ts', 'utf-8'),
+      native.sourceFile('src/main.ts', true),
+      "main.ts is the desktop template's, which starts the in-app tests",
+    );
+  });
+
+  it('lists the desktop template’s dependencies, the host among them and no phone UI', async () => {
+    const tree = pnpmWorkspace();
+    await generate(tree, { directory: 'apps/desktop', desktopOnly: true });
+    const { dependencies } = readJson(tree, 'apps/desktop/package.json');
+    assert.ok(dependencies['@ng-native/desktop']);
+    assert.ok(dependencies['@ng-native/expo']);
+    assert.equal(dependencies['expo-status-bar'], undefined);
+
+    const integratedTree = integrated();
+    await generate(integratedTree, { directory: 'apps/desktop', desktopOnly: true });
+    const pins = readJson(integratedTree, 'apps/desktop/package.json').dependencies;
+    assert.ok(pins['@ng-native/desktop'], 'Expo autolinks what the app names');
+    assert.ok(readJson(integratedTree, 'package.json').dependencies['@ng-native/desktop']);
+  });
+
+  it('runs on macOS with macos and package targets, and names them in AGENTS.md', async () => {
+    const tree = pnpmWorkspace();
+    await generate(tree, { directory: 'apps/desktop', desktopOnly: true });
+    const { targets } = readProjectConfiguration(tree, '@proj/desktop');
+    assert.equal(targets!['macos'].options.command, 'ng-native-desktop run');
+    assert.equal(targets!['package'].options.command, 'ng-native-desktop package');
+    assert.equal(targets!['run-ios'], undefined);
+    const agents = tree.read('apps/desktop/AGENTS.md', 'utf-8')!;
+    assert.match(agents, /^nx run @proj\/desktop:macos +# /m);
+    assert.doesNotMatch(agents, /run-ios|Expo Go/);
+    assert.match(tree.read('apps/desktop/.gitignore', 'utf-8')!, /^\/dist\/macos$/m);
+  });
+
+  it("bundles with the desktop template's Metro config, which keeps the in-app tests out", async () => {
+    // Without withDeviceTests a dev bundle follows main.ts's dead branch into the test host, and
+    // Vitest behind it.
+    const tree = pnpmWorkspace();
+    await generate(tree, { directory: 'apps/desktop', desktopOnly: true });
+    const metro = tree.read('apps/desktop/metro.config.js', 'utf-8');
+    assert.equal(metro, native.DESKTOP_METRO_CONFIG);
+    assert.match(metro!, /withDeviceTests\(withAngularNative\(withNxMetro\(/);
+    const phone = pnpmWorkspace();
+    await generate(phone, { directory: 'apps/mobile' });
+    assert.equal(phone.read('apps/mobile/metro.config.js', 'utf-8'), native.METRO_CONFIG);
+  });
+
+  it("writes the desktop template's in-app test, for the macos Vitest project to run", async () => {
+    const tree = pnpmWorkspace();
+    await generate(tree, { directory: 'apps/desktop', desktopOnly: true });
+    assert.equal(
+      tree.read('apps/desktop/src/app/app.device.ts', 'utf-8'),
+      native.sourceFile('src/app/app.device.ts', true),
+    );
+    const phone = pnpmWorkspace();
+    await generate(phone, { directory: 'apps/mobile' });
+    assert.equal(phone.exists('apps/mobile/src/app/app.device.ts'), false);
+  });
+
+  it("tests in Node alone, as the desktop template's npm test does", async () => {
+    const tree = pnpmWorkspace();
+    await generate(tree, { directory: 'apps/desktop', desktopOnly: true });
+    const { targets } = readProjectConfiguration(tree, '@proj/desktop');
+    const template = JSON.parse(
+      readFileSync(
+        path.resolve(import.meta.dirname, '../../../template-desktop/package.json'),
+        'utf8',
+      ),
+    );
+    assert.equal(targets!['test'].options.command, template.scripts.test);
+    assert.equal(targets!['test'].options.command, 'vitest run --project node-macos');
+  });
+
+  it('is the default for every app once init sets it', async () => {
+    const tree = pnpmWorkspace();
+    const { init } = require('../init/index.cjs');
+    await init(tree, { desktopOnly: true, skipInstall: true, skipFormat: true });
+    assert.deepEqual(readNxJson(tree)!.generators!['@ng-native/nx:application'], {
+      desktopOnly: true,
+    });
   });
 });

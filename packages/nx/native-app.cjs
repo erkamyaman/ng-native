@@ -2,7 +2,8 @@
  * What an Angular Native app is made of, in an Nx workspace.
  *
  * The source of truth is `template/`, the starter `create-expo-app` uses and the setup this project
- * verifies before every release. `files/` holds verbatim copies of the template's source files,
+ * verifies before every release, and `template-desktop/` for a desktop-only app. `files/` holds
+ * verbatim copies of the template's source files and `files/desktop/` of the desktop template's,
  * the versions are the template's own, and `native-app.test.ts` fails the moment either drifts
  * from it.
  *
@@ -50,9 +51,37 @@ const TYPECHECK = 'node metro.config.js && ngc -p tsconfig.json --noEmit';
 /** The template's files, copied verbatim into the new app. */
 const SOURCE_FILES = ['src/app/app.ts', 'src/main.ts', 'src/app/app.test.ts'];
 
-/** @param {string} name */
-function sourceFile(name) {
-  return readFileSync(path.join(__dirname, 'files', name), 'utf8');
+/**
+ * The desktop template's files that differ from the template's, or that it alone has, which a
+ * desktop-only app takes from `files/desktop/`: its starter screen, the screen's Node test and
+ * in-app test, the entry file that starts the in-app tests, and the Vitest config with a project
+ * for each. Its `AGENTS.md` comes from there too, through `agentsFile`, and its Metro config is
+ * `DESKTOP_METRO_CONFIG`.
+ */
+const DESKTOP_SOURCE_FILES = [
+  'src/app/app.ts',
+  'src/app/app.test.ts',
+  'src/app/app.device.ts',
+  'src/main.ts',
+  'vitest.config.mts',
+];
+
+/** The desktop template's files a desktop-only app has and a mobile one does not. */
+const DESKTOP_ONLY_FILES = ['src/app/app.device.ts'];
+
+/**
+ * The desktop template's Vitest project that runs in Node, which `test` runs alone: its other
+ * project opens the app.
+ */
+const DESKTOP_TEST = 'vitest run --project node-macos';
+
+/**
+ * @param {string} name
+ * @param {boolean} [desktopOnly] the desktop template's copy, where it has one of its own
+ */
+function sourceFile(name, desktopOnly = false) {
+  const own = desktopOnly && (DESKTOP_SOURCE_FILES.includes(name) || name === 'AGENTS.md');
+  return readFileSync(path.join(__dirname, 'files', own ? 'desktop' : '', name), 'utf8');
 }
 
 /**
@@ -60,9 +89,10 @@ function sourceFile(name) {
  * describes the framework, which is the same wherever the app lives.
  *
  * @param {string} commands the markdown that goes under the Commands heading
+ * @param {boolean} [desktopOnly] the desktop template's, for a desktop-only app
  */
-function agentsFile(commands) {
-  return sourceFile('AGENTS.md').replace(
+function agentsFile(commands, desktopOnly = false) {
+  return sourceFile('AGENTS.md', desktopOnly).replace(
     /## Commands\n[\s\S]*?(?=\n## )/,
     `## Commands\n\n${commands}\n`,
   );
@@ -78,6 +108,27 @@ const { withAngularNative } = require('@ng-native/metro/config.cjs');
 // the polyfills Angular needs before \`@angular/core\` is first evaluated. It goes on the outside,
 // so its resolver can wrap Nx's: a library's \`./lib/ui.js\` import has to find \`ui.ts\`.
 module.exports = withAngularNative(withNxMetro(getDefaultConfig(__dirname)));
+`;
+
+/**
+ * The desktop template's Metro config, around `withNxMetro` as `METRO_CONFIG` is. `withDeviceTests`
+ * resolves the in-app tests' host to nothing unless Metro starts with `EXPO_PUBLIC_DEVICE_TESTS`
+ * set: a development bundle still bundles what a dead branch of `main.ts` requires, and Vitest
+ * with it.
+ */
+const DESKTOP_METRO_CONFIG = `const { withNxMetro } = require('@nx/expo');
+const { getDefaultConfig } = require('expo/metro-config');
+const { withAngularNative } = require('@ng-native/metro/config.cjs');
+const { withDeviceTests } = require('@ng-native/testing/device/metro');
+
+// withNxMetro resolves the workspace's libraries, through its tsconfig path aliases or its package
+// manager's links, and watches them. withAngularNative registers the transformer that compiles
+// Angular ahead of time, compiles each component's CSS into the sheet the engine reads, and adds
+// the polyfills Angular needs before \`@angular/core\` is first evaluated. It goes on the outside,
+// so its resolver can wrap Nx's: a library's \`./lib/ui.js\` import has to find \`ui.ts\`.
+// withDeviceTests does nothing until Metro starts with EXPO_PUBLIC_DEVICE_TESTS set, for the tests
+// that run inside the app.
+module.exports = withDeviceTests(withAngularNative(withNxMetro(getDefaultConfig(__dirname))));
 `;
 
 /**
@@ -155,9 +206,15 @@ function typecheckTsconfig() {
   return { extends: './tsconfig.json', compilerOptions: { paths } };
 }
 
-/** @param {boolean} withPaths whether to resolve the workspace's tsconfig path aliases */
-function vitestConfig(withPaths) {
-  const template = readFileSync(path.join(__dirname, 'files', 'vitest.config.mts'), 'utf8');
+/**
+ * @param {boolean} withPaths whether to resolve the workspace's tsconfig path aliases
+ * @param {boolean} [desktopOnly] the desktop template's config, with its Node and in-app projects
+ */
+function vitestConfig(withPaths, desktopOnly = false) {
+  const template = readFileSync(
+    path.join(__dirname, 'files', ...(desktopOnly ? ['desktop'] : []), 'vitest.config.mts'),
+    'utf8',
+  );
   if (!withPaths) return template;
   return template
     .replace(
@@ -165,7 +222,11 @@ function vitestConfig(withPaths) {
       "import tsconfigPaths from 'vite-tsconfig-paths';\n" +
         "import { defineConfig } from 'vitest/config';",
     )
-    .replace('plugins: [ngNative()],', 'plugins: [tsconfigPaths(), ngNative()],');
+    .replace('plugins: [ngNative()],', 'plugins: [tsconfigPaths(), ngNative()],')
+    .replace(
+      "plugins: [ngNative({ os: 'macos' })]",
+      "plugins: [tsconfigPaths(), ngNative({ os: 'macos' })]",
+    );
 }
 
 /**
@@ -205,9 +266,13 @@ function reuseRootRanges(wanted, root) {
 module.exports = {
   ...shared,
   SOURCE_FILES,
+  DESKTOP_SOURCE_FILES,
+  DESKTOP_ONLY_FILES,
+  DESKTOP_TEST,
   sourceFile,
   agentsFile,
   METRO_CONFIG,
+  DESKTOP_METRO_CONFIG,
   TYPECHECK,
   TYPECHECK_ONE_COPY,
   WITH_ENTRY_POINTS,

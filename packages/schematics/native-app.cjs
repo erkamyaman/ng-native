@@ -27,9 +27,38 @@ const SOURCE_FILES = [
   'tsconfig.json',
 ];
 
-/** @param {string} name */
-function sourceFile(name) {
-  return readFileSync(path.join(__dirname, 'files', name), 'utf8');
+/**
+ * The desktop template's files that differ from the template's, or that it alone has, which a
+ * desktop-only app takes from `files/desktop/`: its starter screen, the screen's Node test and
+ * in-app test, the entry file that starts the in-app tests, the Vitest config with a project for
+ * each, and the Metro config that keeps the in-app tests out of an ordinary bundle. Its `AGENTS.md`
+ * comes from there too, through `agentsFile`.
+ */
+const DESKTOP_SOURCE_FILES = [
+  'src/app/app.ts',
+  'src/app/app.test.ts',
+  'src/app/app.device.ts',
+  'src/main.ts',
+  'vitest.config.mts',
+  'metro.config.js',
+];
+
+/** The desktop template's files a desktop-only app has and a mobile one does not. */
+const DESKTOP_ONLY_FILES = ['src/app/app.device.ts'];
+
+/**
+ * The desktop template's Vitest project that runs in Node, which `ng test` runs alone: its other
+ * project opens the app.
+ */
+const DESKTOP_TEST_PROJECT = 'node-macos';
+
+/**
+ * @param {string} name
+ * @param {boolean} [desktopOnly] the desktop template's copy, where it has one of its own
+ */
+function sourceFile(name, desktopOnly = false) {
+  const own = desktopOnly && (DESKTOP_SOURCE_FILES.includes(name) || name === 'AGENTS.md');
+  return readFileSync(path.join(__dirname, 'files', own ? 'desktop' : '', name), 'utf8');
 }
 
 /**
@@ -37,9 +66,10 @@ function sourceFile(name) {
  * describes the framework, which is the same wherever the app lives.
  *
  * @param {string} commands the markdown that goes under the Commands heading
+ * @param {boolean} [desktopOnly] the desktop template's, for a desktop-only app
  */
-function agentsFile(commands) {
-  return sourceFile('AGENTS.md').replace(
+function agentsFile(commands, desktopOnly = false) {
+  return sourceFile('AGENTS.md', desktopOnly).replace(
     /## Commands\n[\s\S]*?(?=\n## )/,
     `## Commands\n\n${commands}\n`,
   );
@@ -52,14 +82,24 @@ function agentsFile(commands) {
  * @param {string} name
  * @param {{ dependencies?: Record<string, string>, devDependencies?: Record<string, string> }} root
  *   the workspace's root `package.json`, once this app's dependencies are in it
+ * @param {boolean} [desktopOnly] a desktop-only app, with the desktop template's dependencies
  */
-function projectManifest(name, root) {
-  return { name, private: true, main: 'src/main.ts', dependencies: shared.prebuildPins(root) };
+function projectManifest(name, root, desktopOnly = false) {
+  const wanted = desktopOnly ? shared.desktopOnlyDependencies : shared.dependencies;
+  return {
+    name,
+    private: true,
+    main: 'src/main.ts',
+    dependencies: shared.prebuildPins(root, wanted),
+  };
 }
 
 module.exports = {
   ...shared,
   SOURCE_FILES,
+  DESKTOP_SOURCE_FILES,
+  DESKTOP_ONLY_FILES,
+  DESKTOP_TEST_PROJECT,
   sourceFile,
   agentsFile,
   projectManifest,
