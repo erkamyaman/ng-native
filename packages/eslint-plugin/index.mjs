@@ -474,6 +474,169 @@ const noDomNodeAccess = {
   },
 };
 
+/**
+ * Whether `node` is read for its truth: the test of an `if`, a loop or a `?:`, the operand of `!`,
+ * the left operand of `&&` or `||`, which is tested, or the right one where the whole is itself a
+ * condition: `const shown = ready && x` keeps `x`'s value.
+ */
+function readAsCondition(node) {
+  let at = node;
+  while (at.parent?.type === 'ChainExpression') at = at.parent;
+  const { parent } = at;
+  if (!parent) return false;
+  if (TESTED.has(parent.type)) return parent.test === at;
+  if (parent.type === 'UnaryExpression') return parent.operator === '!';
+  if (parent.type !== 'LogicalExpression') return false;
+  if (parent.operator !== '&&' && parent.operator !== '||') return false;
+  return parent.left === at || readAsCondition(parent);
+}
+
+/** What reads its `test` for its truth. */
+const TESTED = new Set([
+  'IfStatement',
+  'WhileStatement',
+  'DoWhileStatement',
+  'ForStatement',
+  'ConditionalExpression',
+]);
+
+/** The variable `name` refers to from `scope`, or undefined for a global or a typo. */
+function variableOf(scope, name) {
+  for (let at = scope; at; at = at.upper) {
+    const found = at.set.get(name);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** Whether the name `identifier` reads is imported from an `@ng-native/` package. */
+function isNgNativeImport(context, identifier) {
+  const variable = variableOf(context.sourceCode.getScope(identifier), identifier.name);
+  const [def] = variable?.defs ?? [];
+  return def?.type === 'ImportBinding' && String(def.parent.source.value).startsWith('@ng-native/');
+}
+
+/** Whether `node` is `inject(X)` for an `X` imported from `@ng-native/`. */
+const isInjectedService = (context, node) =>
+  node?.type === 'CallExpression' &&
+  node.callee.type === 'Identifier' &&
+  node.callee.name === 'inject' &&
+  node.arguments[0]?.type === 'Identifier' &&
+  isNgNativeImport(context, node.arguments[0]);
+
+/** Whether a declaration's type annotation names a type imported from `@ng-native/`. */
+function typedAsService(context, annotation) {
+  const type = annotation?.typeAnnotation;
+  return (
+    type?.type === 'TSTypeReference' &&
+    type.typeName.type === 'Identifier' &&
+    isNgNativeImport(context, type.typeName)
+  );
+}
+
+/** Whether a class field or parameter property named `name` holds an `@ng-native/` service. */
+function classHolds(context, body, name) {
+  for (const member of body.body) {
+    if (member.type === 'PropertyDefinition' && !member.computed && member.key.name === name) {
+      return (
+        isInjectedService(context, member.value) || typedAsService(context, member.typeAnnotation)
+      );
+    }
+    const held = member.kind === 'constructor' ? parameterProperty(member, name) : null;
+    if (held) return typedAsService(context, held.typeAnnotation);
+  }
+  return false;
+}
+
+/** The parameter property a constructor declares as `name`, if it declares one. */
+function parameterProperty(constructor, name) {
+  for (const param of constructor.value.params) {
+    const held = param.type === 'TSParameterProperty' ? param.parameter : null;
+    if (held?.type === 'Identifier' && held.name === name) return held;
+  }
+  return null;
+}
+
+/** The class body `this` is the instance of at `node`, or null where a function binds its own. */
+function thisClass(node) {
+  for (let at = node.parent; at; at = at.parent) {
+    if (at.type === 'ClassBody') return at;
+    const own = at.type === 'FunctionExpression' || at.type === 'FunctionDeclaration';
+    if (own && at.parent?.type !== 'MethodDefinition') return null;
+  }
+  return null;
+}
+
+/**
+ * Whether `receiver`, what `available` is read off, is known to be an `@ng-native/` service: an
+ * `inject()` of one, a name or a `this.` field initialised with one or typed as one, or a name
+ * imported from the package itself, such as `splashScreen`. Only then is a read reported: anything
+ * else named `available` may be a plain boolean, which a call would break.
+ */
+function isService(context, receiver) {
+  if (isInjectedService(context, receiver)) return true;
+  if (receiver.type === 'Identifier') return nameHolds(context, receiver);
+  const field =
+    receiver.type === 'MemberExpression' &&
+    receiver.object.type === 'ThisExpression' &&
+    !receiver.computed &&
+    receiver.property.type === 'Identifier';
+  const body = field ? thisClass(receiver) : null;
+  return body !== null && classHolds(context, body, receiver.property.name);
+}
+
+/** Whether the name `identifier` reads is declared holding an `@ng-native/` service. */
+function nameHolds(context, identifier) {
+  const variable = variableOf(context.sourceCode.getScope(identifier), identifier.name);
+  const [def] = variable?.defs ?? [];
+  switch (def?.type) {
+    case 'ImportBinding':
+      return isNgNativeImport(context, identifier);
+    case 'Variable':
+      return (
+        isInjectedService(context, def.node.init) ||
+        typedAsService(context, def.node.id.typeAnnotation)
+      );
+    case 'Parameter':
+      return def.name.type === 'Identifier' && typedAsService(context, def.name.typeAnnotation);
+    default:
+      return false;
+  }
+}
+
+/** @type {import('eslint').Rule.RuleModule} */
+const noUncalledAvailable = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: "Disallow a service's available signal read as a condition without calling it",
+      url: `${DOCS}#no-uncalled-available`,
+    },
+    messages: {
+      uncalled: 'available is a signal, so it is always truthy. Call it: available().',
+    },
+    fixable: 'code',
+    schema: [],
+  },
+  create(context) {
+    return {
+      // Every service's `available` is a `Signal<boolean>`: a function, and so always truthy.
+      // ponytail: read from the syntax, not by type, so a service reached any other way, or a
+      // signal kept under another name, is not followed; that would need the type checker, which
+      // the recommended config does not set up.
+      'MemberExpression[computed=false][property.name="available"]'(node) {
+        if (node.parent?.type === 'CallExpression' && node.parent.callee === node) return;
+        if (!readAsCondition(node) || !isService(context, node.object)) return;
+        context.report({
+          node: node.property,
+          messageId: 'uncalled',
+          fix: (fixer) => fixer.insertTextAfter(node, '()'),
+        });
+      },
+    };
+  },
+};
+
 /** Report `window.document`, `globalThis.localStorage`, `window.addEventListener` and the like. */
 function checkWindowMember(context, identifier) {
   const member = identifier.parent;
@@ -529,6 +692,7 @@ const plugin = {
     'no-browser-apis': noBrowserApis,
     'no-dom-node-access': noDomNodeAccess,
     'lowercase-elements': lowercaseElements,
+    'no-uncalled-available': noUncalledAvailable,
   },
 };
 
@@ -549,6 +713,7 @@ const recommended = [
       '@ng-native/no-browser-apis': 'error',
       '@ng-native/no-dom-events': 'error',
       '@ng-native/no-dom-node-access': 'error',
+      '@ng-native/no-uncalled-available': 'error',
     },
   },
   {

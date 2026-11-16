@@ -191,3 +191,16 @@ Reports, in TypeScript:
 
 `window` itself is not reported. React Native defines it as the global object, so
 `window.setTimeout` works.
+
+### no-uncalled-available
+
+Reports a service's `available` read as a condition without calling it: the test of an `if`, a loop
+or a `?:`, the operand of `!`, the left operand of `&&` or `||`, or the right one where the whole is
+a condition. Every service's `available` is a `Signal<boolean>`, and a signal is a function, so
+`if (haptics.available)` is always true. `eslint --fix` writes the call, `if (haptics.available())`.
+
+It reports only an `available` read off an `@ng-native` service it can identify in TypeScript:
+`inject()` of one, a variable, parameter or field initialised with one or typed as one, or a name
+the package exports, such as `splashScreen`. Anything else named `available` may be a plain boolean,
+so it is left alone, and so is a signal kept under another name first, then tested. A template is
+left to Angular's own checks.

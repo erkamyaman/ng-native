@@ -514,14 +514,40 @@ describe('the tracking source', () => {
 });
 
 describe('the document picker source', () => {
-  it('is expo-document-picker itself, whose functions the service calls by their own names', () => {
-    const expoDocumentPicker = { getDocumentAsync: async () => ({ canceled: true }) };
-    assert.equal(
-      withModules({ 'expo-document-picker': expoDocumentPicker }, () =>
-        defaultSource(DocumentPicker.SOURCE),
-      ),
-      expoDocumentPicker,
-    );
+  it("calls expo-document-picker's getDocumentAsync with the options it is given", async () => {
+    const asked: unknown[] = [];
+    const expoDocumentPicker = {
+      getDocumentAsync: async (options: unknown) => (asked.push(options), { canceled: true }),
+    };
+    const source = withModules({ 'expo-document-picker': expoDocumentPicker }, () =>
+      defaultSource(DocumentPicker.SOURCE),
+    )!;
+    assert.deepEqual(await source.getDocumentAsync({ type: 'text/csv' }), { canceled: true });
+    assert.deepEqual(asked, [{ type: 'text/csv' }]);
+  });
+
+  it("adds expo-file-system's folder picker beside expo-document-picker's", async () => {
+    const folder = { uri: 'file:///picked/' };
+    const modules = {
+      'expo-document-picker': {
+        getDocumentAsync: async () => ({ canceled: true, assets: null }),
+      },
+      'expo-file-system': { Directory: { pickDirectoryAsync: async () => folder } },
+    };
+    const source = withModules(modules, () => defaultSource(DocumentPicker.SOURCE))!;
+    assert.deepEqual(await source.getDocumentAsync(), { canceled: true, assets: null });
+    // Loaded as a folder is asked for, not as the source is made.
+    assert.equal(await withModules(modules, () => source.pickDirectoryAsync!()), folder);
+  });
+
+  it('answers no folder without expo-file-system', async () => {
+    const modules = {
+      'expo-document-picker': {
+        getDocumentAsync: async () => ({ canceled: true, assets: null }),
+      },
+    };
+    const source = withModules(modules, () => defaultSource(DocumentPicker.SOURCE))!;
+    assert.equal(await withModules(modules, () => source.pickDirectoryAsync!()), null);
   });
 
   it('is inert with no expo-document-picker installed', () => {
@@ -710,6 +736,67 @@ describe('the file system source', () => {
     assert.deepEqual(created, [{ directory: cache, name: 'a.txt' }]);
     assert.ok(file instanceof FakeFile);
     return files.pickDirectoryAsync!().then((picked) => assert.equal(picked, document));
+  });
+
+  it("lists, describes and watches through expo-file-system's Directory, File and Paths", async () => {
+    class Entry {
+      readonly uri: string;
+      readonly name: string;
+      constructor(uri: string) {
+        this.uri = uri;
+        this.name = uri.split('/').filter(Boolean).at(-1)!;
+      }
+    }
+    const watched: string[] = [];
+    let removed = 0;
+    class FakeDirectory extends Entry {
+      list = () => [new FakeDirectory('file:///docs/notes/'), new FakeFile('file:///docs/a.txt')];
+      info = () => ({ exists: true, size: 10, modificationTime: 5 });
+      watch = (listener: (event: unknown) => void) => {
+        watched.push(this.uri);
+        listener({ type: 'created', target: new FakeFile('file:///docs/b.txt') });
+        return { remove: () => removed++ };
+      };
+    }
+    class FakeFile extends Entry {
+      info = () => ({ exists: true, size: 3, modificationTime: 7, creationTime: 6 });
+    }
+    const exists = new Set(['file:///docs/', 'file:///docs/a.txt']);
+    const expoFileSystem = {
+      Paths: {
+        cache: { uri: 'file:///cache/' },
+        document: { uri: 'file:///docs/' },
+        info: (uri: string) => ({ exists: exists.has(uri), isDirectory: uri.endsWith('/') }),
+      },
+      File: FakeFile,
+      Directory: FakeDirectory,
+    };
+    const files = withModules({ 'expo-file-system': expoFileSystem }, () =>
+      defaultSource(FileSystem.SOURCE),
+    )!;
+    assert.deepEqual(await files.readdir!('file:///docs/'), [
+      { name: 'notes', uri: 'file:///docs/notes/', directory: true },
+      { name: 'a.txt', uri: 'file:///docs/a.txt', directory: false },
+    ]);
+    assert.deepEqual(await files.stat!('file:///docs/a.txt'), {
+      uri: 'file:///docs/a.txt',
+      directory: false,
+      size: 3,
+      modified: 7,
+      created: 6,
+    });
+    assert.deepEqual(await files.stat!('file:///docs/'), {
+      uri: 'file:///docs/',
+      directory: true,
+      size: 10,
+      modified: 5,
+      created: null,
+    });
+    assert.equal(await files.stat!('file:///docs/gone.txt'), null);
+    const changes: unknown[] = [];
+    files.watch!('file:///docs/', (change) => changes.push(change))();
+    assert.deepEqual(changes, [{ type: 'created', uri: 'file:///docs/b.txt' }]);
+    assert.deepEqual([watched, removed], [['file:///docs/'], 1]);
   });
 
   it('is inert with no expo-file-system installed', () => {

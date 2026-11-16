@@ -331,3 +331,92 @@ test('every hyphenated element in @ng-native/components has its DOM events read'
     assert.equal(messages.length, 1, `<${name}>`);
   }
 });
+test("a service's available read as a condition without being called is reported", async () => {
+  const code = [
+    "import { inject } from '@angular/core';",
+    "import { Haptics } from '@ng-native/expo/haptics';",
+    'const haptics = inject(Haptics);',
+    'if (haptics.available) haptics.impact();',
+    'const on = !inject(Haptics).available || other;',
+    'const label = haptics.available && ready ? 1 : 2;',
+    'while (haptics?.available) break;',
+    '',
+  ].join('\n');
+  assert.deepEqual(await lint(code, 'a.ts'), [
+    '4:13 @ng-native/no-uncalled-available: available is a signal, so it is always truthy. Call it: available().',
+    '5:29 @ng-native/no-uncalled-available: available is a signal, so it is always truthy. Call it: available().',
+    '6:23 @ng-native/no-uncalled-available: available is a signal, so it is always truthy. Call it: available().',
+    '7:17 @ng-native/no-uncalled-available: available is a signal, so it is always truthy. Call it: available().',
+  ]);
+});
+
+test('available called, or read as a value rather than a condition, is left alone', async () => {
+  const code = [
+    'if (haptics.available()) go();',
+    'const on = !haptics.available() || other;',
+    'const signal = haptics.available;',
+    'const shown = computed(() => haptics.available());',
+    'if (available) go();',
+    '',
+  ].join('\n');
+  assert.deepEqual(await lint(code, 'a.ts'), []);
+});
+
+test("available read uncalled is fixed to a call where it is an @ng-native service's", async () => {
+  const code = [
+    "import { inject } from '@angular/core';",
+    "import { Haptics } from '@ng-native/expo/haptics';",
+    "import { splashScreen } from '@ng-native/expo/splash-screen';",
+    'const haptics = inject(Haptics);',
+    'function typed(buzz: Haptics) {',
+    '  return !buzz.available;',
+    '}',
+    'class Panel {',
+    '  private readonly haptics = inject(Haptics);',
+    '  constructor(private readonly typed: Haptics) {}',
+    '  go() {',
+    '    if (this.haptics.available && this.typed.available) go();',
+    '  }',
+    '}',
+    'if (haptics.available && !inject(Haptics).available && splashScreen.available) go();',
+    '',
+  ].join('\n');
+  assert.equal(await fix(code, 'a.ts'), code.replace(/\.available\b/g, '.available()'));
+});
+
+test('available on anything that is not an @ng-native service is left alone', async () => {
+  const code = [
+    "import { inject, InjectionToken } from '@angular/core';",
+    "import { Haptics } from '@ng-native/expo/haptics';",
+    'const item = { available: true };',
+    'if (item.available) go();',
+    'function shadowed(Haptics: InjectionToken<{ available: boolean }>) {',
+    '  const local = inject(Haptics);',
+    '  return !local.available;',
+    '}',
+    'class Other {',
+    '  readonly haptics = { available: true };',
+    '  go() {',
+    '    if (this.haptics.available) go();',
+    '  }',
+    '}',
+    '',
+  ].join('\n');
+  assert.deepEqual(await lint(code, 'a.ts'), []);
+});
+
+test('the last operand of && or || is a condition only where the whole is one', async () => {
+  const code = [
+    "import { inject } from '@angular/core';",
+    "import { Haptics } from '@ng-native/expo/haptics';",
+    'const haptics = inject(Haptics);',
+    'const shown = ready && haptics.available;',
+    'const either = ready || haptics.available;',
+    'if (ready && haptics.available) go();',
+    '',
+  ].join('\n');
+  assert.deepEqual(
+    (await lint(code, 'a.ts')).map((problem) => problem.split(' ')[0]),
+    ['6:22'],
+  );
+});

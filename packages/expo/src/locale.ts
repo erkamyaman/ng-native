@@ -19,7 +19,7 @@ import {
   signal,
   type Signal,
 } from '@angular/core';
-import { expoModule, optional } from './native.ts';
+import { expoModule, optional, presence } from './native.ts';
 
 /** The subset worth naming. The module's own `Locale` carries the rest and is passed through. */
 export interface LocaleLike {
@@ -76,6 +76,13 @@ export class Locale {
   });
 
   private readonly native = inject(Locale.SOURCE);
+
+  /**
+   * Whether the module is here. False where the service is absent, on an OS the module is not for,
+   * and every call is inert; false too in a build missing the module, where a call can throw a
+   * `MissingModuleError`.
+   */
+  readonly available: Signal<boolean> = presence(this.native);
   private readonly generation = signal(0);
 
   constructor() {
