@@ -1073,3 +1073,85 @@ describe('native-typecheck-target, through nx migrate, ng update and ng-native-m
     assert.deepEqual((await viaNx(plain, 'native-typecheck-target')).files, plain);
   });
 });
+
+describe('os-comparisons-on-macos, through nx migrate, ng update and ng-native-migrate', () => {
+  const ios =
+    "is false on macOS, where the OS is now 'macos'. If the branch is for every Apple OS, check for 'macos' too.";
+  const version =
+    'also compares the macOS version on a Mac, where macOS 26 matches too. Check the OS as well if it is about iOS.';
+  const files = {
+    'src/app/home.ts': [
+      "import { Component } from '@angular/core';",
+      '@Component({',
+      "  selector: 'app-home',",
+      '  template: `',
+      '    <text>Home</text>',
+      "    @if (os() === 'ios') {",
+      '      <text>iPhone</text>',
+      '    }',
+      '    @if (OS_VERSION >= 26) {',
+      '      <view class="glass"></view>',
+      '    }',
+      '  `,',
+      '})',
+      'export class Home {}',
+      '',
+    ].join('\n'),
+    'src/app/badge.ts': [
+      "import { Component } from '@angular/core';",
+      "@Component({ selector: 'app-badge', template: '<text [class.tall]=\"os() === \\'ios\\'\"></text>' })",
+      'export class Badge {}',
+      '',
+    ].join('\n'),
+    'src/app/glass.html':
+      '@if (OS_VERSION >= 26) {\n  <view></view>\n}\n@if (17 <= OS_VERSION) {}\n',
+    'src/app/os.ts': "export const wide = Platform.OS !== 'android';\n",
+    'src/app/reversed.html':
+      "@if ('ios' === os()) {}\n<text [class.wide]=\"'android' != os\"></text>\n",
+    'src/app/shell.ts': 'export const tall = Platform.OS === `ios`;\n',
+  };
+
+  it('notes each comparison, in code, in external templates and in inline ones, and changes nothing', async () => {
+    const { nx, angular, cli } = await acrossAdapters(files, 'os-comparisons-on-macos', '0.22.0');
+    assert.deepEqual(nx.files, files);
+    assert.deepEqual(nx.notes, [
+      `src/app/badge.ts:2: os() === 'ios' ${ios}`,
+      `src/app/glass.html:1: OS_VERSION >= 26 ${version}`,
+      `src/app/glass.html:4: 17 <= OS_VERSION ${version}`,
+      `src/app/home.ts:6: os() === 'ios' ${ios}`,
+      `src/app/home.ts:9: OS_VERSION >= 26 ${version}`,
+      "src/app/os.ts:1: Platform.OS !== 'android' is true on macOS too, so a Mac takes this branch. Check that it is right there.",
+      `src/app/reversed.html:1: 'ios' === os() ${ios}`,
+      "src/app/reversed.html:2: 'android' != os is true on macOS too, so a Mac takes this branch. Check that it is right there.",
+      `src/app/shell.ts:1: Platform.OS === \`ios\` ${ios}`,
+    ]);
+    assert.deepEqual(angular, nx);
+    assert.deepEqual(cli, nx);
+  });
+
+  it('notes a comparison a template breaks over lines, at the line it starts on', async () => {
+    const split = {
+      'src/app/split.html': "<text>Top</text>\n@if (\n  os() ===\n    'ios'\n) {}\n",
+      'src/app/split.ts': [
+        "import { Component } from '@angular/core';",
+        '@Component({',
+        "  selector: 'app-split',",
+        '  template: `',
+        '    @if (OS_VERSION',
+        '      >= 26) {}',
+        '  `,',
+        '})',
+        'export class Split {}',
+        '',
+      ].join('\n'),
+    };
+    const { nx, angular, cli } = await acrossAdapters(split, 'os-comparisons-on-macos', '0.22.0');
+    assert.deepEqual(nx.files, split);
+    assert.deepEqual(nx.notes, [
+      `src/app/split.html:3: os() === 'ios' ${ios}`,
+      `src/app/split.ts:5: OS_VERSION >= 26 ${version}`,
+    ]);
+    assert.deepEqual(angular, nx);
+    assert.deepEqual(cli, nx);
+  });
+});
