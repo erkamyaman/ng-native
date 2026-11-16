@@ -182,12 +182,20 @@ branch a stacked PR depends on) show only the fix, its tests and the version pla
 
 ## 11. Open the PR
 
+In this step `<base>` is `origin/main`, or for a stacked PR the remote branch it depends on
+(`origin/<parent>`).
+
 - Turn step 5's WIP commit and what followed into the PR's commits (`git commit --amend`, or
-  `git reset --soft <base>` and commit again), each with a sentence-case summary: no `feat:`/`fix:`
-  prefix, no co-author trailer.
-- When the branch conflicts with main, or both it and main have changed `pnpm-lock.yaml` since its
-  base, rebase onto main and run the affected tests again. Otherwise it needs no rebase, however far
-  main has moved.
+  `git reset --soft $(git merge-base HEAD <base>)` and commit again), each with a sentence-case
+  summary: no `feat:`/`fix:` prefix, no co-author trailer. Reset to the commit the branch grew from,
+  never to `<base>` itself: once it has moved, that commits the old checkout's files on top of the newer
+  base and silently reverts everything merged in between (#1479 undid #1451 this way).
+- `git fetch origin` first. When the branch conflicts with `<base>`, or both it and main have changed
+  `pnpm-lock.yaml` since its base, rebase onto it (`git rebase <base>`) and run the affected tests again. Otherwise it needs no
+  rebase, however far main has moved.
+- Before every push, `git fetch origin` and read `git diff <base>...HEAD`: only the files this change
+  meant to touch, and in them only its own hunks. Any other file or hunk, above all one deleted or
+  reverted, means the history is wrong: rebuild the branch on `<base>` before pushing.
 - Before pushing, check that no release is running. A merge while a release runs breaks its push.
   `gh api 'repos/ng-native/ng-native/actions/workflows/release.yml/runs?per_page=1' --jq '.workflow_runs[0].status'`
   must print `completed`.
