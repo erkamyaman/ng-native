@@ -25,22 +25,43 @@
  * item with a `[spacing]` is a fixed gap of that many points between the buttons either side:
  *
  * ```html
- * <native-header-item type="right" systemImageName="ellipsis" [menu]="more" (menuSelect)="run($event)" />
+ * <native-header-item type="right" systemImageName="ellipsis" [menu]="more" />
  * <native-header-item type="right" [spacing]="12" />
+ * <ng-template #more>
+ *   <menu-item label="Rename" sfSymbol="pencil" (select)="rename()" />
+ *   <menu-separator />
+ *   <menu-item label="Delete" destructive (select)="remove()" />
+ * </ng-template>
  * ```
+ *
+ * The menu is a template of `<menu-item>`s, `<menu-group>`s and `<menu-separator>`s, as a
+ * `[contextMenu]` and a `<menu-bar>` are written: a group is a submenu, or with `inline` a
+ * section, and a separator starts a section. `[menu]` also takes a `HeaderMenu` object, whose
+ * chosen action `(menuSelect)` reports by its `id`.
  */
 import {
   type AfterContentInit,
   Component,
   DestroyRef,
   ElementRef,
+  Injector,
+  TemplateRef,
   computed,
   effect,
   inject,
   input,
   output,
   signal,
+  untracked,
 } from '@angular/core';
+import {
+  buildMenuTemplate,
+  isSeparator,
+  menuActionId,
+  type MenuEntry,
+  type MenuItemModel,
+  type MenuTemplate,
+} from '@ng-native/device';
 import { type Engine, type EngineNode, HostEngine, nativePlatform } from '@ng-native/fabric';
 import { HeaderBarButtons, type BarButtonConfig } from './header-bar-buttons.ts';
 import { HeaderSearch } from './header-search.ts';
@@ -144,6 +165,11 @@ export class NativeHeaderItem implements AfterContentInit {
     effect(() => {
       if (this.isBarButton()) warnIfAndroid();
     });
+    effect(() => {
+      const menu = this.menu();
+      this.buildMenu(menu instanceof TemplateRef ? menu : null);
+    });
+    inject(DestroyRef).onDestroy(() => this.buildMenu(null));
   }
 
   ngAfterContentInit(): void {
@@ -180,8 +206,11 @@ export class NativeHeaderItem implements AfterContentInit {
   readonly disabled = input(undefined, { transform: optionalBoolean });
   /** What a screen reader says for a button with a symbol and no title, or for an item's view. */
   readonly accessibilityLabel = input<string>();
-  /** What a tap on the bar button opens, instead of sending `(press)`. */
-  readonly menu = input<HeaderMenu>();
+  /**
+   * What a tap on the bar button opens, instead of sending `(press)`: a template of `<menu-item>`s,
+   * or a `HeaderMenu`.
+   */
+  readonly menu = input<HeaderMenu | TemplateRef<unknown>>();
   /** A gap of this many points in the bar, with no button. iOS only, as bar buttons are. */
   readonly spacing = input(undefined, { transform: optionalNumber });
 
@@ -225,7 +254,7 @@ export class NativeHeaderItem implements AfterContentInit {
     const spacing = this.spacing();
     if (spacing !== undefined) return { spacing };
     const tint = this.tintColor();
-    const menu = this.menu();
+    const menu = this.resolvedMenu()?.menu;
     const config: Record<string, unknown> = {
       // Native sends a press for an entry with an id, and then opens a menu only on a long press.
       buttonId: menu ? undefined : this.buttonId,
@@ -244,11 +273,48 @@ export class NativeHeaderItem implements AfterContentInit {
   });
 
   private chooseFrom(menuId: string): void {
-    const menu = this.menu();
+    const resolved = this.resolvedMenu();
+    if (!resolved || !menuId.startsWith(this.menuIdPrefix)) return;
     const id = menuId.slice(this.menuIdPrefix.length);
-    if (menu && menuId.startsWith(this.menuIdPrefix) && hasAction(menu, id)) {
-      this.menuSelect.emit(id);
-    }
+    if (resolved.actions) resolved.actions.get(id)?.();
+    else if (hasAction(resolved.menu, id)) this.menuSelect.emit(id);
+  }
+
+  // --- a menu written as a template ------------------------------------------------------
+
+  private readonly injector = inject(Injector);
+  private readonly built = signal<MenuTemplate | null>(null);
+
+  /** The menu as native takes it, with what each action does where it came from a template. */
+  private readonly resolvedMenu = computed(
+    (): { menu: HeaderMenu; actions: ReadonlyMap<string, () => void> | null } | null => {
+      const menu = this.menu();
+      if (!menu) return null;
+      if (!(menu instanceof TemplateRef)) return { menu, actions: null };
+      const built = this.built();
+      return built ? headerMenuOf(built.model.entries(), (item) => this.leftOut(item)) : null;
+    },
+  );
+
+  /** The labels of role items already warned of, so a menu built again warns once. */
+  private readonly warnedRoles = new Set<string>();
+
+  private leftOut(item: MenuItemModel): void {
+    if (this.warnedRoles.has(item.label)) return;
+    this.warnedRoles.add(item.label);
+    console.warn(
+      `[angular-native] The header menu item '${item.label}' is left out: a header menu has no ` +
+        `OS action for menuRole '${item.menuRole}'. Give it a (select).`,
+    );
+  }
+
+  /** Make the template's items, which register with the menu this button opens. */
+  private buildMenu(template: TemplateRef<unknown> | null): void {
+    // Read and written outside the effect that calls this, which would otherwise run again.
+    untracked(() => {
+      this.built()?.destroy();
+      this.built.set(template ? buildMenuTemplate(template, this.injector) : null);
+    });
   }
 
   /**
@@ -274,6 +340,77 @@ function nativeMenu(menu: HeaderMenu, prefix: string): BarButtonConfig {
       const { id, ...action } = rest;
       return { ...action, ...symbol, menuId: `${prefix}${id}` };
     }),
+  };
+}
+
+/**
+ * Menu items as a bar button's menu, an id for each action, and what each id does. An action is
+ * named by its handler (`menuActionId`), so a choice native reports from a menu it drew before the
+ * items changed runs that item or nothing; one without a handler by its place (`1.0`). A separator
+ * starts a section: UIKit draws the line between inline submenus.
+ */
+function headerMenuOf(
+  entries: readonly MenuEntry[],
+  leftOut: (item: MenuItemModel) => void,
+): {
+  menu: HeaderMenu;
+  actions: ReadonlyMap<string, () => void>;
+} {
+  const actions = new Map<string, () => void>();
+  const walk = (list: readonly MenuEntry[], at: string): HeaderMenu['items'] => {
+    const sections: HeaderMenu['items'][] = [[]];
+    list.forEach((entry, index) => {
+      if (isSeparator(entry)) {
+        if (sections.at(-1)!.length) sections.push([]);
+        return;
+      }
+      // An item the OS is to do, which a header menu has no way to: it would do nothing.
+      if (entry.menuRole && !entry.select && !entry.items) {
+        leftOut(entry);
+        return;
+      }
+      const place = `${at}${index}`;
+      const item: HeaderMenu['items'][number] = entry.items
+        ? {
+            type: 'submenu',
+            title: entry.label,
+            items: walk(entry.items, `${place}.`),
+            ...(entry.inline && { displayInline: true }),
+            ...headerLook(entry),
+          }
+        : headerAction(entry, place, actions);
+      (sections.at(-1) as HeaderMenu['items'][number][]).push(item);
+    });
+    const filled = sections.filter((section) => section.length);
+    if (filled.length < 2) return filled[0] ?? [];
+    return filled.map((items) => ({ type: 'submenu', title: '', displayInline: true, items }));
+  };
+  return { menu: { items: walk(entries, '') }, actions };
+}
+
+/** An item's symbol and colour, as a header menu entry takes them. */
+function headerLook(entry: MenuItemModel): { systemImageName?: string; destructive?: true } {
+  return {
+    ...(entry.sfSymbol !== undefined && { systemImageName: entry.sfSymbol }),
+    ...(entry.destructive && { destructive: true }),
+  };
+}
+
+/** An item as a header menu's action, its handler listed under its id. */
+function headerAction(
+  entry: MenuItemModel,
+  place: string,
+  actions: Map<string, () => void>,
+): HeaderMenu['items'][number] {
+  const id = entry.select ? menuActionId(entry.select) : place;
+  if (entry.select) actions.set(id, entry.select);
+  return {
+    type: 'action',
+    id,
+    title: entry.label,
+    ...headerLook(entry),
+    ...(entry.checked !== undefined && { state: entry.checked ? 'on' : 'off' }),
+    ...(entry.disabled && { disabled: true }),
   };
 }
 

@@ -176,6 +176,14 @@ if(NGN_TESTS)
   add_executable(ngn_core_tests ${core_test_SRC} core/testing/fake-backend.cpp core/testing/fake-network.cpp core/testing/fake-system.cpp)
   target_include_directories(ngn_core_tests PRIVATE core/testing core/tests)
   target_link_libraries(ngn_core_tests PRIVATE ngn_core doctest)
+  # doctest includes <ciso646> under clang, which libstdc++ 15 marks deprecated with a #warning;
+  # keep it a warning rather than an error under -Werror (libc++, on Apple, has no such warning).
+  # The group is #warnings in clang and cpp in GCC, which rejects the other's name.
+  if(NOT APPLE)
+    target_compile_options(ngn_core_tests PRIVATE
+        $<$<CXX_COMPILER_ID:Clang>:-Wno-error=\#warnings>
+        $<$<CXX_COMPILER_ID:GNU>:-Wno-error=cpp>)
+  endif()
   # The AppKit backend's own logic that needs no window: on macOS only, over the system's frameworks.
   if(APPLE)
     ngn_link_swift(ngn_core_tests)
