@@ -27,17 +27,22 @@ import {
   DestroyRef,
   ElementRef,
   Renderer2,
-  booleanAttribute,
   inject,
   input,
 } from '@angular/core';
 import { SafeArea, type Frame, type Insets } from '@ng-native/device';
 import { Engine, claimHost, type HostNode } from '@ng-native/fabric';
 import { registerSafeAreaComponents } from './safe-area.ts';
+import { booleanOr } from './transforms.ts';
 
-/** The insets, in the form the cascade carries: one custom property per edge, in points. */
-function insetTokens(insets: Insets): Record<string, { length: number }> {
+/**
+ * The insets, in the form the cascade carries: one custom property per edge, in points, and the
+ * extent of a desktop window's title bar controls into the provider's pane (zero in the content
+ * pane beside a sidebar, which they do not reach, and on every OS that has none).
+ */
+function insetTokens(insets: Insets, titlebarLeading: number): Record<string, { length: number }> {
   return {
+    '--safe-area-inset-titlebar-leading': { length: titlebarLeading },
     '--safe-area-inset-top': { length: insets.top },
     '--safe-area-inset-right': { length: insets.right },
     '--safe-area-inset-bottom': { length: insets.bottom },
@@ -48,6 +53,8 @@ function insetTokens(insets: Insets): Record<string, { length: number }> {
 interface InsetsChange {
   readonly insets: Insets;
   readonly frame: Frame;
+  /** The desktop host's window controls' width, from each pane's insets. Absent elsewhere. */
+  readonly titlebarLeading?: number;
 }
 
 @Component({
@@ -59,7 +66,7 @@ export class SafeAreaProvider {
    * Whether what this measures becomes `SafeArea.insets`. The app has one safe area; a second
    * provider inside a modal is there so native descendants can find one, not to redefine it.
    */
-  readonly reportInsets = input(true, { transform: booleanAttribute });
+  readonly reportInsets = input(true, { transform: booleanOr(true) });
 
   constructor() {
     registerSafeAreaComponents();
@@ -75,10 +82,10 @@ export class SafeAreaProvider {
       (event: { nativeEvent?: InsetsChange }) => {
         const change = event?.nativeEvent;
         if (!change || !this.reportInsets()) return;
-        area.report(change.insets, change.frame, this);
+        area.report(change.insets, change.frame, this, change.titlebarLeading);
         // Also published to the stylesheet, where a padding that clears the home indicator
         // belongs. `env()` on the web; a seeded custom property here.
-        engine?.updateTokens(insetTokens(change.insets));
+        engine?.updateTokens(insetTokens(area.insets(), area.titlebarLeading()));
       },
     );
     inject(DestroyRef).onDestroy(() => {
@@ -86,7 +93,9 @@ export class SafeAreaProvider {
       // The whole app going takes `SafeArea` and the stylesheet with it: a restyle and a commit
       // of a tree on its way out would be all this did.
       if (app.injector.destroyed) return;
-      if (area.withdraw(this)) engine?.updateTokens(insetTokens(area.insets()));
+      if (area.withdraw(this)) {
+        engine?.updateTokens(insetTokens(area.insets(), area.titlebarLeading()));
+      }
     });
   }
 }

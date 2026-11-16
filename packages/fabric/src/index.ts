@@ -35,6 +35,7 @@ export {
   type TokenKind,
   type TokenValue,
 } from './css.ts';
+export { DOM_EVENT_TYPES, MOUSE_EVENTS } from './dom-events.ts';
 export { ELEMENT_STYLES, ELEMENT_STYLES_CSS } from './element-styles.ts';
 export { EngineIntersectionObserver, installDeferTriggers } from './defer-triggers.ts';
 export { installNodeGlobal } from './node-global.ts';
@@ -68,12 +69,14 @@ export {
   markPage,
   scrollsOverflow,
   nativePlatform,
+  isApplePlatform,
   onFontsRegistered,
   onFontsSettled,
   registerHoist,
   registerPlatformComponents,
   registerViewName,
   registeredViewName,
+  textContentProp,
   type PlatformViewName,
   type ViewNameOptions,
   type PostScriptNames,
@@ -82,6 +85,7 @@ export {
   isTextInputView,
   type EngineNode,
   type EngineOptions,
+  type SharedChange,
   type EngineStats,
   type FabricNode,
   type FabricNodeSet,
@@ -99,6 +103,7 @@ export {
 export { reportUnboundFormsInput, type NamedHostNode } from './forms-inputs.ts';
 export { HostEngine, type HostNode, type Settling } from './host.ts';
 export { getFabricUIManager } from './fabric.ts';
+export { joinEvents, type EventReceiver } from './event-dispatcher.ts';
 export {
   pinnedRange,
   type DrivenProperty,

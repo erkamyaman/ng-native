@@ -1,6 +1,6 @@
 ---
 title: File system
-summary: The cache and document directories, and the create-then-write dance a first write needs.
+summary: The cache and document directories, a folder the user picks, and writing a file.
 ---
 
 # File system
@@ -8,6 +8,8 @@ summary: The cache and document directories, and the create-then-write dance a f
 `FileSystem` locates files by what they are for, cache or document, rather than by path, and
 hands back Expo's own `File`. It is a locator, not a file API: everything else - moving, listing,
 downloading, streaming - is on the object it returns, documented by `expo-file-system` itself.
+
+<!-- platforms: FileSystem -->
 
 ## Install
 
@@ -74,18 +76,60 @@ exist, then writes - text or bytes - replacing whatever was there.
 this.files.write(this.files.cache('thumb.jpg'), imageBytes);
 ```
 
+## `readdir(folder)`, `stat(path)` and `watch(path, listener)`
+
+Each takes a uri, or anything with one: a file, a folder from `paths`, a folder the user picked.
+
+- **`readdir(folder)`** resolves to the folder's entries, each with its `name`, `uri` and whether
+  it is a `directory`.
+- **`stat(path)`** resolves to what is there, `uri`, `directory`, `size` and the `modified` and
+  `created` times in milliseconds (null where the platform does not say), or `null` where nothing
+  is.
+- **`watch(path, listener)`** calls the listener with each change to a file, or to what is in a
+  folder: its `type` (`created`, `modified`, `deleted` or `renamed`), its `uri`, and for a rename
+  the `newUri`. It answers the function that stops watching. On iOS a folder's watch reports a
+  change to what is in it as `modified` on the folder itself, with the folder's `uri`, so it does
+  not say which entry was created, deleted or renamed: read the folder again to find out.
+
+```ts
+const entries = await this.files.readdir(this.files.paths.document!);
+const stop = this.files.watch(this.files.paths.document!, (change) => this.reload(change.uri));
+```
+
+They reach what the app can: its own folders and the folders the user picked.
+
+On macOS everything else that takes a path or a `file:` uri from the app reaches no further than
+`FileSystem` does, and the app's own assets. That covers an image to edit, show, measure or read
+text from, a font, a file to print, share, drag out, open or save to the photo library, a request's
+file url or body, an audio or video source, a web view's file page and `Asset.downloadAsync`. A
+SQLite database opens or is made only where `FileSystem` can write. Anything else is refused with an
+error naming the path, the same whether or not a file is there.
+
+## `paths`
+
+The folders an app writes to, as uris: `cache` and `document`, and the user's `home`, `desktop` and
+`downloads`, `temp` and the app's `appData`. Each is `null` where the OS has no such folder or the
+app cannot reach it, which on iOS and Android is all but `cache` and `document`.
+
+## `pickDirectory()`
+
+Deprecated: use [`DocumentPicker.pickDirectory()`](/packages/expo/document-picker), which answers
+the same. This one goes in a later release.
+
 ## Without the module
 
 On iOS and Android, a missing `expo-file-system` - never installed, or installed without the app
 being rebuilt since - leaves the service made, so injecting it does not throw. A call, or a read of
 a value only the module knows, throws a `MissingModuleError`. Its message names the module and the
 commands that fix it; see
-[Using a module](/packages/expo/using-a-module#what-happens-without-the-module-installed).
+[Using a module](/packages/expo/using-a-module#what-happens-without-the-module-installed). On macOS
+the same is true of a desktop host built without its file system module, and the message says to
+rebuild it.
 
-On the web, and in a test that provides no fake, `FileSystem` still does not fall back to reporting
-nothing, unlike most services in this package: `cache()` and `document()` throw
-`[angular-native] expo-file-system is not installed`, so there is no file to `write()` to. A file
-that silently failed to write is worse than an error that says why.
+On the web, and in a test that provides no fake, `FileSystem` is absent: `available()` is `false`,
+`cache()`, `document()` and `file()` answer a file that is not there, which `write()` leaves alone
+and which reads as empty, `readdir()` answers no entries, `stat()` answers `null`, `watch()`
+reports nothing and every folder in `paths` is `null`.
 
 ## Reference
 

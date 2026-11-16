@@ -15,6 +15,7 @@ export { ColorScheme, type ColorSchemeSource, type Scheme } from './color-scheme
 export {
   currentConditions,
   deviceTokens,
+  hairlineTokens,
   watchConditions,
   type WatchOptions,
 } from './conditions.ts';
@@ -77,6 +78,150 @@ export {
 export { SCREEN_IN_FRONT } from './screen-in-front.ts';
 export { SCREEN_SHOWN } from './screen-shown.ts';
 export { NATIVE_HISTORY } from './native-history.ts';
-export { OS } from './os.ts';
+export { APPLE, DESKTOP, OS } from './os.ts';
+export {
+  MENU_MODEL,
+  createMenuModel,
+  defaultMenuBar,
+  isSeparator,
+  mergeMenuBar,
+  menuModelInTreeOrder,
+  treeOrder,
+  type MenuEntry,
+  type MenuGroupModel,
+  type MenuGroupRole,
+  type MenuItemModel,
+  type MenuModel,
+  type MenuRole,
+  type MenuSeparator,
+} from './menu-model.ts';
+export {
+  isEditingShortcut,
+  matchesShortcut,
+  navigationShortcut,
+  parseShortcut,
+  shortcutFires,
+  type KeyChord,
+  type ParsedShortcut,
+  type ShortcutOs,
+} from './shortcut.ts';
+export {
+  Processes,
+  UndeclaredCapabilityError,
+  type ChildProcess,
+  type NativeProcesses,
+  type ProcessEvent,
+  type ProcessExit,
+  type SpawnOptions,
+} from './processes.ts';
+export {
+  SEARCH_PATH,
+  SpawnRuleError,
+  compileCapability,
+  filterEnvironment,
+  matchArguments,
+  matchSpawn,
+  parseArgument,
+  programProblem,
+  resolveProgram,
+  type ArgumentRule,
+  type CompiledCapability,
+  type PlaceholderValues,
+  type ProgramLookup,
+  type SpawnCapability,
+  type SpawnMatch,
+} from './spawn-rules.ts';
+export {
+  desktopOptionProblems,
+  pathAllowed,
+  pathProblem,
+  validateDesktopOptions,
+  type DesktopCapabilities,
+  type DesktopOptions,
+  type DocumentType,
+  type PathCapability,
+} from './desktop-options.ts';
+export {
+  macosPermissions,
+  type ExpoPermissionConfig,
+  type MacosPermissions,
+} from './desktop-permissions.ts';
+export {
+  Menus,
+  menuActionId,
+  menusSource,
+  serializeMenu,
+  type NativeMenuEntry,
+  type NativeMenuEvent,
+  type NativeMenus,
+  type NativeWindowHistory,
+  type NativeShortcut,
+  type SerializedMenu,
+} from './menus.ts';
+export { Dock, type NativeDock } from './dock.ts';
+export { nativeSplitViews } from './split-views.ts';
+export {
+  DragAndDrop,
+  dragAndDropSource,
+  type NativeDragAndDrop,
+  type NativeDragItem,
+  type NativeDropEvent,
+} from './drag-and-drop.ts';
+export { UndoStack, type NativeUndo, type NativeUndoEvent, type UndoAction } from './undo-stack.ts';
+export {
+  OS_SUPPORT,
+  SUPPORT_OSES,
+  platformsLine,
+  supportRowOf,
+  type OsSupportRow,
+  type SupportOs,
+} from './os-support.ts';
+export { Shell, type NativeShell } from './shell.ts';
+export {
+  Tray,
+  type NativeTray,
+  type NativeTrayEvent,
+  type NativeTrayIcon,
+  type TrayIconModel,
+} from './tray.ts';
+export { SIDEBAR_SELECTION } from './sidebar-selection.ts';
+export { WINDOW_NAVIGATOR, type WindowNavigator } from './window-navigator.ts';
+export {
+  AppWindows,
+  CURRENT_WINDOW,
+  MAIN_WINDOW_OPTIONS,
+  WINDOW_MOUNTER,
+  provideMainWindow,
+  type AppWindow,
+  type CloseGuard,
+  type ComponentWindowOptions,
+  type MainWindowOptions,
+  type NativeWindowEvent,
+  type NativeWindowRequest,
+  type NativeWindows,
+  type RouteWindowOptions,
+  type TitleBar,
+  type WindowMount,
+  type WindowMounter,
+  type WindowOptions,
+  windowsSource,
+} from './app-windows.ts';
+export {
+  APP_LIFECYCLE_OPTIONS,
+  AppLifecycle,
+  WILL_QUIT_DEADLINE_MS,
+  provideAppLifecycle,
+  quitsWithLastWindow,
+  type AppLifecycleOptions,
+} from './app-lifecycle.ts';
 export { OS_VERSION } from './os-version.ts';
 export { injectToken, type InjectTokenOptions } from './inject-token.ts';
+export { type ControlSize } from './control-size.ts';
+export {
+  RESTORABLE_WINDOWS,
+  WINDOW_RESTORE_STORE,
+  provideRestorableWindows,
+  type RestoredWindow,
+  type WindowRestoreStore,
+} from './window-restore.ts';
+export { buildMenuTemplate, type MenuTemplate } from './menu-template.ts';

@@ -41,7 +41,7 @@ import type {
   MediaType as ExpoMediaType,
   Query,
 } from 'expo-media-library';
-import { expoModule } from './native.ts';
+import { expoModule, presence } from './native.ts';
 import { Permission, UNAVAILABLE } from './permissions.ts';
 
 type Expo = typeof import('expo-media-library');
@@ -97,6 +97,13 @@ export class MediaLibrary {
   );
 
   private readonly native = inject(MediaLibrary.SOURCE);
+
+  /**
+   * Whether the module is here. False where the service is absent, on an OS the module is not for,
+   * and every call is inert; false too in a build missing the module, where a call can throw a
+   * `MissingModuleError`.
+   */
+  readonly available: Signal<boolean> = presence(this.native);
   private readonly destroyRef = inject(DestroyRef);
   private readonly changed = signal<MediaLibraryAssetsChangeEvent | null>(null);
   private readonly changes = this.changed.asReadonly();

@@ -1073,3 +1073,518 @@ describe('native-typecheck-target, through nx migrate, ng update and ng-native-m
     assert.deepEqual((await viaNx(plain, 'native-typecheck-target')).files, plain);
   });
 });
+
+describe('os-comparisons-on-macos, through nx migrate, ng update and ng-native-migrate', () => {
+  const files = {
+    'src/app/platform.ts': [
+      "import { Platform } from 'react-native';",
+      "import { OS, OS_VERSION } from '@ng-native/device';",
+      "import { inject } from '@angular/core';",
+      '',
+      "export const ios = Platform.OS === 'ios';",
+      "export const notAndroid = () => inject(OS) !== 'android';",
+      "export const android = Platform.OS === 'android';",
+      'export const glass = () => (inject(OS_VERSION) ?? 0) >= 26;',
+      "export const label = 'ios';",
+      '',
+    ].join('\n'),
+    'src/app/screen.html': ["@if (os === 'ios') {", '  <text>iPhone</text>', '}', ''].join('\n'),
+    'src/app/plain.ts': 'export const answer = 42;\n',
+    'node_modules/lib/index.js': "export const ios = Platform.OS === 'ios';\n",
+  };
+
+  it('says where each comparison a Mac now answers differently is, and changes nothing', async () => {
+    const { nx, angular, cli } = await acrossAdapters(files, 'os-comparisons-on-macos', '0.22.2');
+    assert.deepEqual(nx.files, files);
+    assert.deepEqual(nx.notes, [
+      "src/app/platform.ts:5: Platform.OS === 'ios' is false on macOS, where the OS is now 'macos'. If the branch is for every Apple OS, check for 'macos' too.",
+      "src/app/platform.ts:6: inject(OS) !== 'android' is true on macOS too, so a Mac takes this branch. Check that it is right there.",
+      'src/app/platform.ts:8: (inject(OS_VERSION) ?? 0) >= 26 also compares the macOS version on a Mac, where macOS 26 matches too. Check the OS as well if it is about iOS.',
+      "src/app/screen.html:1: os === 'ios' is false on macOS, where the OS is now 'macos'. If the branch is for every Apple OS, check for 'macos' too.",
+    ]);
+    assert.deepEqual(angular, nx);
+    assert.deepEqual(cli, nx);
+  });
+});
+
+describe('os-comparisons-on-macos: Platform.select and double-quoted templates', () => {
+  const files = {
+    'src/app/select.ts': [
+      "import { Platform } from 'react-native';",
+      '',
+      'export const a = Platform.select({ ios: 1, android: 2 });',
+      'export const b = Platform.select({ ios: 1, default: 3 });',
+      '',
+    ].join('\n'),
+    'src/app/screen.html': ['@if (os === "ios") {', '  <text>iPhone</text>', '}', ''].join('\n'),
+  };
+
+  // A Mac answers a select from `macos`, then `ios`, then `native`, then `default`, so an `ios`
+  // entry keeps its value there and needs no note.
+  it('notes a double-quoted comparison and leaves Platform.select alone', async () => {
+    const { nx } = await acrossAdapters(files, 'os-comparisons-on-macos', '0.22.2');
+    assert.deepEqual(nx.files, files);
+    assert.deepEqual(
+      nx.notes.map((note) => note.split(' ')[0]),
+      ['src/app/screen.html:1:'],
+    );
+  });
+});
+
+describe('available-signal, through nx migrate, ng update and ng-native-migrate', () => {
+  const files = {
+    'src/app/privacy.ts': [
+      "import { Component, inject } from '@angular/core';",
+      "import { Biometrics } from '@ng-native/expo/biometrics';",
+      "import { Haptics as Buzz } from '@ng-native/expo/haptics';",
+      "import { StoreReview } from '@ng-native/expo/store-review';",
+      "import { splashScreen } from '@ng-native/expo/splash-screen';",
+      '',
+      '@Component({',
+      "  selector: 'app-privacy',",
+      '  template: `@if (buzz.available) { <text>Buzz</text> }`,',
+      '})',
+      'export class Privacy {',
+      '  protected readonly buzz = inject(Buzz);',
+      '  private readonly biometrics = inject(Biometrics);',
+      '',
+      '  async ask(): Promise<boolean> {',
+      '    return this.buzz.available && !(await this.biometrics.available());',
+      '  }',
+      '',
+      '  later(review: StoreReview) {',
+      '    return review.available().then((yes) => yes);',
+      '  }',
+      '}',
+      '',
+      'export const held = () => splashScreen.available || inject(Buzz).available;',
+      'export const other = (thing: { available: boolean }) => thing.available;',
+      '',
+    ].join('\n'),
+    'src/app/settings.ts': [
+      "import { Component, inject } from '@angular/core';",
+      "import { Watch } from '@ng-native/expo/watch';",
+      '',
+      "@Component({ selector: 'app-settings', templateUrl: './settings.html' })",
+      'export class Settings {',
+      '  readonly watch = inject(Watch);',
+      '}',
+      '',
+    ].join('\n'),
+    'src/app/settings.html': "<text>{{ watch.available ? 'on' : 'off' }}</text>\n",
+    'src/app/sensor.ts': [
+      "import { inject } from '@angular/core';",
+      "import { Barometer } from '@ng-native/expo/sensors';",
+      '',
+      'const barometer = inject(Barometer);',
+      'export const known = barometer.available() !== null;',
+      'export const shown = barometer.available() ?? false;',
+      'export const plain = barometer.available();',
+      '',
+    ].join('\n'),
+    'src/app/everything.ts': "import * as review from '@ng-native/expo/store-review';\n",
+    'src/app/plain.ts': 'export const answer = 42;\n',
+  };
+
+  it("calls each service's available, stops awaiting it, and notes what it cannot rewrite", async () => {
+    const { nx, angular, cli } = await acrossAdapters(files, 'available-signal', '0.22.2');
+    const privacy = nx.files['src/app/privacy.ts']!;
+    assert.match(privacy, /template: `@if \(buzz\.available\(\)\) \{/);
+    assert.match(
+      privacy,
+      /return this\.buzz\.available\(\) && !\(this\.biometrics\.available\(\)\);/,
+    );
+    assert.match(
+      privacy,
+      /return review\.available\(\)\.then\(\(yes\) => yes\);/,
+      'left as it was',
+    );
+    assert.match(
+      privacy,
+      /held = \(\) => splashScreen\.available\(\) \|\| inject\(Buzz\)\.available\(\);/,
+    );
+    assert.match(privacy, /other = \(thing: \{ available: boolean \}\) => thing\.available;/);
+    assert.equal(
+      nx.files['src/app/settings.html'],
+      "<text>{{ watch.available() ? 'on' : 'off' }}</text>\n",
+    );
+    assert.equal(nx.files['src/app/sensor.ts'], files['src/app/sensor.ts']);
+    assert.equal(nx.files['src/app/plain.ts'], files['src/app/plain.ts']);
+    assert.deepEqual(nx.notes, [
+      "src/app/everything.ts:1: A namespace import of '@ng-native/expo/store-review' cannot be followed automatically. A service's available is a signal now: read it as available(), and do not await it.",
+      'src/app/privacy.ts:16: available() is a signal now, false until the platform answers, so without the await this reads false at first. Read it where a change shows, in a template or a computed(), rather than once.',
+      'src/app/privacy.ts:20: available() is a signal now, not a promise. Read it as available(), without awaiting it or calling then().',
+      "src/app/sensor.ts:5: A sensor's available() is never null now: it is false until the platform answers.",
+      "src/app/sensor.ts:6: A sensor's available() is never null now: it is false until the platform answers.",
+    ]);
+    assert.deepEqual(angular, nx);
+    assert.deepEqual(cli, nx);
+  });
+});
+
+describe('available-signal on code that is already migrated, and on bracket reads', () => {
+  const files = {
+    'src/app/ready.ts': [
+      "import { inject } from '@angular/core';",
+      "import { Biometrics } from '@ng-native/expo/biometrics';",
+      "import { Haptics } from '@ng-native/expo/haptics';",
+      '',
+      'const biometrics = inject(Biometrics);',
+      'const haptics = inject(Haptics);',
+      'export const ready = biometrics.available() && haptics.available();',
+      'export const pick = () => (biometrics.available() ? 1 : 2);',
+      'export const stale = () => biometrics.available().then((yes) => yes);',
+      'export const all = () => Promise.all([biometrics.available(), biometrics.available()]);',
+      '',
+    ].join('\n'),
+    'src/app/bracket.ts': [
+      "import { inject } from '@angular/core';",
+      "import { Haptics } from '@ng-native/expo/haptics';",
+      "import { Biometrics } from '@ng-native/expo/biometrics';",
+      '',
+      'const haptics = inject(Haptics);',
+      'const biometrics = inject(Biometrics);',
+      "export const read = haptics['available'];",
+      "export const wait = async () => await biometrics['available']();",
+      "export const chained = () => biometrics['available']().then((yes) => yes);",
+      '',
+    ].join('\n'),
+    'src/app/panel.ts': [
+      "import { Component, inject } from '@angular/core';",
+      "import { Haptics } from '@ng-native/expo/haptics';",
+      '',
+      '@Component({',
+      "  selector: 'app-panel',",
+      '  template: `@if (haptics["available"]) { <text>Buzz</text> }`,',
+      '})',
+      'export class Panel {',
+      '  protected readonly haptics = inject(Haptics);',
+      '}',
+      '',
+    ].join('\n'),
+  };
+
+  it('does not note a signal that is only read, and notes a promise that is still used as one', async () => {
+    const { nx } = await acrossAdapters(files, 'available-signal', '0.22.2');
+    assert.equal(nx.files['src/app/ready.ts'], files['src/app/ready.ts']);
+    const ready = nx.notes.filter((note) => note.startsWith('src/app/ready.ts'));
+    assert.deepEqual(
+      ready.map((note) => note.split(': ')[0]),
+      ['src/app/ready.ts:9', 'src/app/ready.ts:10', 'src/app/ready.ts:10'],
+    );
+  });
+
+  it("follows x['available'] as it follows x.available", async () => {
+    const { nx } = await acrossAdapters(files, 'available-signal', '0.22.2');
+    const bracket = nx.files['src/app/bracket.ts']!;
+    assert.match(bracket, /read = haptics\['available'\]\(\);/);
+    assert.match(bracket, /wait = async \(\) => biometrics\['available'\]\(\);/);
+    assert.match(nx.files['src/app/panel.ts']!, /@if \(haptics\["available"\]\(\)\)/);
+    assert.deepEqual(
+      nx.notes.filter((note) => note.startsWith('src/app/bracket.ts')).map((n) => n.split(': ')[0]),
+      ['src/app/bracket.ts:8', 'src/app/bracket.ts:9'],
+    );
+  });
+});
+
+describe('available-signal in template text, which a template shows rather than reads', () => {
+  const html = [
+    '<text>Uses haptics.available here</text>',
+    '{{ a <b }} @if (haptics.available) {}',
+    '{{ \'{{\' }}<text [hint]="haptics.available"></text>',
+    '<text label="@if (haptics.available) yes @let x = haptics.available;"></text>',
+    "<text label=\"[hint]='haptics.available' (press)='haptics.available'\"></text>",
+    '<text label="haptics.available" [hint]="haptics.available ? 1 : 2">{{ haptics.available }}</text>',
+    '<pressable (press)="go(haptics.available)" *ngIf="haptics.available"></pressable>',
+    '@if (haptics.available) { <text>haptics.available</text> } @else if (haptics.available) {}',
+    '@switch (haptics.available) { @case (haptics.available) {} }',
+    '@for (item of list(haptics.available); track item) {} @defer (when haptics.available) {}',
+    '@let on = haptics.available;',
+    '',
+  ].join('\n');
+  const called = [
+    '<text>Uses haptics.available here</text>',
+    '{{ a <b }} @if (haptics.available()) {}',
+    '{{ \'{{\' }}<text [hint]="haptics.available()"></text>',
+    '<text label="@if (haptics.available) yes @let x = haptics.available;"></text>',
+    "<text label=\"[hint]='haptics.available' (press)='haptics.available'\"></text>",
+    '<text label="haptics.available" [hint]="haptics.available() ? 1 : 2">{{ haptics.available() }}</text>',
+    '<pressable (press)="go(haptics.available())" *ngIf="haptics.available()"></pressable>',
+    '@if (haptics.available()) { <text>haptics.available</text> } @else if (haptics.available()) {}',
+    '@switch (haptics.available()) { @case (haptics.available()) {} }',
+    '@for (item of list(haptics.available()); track item) {} @defer (when haptics.available()) {}',
+    '@let on = haptics.available();',
+    '',
+  ].join('\n');
+  const component = (template: string) =>
+    [
+      "import { Component, inject } from '@angular/core';",
+      "import { Haptics } from '@ng-native/expo/haptics';",
+      '',
+      `@Component({ selector: 'app-text', ${template} })`,
+      'export class Shown {',
+      '  readonly haptics = inject(Haptics);',
+      '}',
+      '',
+    ].join('\n');
+
+  it('rewrites only bindings, interpolations and block parameters, inline and in a file', async () => {
+    const files = {
+      'src/app/inline.ts': component(`template: \`${html}\``),
+      'src/app/external.ts': component("templateUrl: './external.html'"),
+      'src/app/external.html': html,
+    };
+    const { nx, angular, cli } = await acrossAdapters(files, 'available-signal', '0.22.2');
+    assert.equal(nx.files['src/app/external.html'], called);
+    assert.equal(nx.files['src/app/inline.ts'], component(`template: \`${called}\``));
+    assert.deepEqual(nx.notes, []);
+    assert.deepEqual(angular, nx);
+    assert.deepEqual(cli, nx);
+  });
+});
+
+describe('available-signal on strings inside template expressions', () => {
+  const html = [
+    `<text [label]="'haptics.available'">{{ 'haptics.available' }}</text>`,
+    "{{ '}}' + haptics.available }}",
+    "@let shown = ';' + haptics.available;",
+    '{{ `${haptics.available} and haptics.available` }}',
+    '',
+  ].join('\n');
+  const called = [
+    `<text [label]="'haptics.available'">{{ 'haptics.available' }}</text>`,
+    "{{ '}}' + haptics.available() }}",
+    "@let shown = ';' + haptics.available();",
+    '{{ `${haptics.available()} and haptics.available` }}',
+    '',
+  ].join('\n');
+  /** A template as a TypeScript template literal writes it: a backtick and a `${` escaped. */
+  const literal = (template: string) =>
+    '`' + template.replace(/[`\\]/g, '\\$&').replace(/\$\{/g, '\\${') + '`';
+  const component = (template: string) =>
+    [
+      "import { Component, inject } from '@angular/core';",
+      "import { Haptics } from '@ng-native/expo/haptics';",
+      '',
+      `@Component({ selector: 'app-strings', ${template} })`,
+      'export class Strings {',
+      '  readonly haptics = inject(Haptics);',
+      '}',
+      '',
+    ].join('\n');
+
+  it('leaves a string constant alone, and spans past a }} or ; inside one', async () => {
+    const files = {
+      'src/app/inline.ts': component(`template: ${literal(html)}`),
+      'src/app/external.ts': component("templateUrl: './external.html'"),
+      'src/app/external.html': html,
+    };
+    const { nx } = await acrossAdapters(files, 'available-signal', '0.22.2');
+    assert.equal(nx.files['src/app/external.html'], called);
+    assert.equal(nx.files['src/app/inline.ts'], component(`template: ${literal(called)}`));
+  });
+
+  it('reads an inline template as its string decodes, past escaped quotes', async () => {
+    const quoted = (template: string) => `template: '${template.replace(/['\\]/g, '\\$&')}'`;
+    const shown = "<text [hint]='haptics.available'>{{ 'a' + haptics.available }}</text>";
+    const files = { 'src/app/quoted.ts': component(quoted(shown)) };
+    const { nx } = await acrossAdapters(files, 'available-signal', '0.22.2');
+    assert.equal(
+      nx.files['src/app/quoted.ts'],
+      component(quoted(shown.replace(/haptics\.available/g, 'haptics.available()'))),
+    );
+  });
+
+  it('keeps its place past an escape that decodes to two UTF-16 units', async () => {
+    const before = "template: '<text>\\u{1F600}</text>@if (haptics.available) {}'";
+    const files = { 'src/app/emoji.ts': component(before) };
+    const { nx } = await acrossAdapters(files, 'available-signal', '0.22.2');
+    assert.equal(
+      nx.files['src/app/emoji.ts'],
+      component(before.replace('haptics.available', 'haptics.available()')),
+    );
+  });
+});
+
+describe('available-signal on names that only look like a service', () => {
+  const files = {
+    'src/app/shadow.ts': [
+      "import { inject, type InjectionToken } from '@angular/core';",
+      "import { Haptics } from '@ng-native/expo/haptics';",
+      '',
+      'export function read(Haptics: InjectionToken<{ available: boolean }>) {',
+      '  const item = inject(Haptics);',
+      '  return item.available;',
+      '}',
+      'export const real = () => inject(Haptics).available;',
+      '',
+    ].join('\n'),
+    'src/app/nested.ts': [
+      "import { Component, inject } from '@angular/core';",
+      "import { Haptics } from '@ng-native/expo/haptics';",
+      '',
+      '@Component({',
+      "  selector: 'app-nested',",
+      '  template: `@if (model.haptics.available && model?.haptics.available) {} @if (haptics.available) {} @if (this.haptics.available) {}`,',
+      '})',
+      'export class Nested {',
+      '  protected readonly haptics = inject(Haptics);',
+      '  protected readonly model = { haptics: { available: true } };',
+      '}',
+      '',
+    ].join('\n'),
+    'src/app/buzz.ts': [
+      "import { Component, inject } from '@angular/core';",
+      "import { Haptics } from '@ng-native/expo/haptics';",
+      '',
+      "@Component({ selector: 'app-buzz', templateUrl: './shared.html' })",
+      'export class Buzz {',
+      '  readonly haptics = inject(Haptics);',
+      '}',
+      '',
+    ].join('\n'),
+    'src/app/quiet.ts': [
+      "import { Component } from '@angular/core';",
+      '',
+      "@Component({ selector: 'app-quiet', templateUrl: './shared.html' })",
+      'export class Quiet {',
+      '  readonly haptics = { available: false };',
+      '}',
+      '',
+    ].join('\n'),
+    'src/app/shared.html': '<text>Top</text>\n@if (haptics.available) { <text>Buzz</text> }\n',
+  };
+
+  it('leaves a shadowing token, a nested receiver and a template another component shares alone', async () => {
+    const { nx, angular, cli } = await acrossAdapters(files, 'available-signal', '0.22.2');
+    const shadow = nx.files['src/app/shadow.ts']!;
+    assert.match(shadow, /return item\.available;/, 'the parameter, not the import');
+    assert.match(shadow, /real = \(\) => inject\(Haptics\)\.available\(\);/, 'the import');
+    assert.match(
+      nx.files['src/app/nested.ts']!,
+      /`@if \(model\.haptics\.available && model\?\.haptics\.available\) \{\} @if \(haptics\.available\(\)\) \{\} @if \(this\.haptics\.available\(\)\) \{\}`/,
+    );
+    assert.equal(nx.files['src/app/shared.html'], files['src/app/shared.html']);
+    assert.deepEqual(nx.notes, [
+      'src/app/shared.html:2: Not every component that uses this template holds a service as haptics, so it was left as it is. Where it reads the service, call haptics.available().',
+    ]);
+    assert.deepEqual(angular, nx);
+    assert.deepEqual(cli, nx);
+  });
+
+  it('counts a component whose decorator is read off a namespace import of @angular/core', async () => {
+    const namespaced = {
+      'src/app/buzz.ts': files['src/app/buzz.ts'],
+      'src/app/quiet.ts': [
+        "import * as ng from '@angular/core';",
+        '',
+        "@ng.Component({ selector: 'app-quiet', templateUrl: './shared.html' })",
+        'export class Quiet {',
+        '  readonly haptics = { available: false };',
+        '}',
+        '',
+      ].join('\n'),
+      'src/app/shared.html': files['src/app/shared.html'],
+    };
+    const { nx } = await acrossAdapters(namespaced, 'available-signal', '0.22.2');
+    assert.equal(nx.files['src/app/shared.html'], files['src/app/shared.html']);
+    assert.equal(nx.notes.length, 1);
+  });
+
+  it('rewrites a shared template when every component that uses it holds the service', async () => {
+    const both = {
+      ...files,
+      'src/app/quiet.ts': files['src/app/buzz.ts']!.replace(/Buzz/g, 'Quiet').replace(
+        'buzz',
+        'quiet',
+      ),
+    };
+    const { nx } = await acrossAdapters(both, 'available-signal', '0.22.2');
+    assert.equal(
+      nx.files['src/app/shared.html'],
+      '<text>Top</text>\n@if (haptics.available()) { <text>Buzz</text> }\n',
+    );
+  });
+});
+
+describe('os-comparisons-on-macos: inline templates, backticks and template OS_VERSION', () => {
+  const ios =
+    "is false on macOS, where the OS is now 'macos'. If the branch is for every Apple OS, check for 'macos' too.";
+  const version =
+    'also compares the macOS version on a Mac, where macOS 26 matches too. Check the OS as well if it is about iOS.';
+  const files = {
+    'src/app/home.ts': [
+      "import { Component } from '@angular/core';",
+      '@Component({',
+      "  selector: 'app-home',",
+      '  template: `',
+      '    <text>Home</text>',
+      "    @if (os() === 'ios') {",
+      '      <text>iPhone</text>',
+      '    }',
+      '    @if (OS_VERSION >= 26) {',
+      '      <view class="glass"></view>',
+      '    }',
+      '  `,',
+      '})',
+      'export class Home {}',
+      '',
+    ].join('\n'),
+    'src/app/badge.ts': [
+      "import { Component } from '@angular/core';",
+      "@Component({ selector: 'app-badge', template: '<text [class.tall]=\"os() === \\'ios\\'\"></text>' })",
+      'export class Badge {}',
+      '',
+    ].join('\n'),
+    'src/app/glass.html':
+      '@if (OS_VERSION >= 26) {\n  <view></view>\n}\n@if (17 <= OS_VERSION) {}\n',
+    'src/app/os.ts': "export const wide = Platform.OS !== 'android';\n",
+    'src/app/reversed.html':
+      "@if ('ios' === os()) {}\n<text [class.wide]=\"'android' != os\"></text>\n",
+    'src/app/shell.ts': 'export const tall = Platform.OS === `ios`;\n',
+  };
+
+  it('notes each comparison, in code, in external templates and in inline ones, and changes nothing', async () => {
+    const { nx, angular, cli } = await acrossAdapters(files, 'os-comparisons-on-macos', '0.22.0');
+    assert.deepEqual(nx.files, files);
+    assert.deepEqual(nx.notes, [
+      `src/app/badge.ts:2: os() === 'ios' ${ios}`,
+      `src/app/glass.html:1: OS_VERSION >= 26 ${version}`,
+      `src/app/glass.html:4: 17 <= OS_VERSION ${version}`,
+      `src/app/home.ts:6: os() === 'ios' ${ios}`,
+      `src/app/home.ts:9: OS_VERSION >= 26 ${version}`,
+      "src/app/os.ts:1: Platform.OS !== 'android' is true on macOS too, so a Mac takes this branch. Check that it is right there.",
+      `src/app/reversed.html:1: 'ios' === os() ${ios}`,
+      "src/app/reversed.html:2: 'android' != os is true on macOS too, so a Mac takes this branch. Check that it is right there.",
+      `src/app/shell.ts:1: Platform.OS === \`ios\` ${ios}`,
+    ]);
+    assert.deepEqual(angular, nx);
+    assert.deepEqual(cli, nx);
+  });
+
+  it('notes a comparison a template breaks over lines, at the line it starts on', async () => {
+    const split = {
+      'src/app/split.html': "<text>Top</text>\n@if (\n  os() ===\n    'ios'\n) {}\n",
+      'src/app/split.ts': [
+        "import { Component } from '@angular/core';",
+        '@Component({',
+        "  selector: 'app-split',",
+        '  template: `',
+        '    @if (OS_VERSION',
+        '      >= 26) {}',
+        '  `,',
+        '})',
+        'export class Split {}',
+        '',
+      ].join('\n'),
+    };
+    const { nx, angular, cli } = await acrossAdapters(split, 'os-comparisons-on-macos', '0.22.0');
+    assert.deepEqual(nx.files, split);
+    assert.deepEqual(nx.notes, [
+      `src/app/split.html:3: os() === 'ios' ${ios}`,
+      `src/app/split.ts:5: OS_VERSION >= 26 ${version}`,
+    ]);
+    assert.deepEqual(angular, nx);
+    assert.deepEqual(cli, nx);
+  });
+});

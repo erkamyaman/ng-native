@@ -237,3 +237,111 @@ describe('a token watched from TypeScript', () => {
     assert.deepEqual(heard, tints);
   });
 });
+
+describe('tokens another surface follows', () => {
+  it('reach it in the order they were set, when a watcher sets one during the commit', () => {
+    const { engine } = scene();
+    engine.commit();
+    const follower = new Engine(createFakeFabric(), 2, {
+      conditions: { width: 400, height: 800, colorScheme: 'light' },
+    });
+    const stop = engine.watchShared((change) => {
+      if (change.kind === 'tokens') follower.updateTokens(change.tokens);
+    });
+    // A watcher that keeps the space even, as an app normalising a token would.
+    const unwatch = engine.watchToken('--space', (value) => {
+      if (value === '11px') engine.updateTokens({ '--space': { length: 12 } });
+    });
+    try {
+      engine.updateTokens({ '--space': { length: 11 } });
+      assert.equal(engine.token('--space'), '12px');
+      assert.equal(follower.token('--space'), '12px');
+    } finally {
+      unwatch();
+      stop();
+    }
+  });
+
+  it('end on the latest value on every follower, when one follower sets one as it hears it', () => {
+    const { engine } = scene();
+    engine.commit();
+    const follower = () =>
+      new Engine(createFakeFabric(), 2, {
+        conditions: { width: 400, height: 800, colorScheme: 'light' },
+      });
+    const first = follower();
+    const second = follower();
+    const stops = [first, second].map((window) =>
+      engine.watchShared((change) => {
+        if (change.kind === 'tokens') window.updateTokens(change.tokens);
+      }),
+    );
+    // The first window's watcher sets the app's token again while the app is telling every
+    // window the value before.
+    const unwatch = first.watchToken('--fresh', (value) => {
+      if (value === '11px') engine.updateTokens({ '--fresh': { length: 12 } });
+    });
+    try {
+      engine.updateTokens({ '--fresh': { length: 11 } });
+      assert.deepEqual(
+        [engine.token('--fresh'), first.token('--fresh'), second.token('--fresh')],
+        ['12px', '12px', '12px'],
+      );
+    } finally {
+      unwatch();
+      for (const stop of stops) stop();
+    }
+  });
+
+  it('hear the value a nested update was given, whatever the caller does to its patch after', () => {
+    const { engine } = scene();
+    engine.commit();
+    const follower = new Engine(createFakeFabric(), 2, {
+      conditions: { width: 400, height: 800, colorScheme: 'light' },
+    });
+    const patch: Record<string, { length: number }> = { '--fresh': { length: 12 } };
+    let nested = false;
+    const stop = engine.watchShared((change) => {
+      if (change.kind !== 'tokens') return;
+      if (!nested) {
+        nested = true;
+        // Queued behind this change: the caller's patch is still its own when this returns.
+        engine.updateTokens(patch);
+        patch['--fresh'] = { length: 13 };
+        return;
+      }
+      follower.updateTokens(change.tokens);
+    });
+    try {
+      engine.updateTokens({ '--other': { length: 1 } });
+      assert.equal(engine.token('--fresh'), '12px');
+      assert.equal(follower.token('--fresh'), '12px');
+    } finally {
+      stop();
+    }
+  });
+
+  it('still reach the rest, and the source still commits, when a follower throws', () => {
+    const errors: [unknown, string][] = [];
+    const { engine } = scene((error, type) => errors.push([error, type]));
+    engine.commit();
+    const heard: (string | undefined)[] = [];
+    const followed: unknown[] = [];
+    const unwatch = engine.watchToken('--fresh', (value) => heard.push(value));
+    const stopThrowing = engine.watchShared(() => {
+      throw new Error('follower');
+    });
+    const stop = engine.watchShared((change) => followed.push(change.kind));
+    try {
+      engine.updateTokens({ '--fresh': { length: 20 } });
+      assert.deepEqual(followed, ['tokens']);
+      assert.equal(errors.length, 1);
+      assert.equal((errors[0]?.[0] as Error).message, 'follower');
+      assert.deepEqual(heard, ['20px'], 'the source committed the new value');
+    } finally {
+      unwatch();
+      stopThrowing();
+      stop();
+    }
+  });
+});
