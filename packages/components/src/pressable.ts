@@ -18,7 +18,12 @@ import {
   type Signal,
 } from '@angular/core';
 import { Menus } from '@ng-native/device';
-import { isTouchPointer, nativePlatform, type NativeSyntheticEvent } from '@ng-native/fabric';
+import {
+  isTouchPointer,
+  nativePlatform,
+  type HostNode,
+  type NativeSyntheticEvent,
+} from '@ng-native/fabric';
 import { CONTEXT_MENU } from './context-menu.ts';
 import type { Insets, TouchEvent } from './events.ts';
 import { byNativeId } from './native-id.ts';
@@ -209,6 +214,8 @@ export abstract class TouchableBase extends ViewBase {
   private pressedAt = 0;
   private pressInTimer: ReturnType<typeof setTimeout> | null = null;
   private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Whether a `[contextMenu]` inside this element took this press's hold, as the press began. */
+  private menuOwnsHold = false;
   private pressOutTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
@@ -440,6 +447,9 @@ export abstract class TouchableBase extends ViewBase {
     this.origin = touchPoint(event);
     this.cancelled = false;
     this.longPressed = false;
+    // Decided as the press begins, as the host decides its own: a menu that arrives during a
+    // delayed press-in then opens nothing, and this element keeps the long press.
+    this.menuOwnsHold = this.menuTakesLongPress(event);
     this.clearTimers();
     if (this.androidRipple()) {
       const { x, y } = this.origin;
@@ -459,11 +469,29 @@ export abstract class TouchableBase extends ViewBase {
     this.pressedChanged(true);
     this.pressIn.emit(event);
     if (!this.longPressListeners || this.contextMenu?.takesLongPress()) return;
+    if (this.menuOwnsHold) return;
     this.longPressTimer = setTimeout(() => {
       this.longPressTimer = null;
       this.longPressed = true;
       this.longPress.emit(event);
     }, this.delayLongPress());
+  }
+
+  /**
+   * Whether the host opens a `[contextMenu]` inside this element on this long press, from the
+   * pressed view out to this one, so `(longPress)` here does not also fire. The host decides at
+   * its own long-press timeout, which can be later than `delayLongPress`.
+   */
+  private menuTakesLongPress(event: PressEvent): boolean {
+    const menus = this.injector.get(Menus);
+    if (!menus.contextMenuByNativeId) return false;
+    const chain: (string | null)[] = [];
+    for (let node = event.target as HostNode | null | undefined; node; node = node.parent) {
+      const id = node.props['nativeID'];
+      chain.push(typeof id === 'string' && id ? id : null);
+      if (node === this.node) return menus.opensContextMenu(chain);
+    }
+    return false;
   }
 
   private onMove(event: PressEvent): void {
