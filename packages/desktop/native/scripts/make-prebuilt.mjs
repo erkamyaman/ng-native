@@ -1,0 +1,171 @@
+#!/usr/bin/env node
+/**
+ * Builds the prebuilt desktop host for one React Native version and packs it for a release.
+ *
+ *   make-prebuilt.mjs <app> <out> [--version <v>] [--base-url <url>] [--manifest <prebuilt.json>]
+ *
+ * - <app>: the app whose react-native and host libraries (react-native-screens,
+ *   react-native-safe-area-context) the host is built against: the desktop template.
+ * - <out>: where the archive and `prebuilt-host.json`, its manifest entry, go. Runs into the same
+ *   folder take turns there (publishPrebuilt), so the two always come from the same build.
+ * - --version: the release the archive is named for (default: this package's version), for a
+ *   release whose version is not yet in package.json.
+ * - --base-url: where the release serves the archive, an absolute http or https URL with no query
+ *   or fragment; the archive's URL is this and its name. Needed with --manifest, since the CLI
+ *   downloads from the URL as it is.
+ * - --manifest: a `prebuilt.json` to write the entry into, in place of the one for the same React
+ *   Native version.
+ *
+ * The host is the universal Release build (`build.sh --universal --release`), with no app's
+ * linked code, built from scratch in a directory of its own so no other build can replace it before
+ * it is archived. `ngn-macos` and `hermesc` have their local symbols stripped and are signed with the
+ * hardened runtime, ad hoc (`codesign --sign -`) unless `NGN_SIGN_IDENTITY` names an identity: an
+ * app re-signs the host when it packages, so the release needs no Developer ID. Nothing is uploaded.
+ */
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+
+import { HOST_LIBRARIES, packageDir } from '../../bin/host.mjs';
+import { prebuiltName, publishPrebuilt, signPrebuiltFiles } from '../../bin/prebuilt.mjs';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+/** @param {string} command @param {string[]} args @param {import('node:child_process').SpawnSyncOptions} [options] */
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, { stdio: 'inherit', encoding: 'utf8', ...options });
+  if (result.error) throw result.error;
+  if (result.status !== 0)
+    throw new Error(`${command} ${args.join(' ')} failed (${result.status}).`);
+  return result;
+}
+
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    version: { type: 'string' },
+    'base-url': { type: 'string' },
+    manifest: { type: 'string' },
+  },
+});
+const [appArg, outArg] = positionals;
+if (!appArg || !outArg) {
+  console.error(
+    'Usage: make-prebuilt.mjs <app> <out> [--version <v>] [--base-url <url>] [--manifest <prebuilt.json>]',
+  );
+  process.exit(2);
+}
+const baseUrl = values['base-url'];
+if (values.manifest !== undefined || baseUrl !== undefined) {
+  /** @type {URL | null} */
+  let parsed = null;
+  try {
+    parsed = new URL(baseUrl ?? '');
+  } catch {}
+  // A query or a fragment would end up holding the archive's name.
+  if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || /[?#]/.test(baseUrl ?? '')) {
+    console.error(
+      baseUrl === undefined
+        ? '--manifest needs --base-url, the absolute URL the release serves the archive from.'
+        : `--base-url takes the absolute http or https URL the release serves the archive from, with no query or fragment, not "${baseUrl}".`,
+    );
+    process.exit(2);
+  }
+}
+const app = path.resolve(appArg);
+const out = path.resolve(outArg);
+const require = createRequire(path.join(app, 'package.json'));
+/** @param {string} name */
+const installed = (name) => {
+  try {
+    return path.dirname(require.resolve(`${name}/package.json`));
+  } catch {
+    return null;
+  }
+};
+/** @param {string} dir */
+const versionOf = (dir) =>
+  String(JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8')).version);
+
+const reactNativeDir = installed('react-native');
+if (!reactNativeDir) throw new Error(`react-native is not installed in ${app}.`);
+const reactNative = versionOf(reactNativeDir);
+const libraries = Object.fromEntries(
+  HOST_LIBRARIES.flatMap((name) => {
+    const dir = installed(name);
+    return dir ? [[name, dir]] : [];
+  }),
+);
+
+const staging = mkdtempSync(path.join(tmpdir(), 'ngn-prebuilt-'));
+try {
+  const buildRoot = path.join(staging, 'build');
+  const build = run(
+    path.join(here, 'build.sh'),
+    [
+      reactNativeDir,
+      '--universal',
+      '--release',
+      ...Object.values(libraries).flatMap((dir) => ['--library', dir]),
+      '--build-dir',
+      buildRoot,
+    ],
+    { stdio: ['inherit', 'pipe', 'inherit'], env: { ...process.env, NGN_DESKTOP_LINK: '' } },
+  );
+  const buildDir = build.stdout.trim().split('\n').pop() ?? '';
+  const appkit = path.join(staging, 'appkit');
+  mkdirSync(appkit, { recursive: true });
+  for (const name of ['ngn-macos', 'hermesc', 'Sparkle.framework']) {
+    cpSync(path.join(buildDir, 'appkit', name), path.join(appkit, name), {
+      recursive: true,
+      verbatimSymlinks: true,
+    });
+  }
+  signPrebuiltFiles(
+    run,
+    ['ngn-macos', 'hermesc'].map((name) => path.join(appkit, name)),
+    process.env,
+  );
+  const archs = run('lipo', ['-archs', path.join(appkit, 'ngn-macos')], {
+    stdio: ['inherit', 'pipe', 'inherit'],
+  }).stdout.trim();
+  if (archs.split(' ').sort().join(' ') !== 'arm64 x86_64') {
+    throw new Error(`ngn-macos is built for ${archs}, not arm64 and x86_64.`);
+  }
+
+  const desktopVersion = values.version ?? versionOf(packageDir);
+  const name = prebuiltName(desktopVersion, reactNative);
+  mkdirSync(out, { recursive: true });
+  // Packed at a name of its own in <out>, and moved into place with its entry by publishPrebuilt.
+  const packed = path.join(out, `.${name}.${process.pid}.partial`);
+  // Owner and group dropped, so the archive does not carry the build machine's.
+  run('tar', ['-czf', packed, '--uid', '0', '--gid', '0', '-C', staging, 'appkit']);
+  const sha256 = createHash('sha256').update(readFileSync(packed)).digest('hex');
+  const host = {
+    reactNative,
+    url: `${(baseUrl ?? '').replace(/\/$/, '')}/${name}`,
+    sha256,
+    libraries: Object.fromEntries(
+      Object.entries(libraries).map(([lib, dir]) => [lib, versionOf(dir)]),
+    ),
+  };
+  try {
+    publishPrebuilt({
+      out,
+      archive: packed,
+      name,
+      host,
+      manifest: values.manifest && path.resolve(values.manifest),
+    });
+  } finally {
+    rmSync(packed, { force: true });
+  }
+  console.log(`${path.join(out, name)}\n${JSON.stringify(host, null, 2)}`);
+} finally {
+  rmSync(staging, { recursive: true, force: true });
+}

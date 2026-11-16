@@ -8,6 +8,18 @@
   "commitConvention": "angular",
   "contributors": [
     {
+      "login": "ashley-hunter",
+      "name": "Ashley Hunter",
+      "avatar_url": "https://avatars.githubusercontent.com/u/20795331?v=4",
+      "profile": "https://github.com/ashley-hunter",
+      "contributions": [
+        "code",
+        "doc",
+        "maintenance",
+        "infra"
+      ]
+    },
+    {
       "login": "erkamyaman",
       "name": "erKam",
       "avatar_url": "https://avatars.githubusercontent.com/u/88717125?v=4",
@@ -138,6 +150,24 @@
       "name": "Mohamed Ben Makhlouf",
       "avatar_url": "https://avatars.githubusercontent.com/u/13701406?v=4",
       "profile": "https://github.com/medbenmakhlouf",
+      "contributions": [
+        "doc"
+      ]
+    },
+    {
+      "login": "Knat-Dev",
+      "name": "Dor Peled",
+      "avatar_url": "https://avatars.githubusercontent.com/u/42738259?v=4",
+      "profile": "https://github.com/Knat-Dev",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "robingenz",
+      "name": "Robin Genz",
+      "avatar_url": "https://avatars.githubusercontent.com/u/13857929?v=4",
+      "profile": "https://robingenz.dev",
       "contributions": [
         "doc"
       ]

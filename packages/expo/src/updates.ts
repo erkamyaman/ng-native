@@ -15,7 +15,7 @@
  * a moment the user will not lose anything at. Nothing here does it on its own.
  */
 import { InjectionToken, Service, inject, signal, type Signal } from '@angular/core';
-import { expoModule, present } from './native.ts';
+import { expoModule, presence, present } from './native.ts';
 
 export interface NativeUpdates {
   readonly enabled: boolean;
@@ -53,6 +53,13 @@ export class Updates {
   );
 
   private readonly native = inject(Updates.SOURCE);
+
+  /**
+   * Whether the module is here. False where the service is absent, on an OS the module is not for,
+   * and every call is inert; false too in a build missing the module, where a call can throw a
+   * `MissingModuleError`.
+   */
+  readonly available: Signal<boolean> = presence(this.native);
   private readonly current = signal<UpdateState>('idle');
   private readonly failure = signal<unknown>(null);
   private readonly downloaded = signal(false);

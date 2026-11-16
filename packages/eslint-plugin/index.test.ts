@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -146,7 +146,7 @@ test('routerLink, written or bound, is reported, and nativeRouterLink is not', a
 test('an HTML control in a template is reported, with what to use', async () => {
   assert.deepEqual(await lint('<view><button>Save</button><img src="a.png" /></view>', 'a.html'), [
     '1:7 @ng-native/no-html-controls: <button> draws as a plain view on a device, with no ' +
-      'behaviour. Use <pressable>.',
+      'behaviour. Use <native-button>, or <pressable> for a look of your own.',
     '1:28 @ng-native/no-html-controls: <img> draws as a plain view on a device, with no ' +
       'behaviour. Use <image>.',
   ]);
@@ -329,5 +329,204 @@ test('every hyphenated element in @ng-native/components has its DOM events read'
   for (const name of selectors) {
     const messages = await lint(`<${name} (click)="go()"></${name}>`, 'a.html');
     assert.equal(messages.length, 1, `<${name}>`);
+  }
+});
+
+test("a service's available read as a condition without being called is reported", async () => {
+  const code = [
+    "import { inject } from '@angular/core';",
+    "import { Haptics } from '@ng-native/expo/haptics';",
+    'const haptics = inject(Haptics);',
+    'if (haptics.available) haptics.impact();',
+    'const on = !inject(Haptics).available || other;',
+    'const label = haptics.available && ready ? 1 : 2;',
+    'while (haptics?.available) break;',
+    '',
+  ].join('\n');
+  assert.deepEqual(await lint(code, 'a.ts'), [
+    '4:13 @ng-native/no-uncalled-available: available is a signal, so it is always truthy. Call it: available().',
+    '5:29 @ng-native/no-uncalled-available: available is a signal, so it is always truthy. Call it: available().',
+    '6:23 @ng-native/no-uncalled-available: available is a signal, so it is always truthy. Call it: available().',
+    '7:17 @ng-native/no-uncalled-available: available is a signal, so it is always truthy. Call it: available().',
+  ]);
+});
+
+test('available called, or read as a value rather than a condition, is left alone', async () => {
+  const code = [
+    'if (haptics.available()) go();',
+    'const on = !haptics.available() || other;',
+    'const signal = haptics.available;',
+    'const shown = computed(() => haptics.available());',
+    'if (available) go();',
+    '',
+  ].join('\n');
+  assert.deepEqual(await lint(code, 'a.ts'), []);
+});
+
+test("available read uncalled is fixed to a call where it is an @ng-native service's", async () => {
+  const code = [
+    "import { inject } from '@angular/core';",
+    "import { Haptics } from '@ng-native/expo/haptics';",
+    "import { splashScreen } from '@ng-native/expo/splash-screen';",
+    'const haptics = inject(Haptics);',
+    'function typed(buzz: Haptics) {',
+    '  return !buzz.available;',
+    '}',
+    'class Panel {',
+    '  private readonly haptics = inject(Haptics);',
+    '  constructor(private readonly typed: Haptics) {}',
+    '  go() {',
+    '    if (this.haptics.available && this.typed.available) go();',
+    '  }',
+    '}',
+    'if (haptics.available && !inject(Haptics).available && splashScreen.available) go();',
+    '',
+  ].join('\n');
+  assert.equal(await fix(code, 'a.ts'), code.replace(/\.available\b/g, '.available()'));
+});
+
+test('available on anything that is not an @ng-native service is left alone', async () => {
+  const code = [
+    "import { inject, InjectionToken } from '@angular/core';",
+    "import { Haptics } from '@ng-native/expo/haptics';",
+    'const item = { available: true };',
+    'if (item.available) go();',
+    'function shadowed(Haptics: InjectionToken<{ available: boolean }>) {',
+    '  const local = inject(Haptics);',
+    '  return !local.available;',
+    '}',
+    'class Other {',
+    '  readonly haptics = { available: true };',
+    '  go() {',
+    '    if (this.haptics.available) go();',
+    '  }',
+    '}',
+    '',
+  ].join('\n');
+  assert.deepEqual(await lint(code, 'a.ts'), []);
+});
+
+test('the last operand of && or || is a condition only where the whole is one', async () => {
+  const code = [
+    "import { inject } from '@angular/core';",
+    "import { Haptics } from '@ng-native/expo/haptics';",
+    'const haptics = inject(Haptics);',
+    'const shown = ready && haptics.available;',
+    'const either = ready || haptics.available;',
+    'if (ready && haptics.available) go();',
+    '',
+  ].join('\n');
+  assert.deepEqual(
+    (await lint(code, 'a.ts')).map((problem) => problem.split(' ')[0]),
+    ['6:22'],
+  );
+});
+
+const HAIRLINE =
+  '@ng-native/prefer-hairline-token: StyleSheet.hairlineWidth is worked out once, at startup, so ' +
+  "it keeps the first screen's after a window moves to one of another density. Use " +
+  'var(--hairline) in a stylesheet, which watchConditions() keeps current.';
+
+test('StyleSheet.hairlineWidth is a warning to use --hairline', async () => {
+  const code = [
+    "import { StyleSheet } from 'react-native';",
+    'const width = StyleSheet.hairlineWidth;',
+    'const style = { borderBottomWidth: StyleSheet.hairlineWidth };',
+    '',
+  ].join('\n');
+  assert.deepEqual(await lint(code, 'a.ts'), [`2:15 ${HAIRLINE}`, `3:36 ${HAIRLINE}`]);
+});
+
+test('another hairlineWidth, or another member of StyleSheet, is left alone', async () => {
+  const code = [
+    'const a = theme.hairlineWidth;',
+    'const b = StyleSheet.create({});',
+    "const c = StyleSheet['hairlineWidth' + suffix];",
+    '',
+  ].join('\n');
+  assert.deepEqual(await lint(code, 'a.ts'), []);
+});
+
+test('a mouse event is an error in a project that builds for no desktop OS', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ng-native-eslint-'));
+  try {
+    writeFileSync(
+      join(dir, 'app.json'),
+      JSON.stringify({ expo: { platforms: ['ios', 'android'] } }),
+    );
+    assert.deepEqual(await lint('<view (mouseenter)="go()"></view>', join(dir, 'a.html'), dir), [
+      '1:7 @ng-native/no-dom-events: (mouseenter) fires only on macOS, and expo.platforms in ' +
+        'app.json lists no desktop OS, so it never fires here. Use a [gesture] from ' +
+        '@ng-native/components.',
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a desktop event is a warning that it fires only there, in a project that builds for macOS', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ng-native-eslint-'));
+  try {
+    writeFileSync(
+      join(dir, 'app.json'),
+      JSON.stringify({ expo: { platforms: ['ios', 'android', 'macos'] } }),
+    );
+    const template =
+      '<view (mouseenter)="go()" (dblclick)="go()" (wheel)="go()" (contextmenu)="go()"></view>' +
+      '<view (click)="go()"></view>';
+    const messages = await lint(template, join(dir, 'src', 'a.html'), dir);
+    assert.deepEqual(
+      messages.map((m) => m.split(':').slice(0, 3).join(':').replace(/ .*$/, '')),
+      ['1:7', '1:27', '1:45', '1:60', '1:94'],
+    );
+    assert.equal(messages.filter((m) => m.includes('desktop-only-events')).length, 4);
+    assert.match(messages[0]!, /\(mouseenter\) fires only on macOS: iOS and Android never send it/);
+    assert.match(messages[4]!, /no-dom-events: \(click\) is a DOM event/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a project's app.json without expo.platforms builds for no desktop OS, whatever a project above lists", async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ng-native-eslint-'));
+  try {
+    writeFileSync(join(dir, 'app.json'), JSON.stringify({ expo: { platforms: ['ios', 'macos'] } }));
+    mkdirSync(join(dir, 'nested'));
+    writeFileSync(join(dir, 'nested', 'app.json'), JSON.stringify({ expo: { name: 'nested' } }));
+    const messages = await lint(
+      '<view (mouseenter)="go()"></view>',
+      join(dir, 'nested', 'a.html'),
+      dir,
+    );
+    assert.deepEqual(
+      messages.map((m) => m.split(' ')[1]),
+      ['@ng-native/no-dom-events:'],
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('expo.platforms is read again when app.json changes or goes away', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ng-native-eslint-'));
+  const rules = async () =>
+    (await lint('<view (mouseenter)="go()"></view>', join(dir, 'src', 'a.html'), dir)).map(
+      (m) => m.split(' ')[1],
+    );
+  try {
+    writeFileSync(
+      join(dir, 'app.json'),
+      JSON.stringify({ expo: { platforms: ['ios', 'android'] } }),
+    );
+    assert.deepEqual(await rules(), ['@ng-native/no-dom-events:']);
+    writeFileSync(
+      join(dir, 'app.json'),
+      JSON.stringify({ expo: { platforms: ['ios', 'android', 'macos'] } }),
+    );
+    assert.deepEqual(await rules(), ['@ng-native/desktop-only-events:']);
+    rmSync(join(dir, 'app.json'));
+    assert.deepEqual(await rules(), ['@ng-native/no-dom-events:']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

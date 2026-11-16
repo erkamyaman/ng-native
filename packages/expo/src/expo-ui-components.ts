@@ -53,10 +53,11 @@ import {
   type HostNode,
   type NativeSyntheticEvent,
   keepNativeView,
+  isApplePlatform,
   nativePlatform,
 } from '@ng-native/fabric';
 import { optional } from './native.ts';
-import { optionalBoolean, optionalNumber } from './transforms.ts';
+import { booleanOr, optionalBoolean, optionalNumber } from './transforms.ts';
 import { UiBottomSheetContent } from './ui-bottom-sheet-content.ts';
 import { type UiBottomSheetPresentedEvent, UiBottomSheetView } from './ui-bottom-sheet-view.ts';
 
@@ -706,7 +707,7 @@ export class UiSingleChoiceSegmentedButtonRow {
 export class UiSegmentedButton {
   protected readonly nativeView = nativeView();
   readonly selected = input(false, { transform: booleanAttribute });
-  readonly enabled = input(true, { transform: booleanAttribute });
+  readonly enabled = input(true, { transform: booleanOr(true) });
   readonly modifiers = input<readonly UiModifier[]>();
   readonly press = output<void>();
 }
@@ -763,7 +764,7 @@ export class UiExposedDropdownMenu {
 })
 export class UiDropdownMenuItem {
   protected readonly nativeView = nativeView();
-  readonly enabled = input(true, { transform: booleanAttribute });
+  readonly enabled = input(true, { transform: booleanOr(true) });
   readonly modifiers = input<readonly UiModifier[]>();
   readonly press = output<void>();
 }
@@ -1779,7 +1780,7 @@ export class UiBottomSheet {
    */
   readonly detents = input<readonly UiPresentationDetent[]>();
   /** Whether the grabber shows at the top of the sheet. */
-  readonly showDragIndicator = input(true, { transform: booleanAttribute });
+  readonly showDragIndicator = input(true, { transform: booleanOr(true) });
   /**
    * The colour of the sheet behind its content: SwiftUI's `presentationBackground` on iOS, where
    * a sheet below its full height is otherwise drawn as glass, and Compose's `containerColor` on
@@ -1837,8 +1838,11 @@ export class UiBottomSheet {
     { $type: 'ngNativeInlineNavigationTitle' },
   ];
 
-  /** SwiftUI's sheet stays in the tree; anywhere else it is there while it shows. */
-  protected readonly swiftUI = nativePlatform() === 'ios';
+  /**
+   * SwiftUI's sheet (iOS's, and the macOS host's, which draws expo/ui's iOS views) stays in the
+   * tree; Compose's is there while it shows.
+   */
+  protected readonly swiftUI = isApplePlatform();
   protected readonly width = windowWidth();
 
   /**
