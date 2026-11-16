@@ -23,10 +23,11 @@
  * of a re-highlight of every block on the page.
  */
 import fm from 'front-matter';
-import { marked } from 'marked';
+import { Marked, type TokenizerAndRendererExtension } from 'marked';
 import { gfmHeadingId, getHeadingList } from 'marked-gfm-heading-id';
 import { bundledThemes, createHighlighter, type Highlighter } from 'shiki';
 import type { Plugin } from 'vite';
+import { OS_SUPPORT, SUPPORT_OSES, platformsLine } from '@ng-native/device/os-support';
 import { pageLinks, pageUrl } from './page-links.ts';
 
 /** One piece of a page: prose already rendered, a named example, or a generated API table. */
@@ -150,19 +151,77 @@ function segments(body: string): DocBlock[] {
   return blocks;
 }
 
+/**
+ * The per-OS support table, which `<!-- os-support -->` on a line of its own draws, as Markdown, drawn from `OS_SUPPORT` in `@ng-native/device`, the data
+ * `os-support.test.ts` holds the code to.
+ */
+function osSupportTable(): string {
+  const oses = Object.keys(SUPPORT_OSES) as (keyof typeof SUPPORT_OSES)[];
+  const line = (cells: readonly string[]) => `| ${cells.join(' | ')} |`;
+  return [
+    line(['API or input', ...oses.map((os) => SUPPORT_OSES[os])]),
+    line(['---', ...oses.map(() => '---')]),
+    ...OS_SUPPORT.map((row) => line([row.feature, ...oses.map((os) => row.on[os])])),
+  ].join('\n');
+}
+
+/**
+ * `<!-- platforms: Dock, Tray -->` on a line of its own: where a service's page says which OSes it
+ * is on, drawn from the service's row in `OS_SUPPORT`. A service with no row fails the build, so a
+ * page cannot carry a line the table does not back.
+ */
+function platforms(_marker: string, services: string): string {
+  const lines = services.split(',').map((name) => {
+    const line = platformsLine(name.trim());
+    if (!line) throw new Error(`No row in OS_SUPPORT covers the service ${name.trim()}`);
+    return line;
+  });
+  return [...new Set(lines)].join('\n\n');
+}
+
+/**
+ * The two markers as a block extension of Marked's, so Marked's own rules decide what is code: a
+ * marker in a fenced or indented code block, at any depth of a list, stays as written, and one
+ * that is a line of its own anywhere else is drawn from `OS_SUPPORT`.
+ */
+const DOC_MARKERS: TokenizerAndRendererExtension = {
+  name: 'docMarker',
+  level: 'block',
+  // Only where a line starts, so a marker inside a paragraph stays a comment in it.
+  start(source) {
+    const at = /(?:^|\n) {0,3}<!--\s*(?:platforms:|os-support)/.exec(source);
+    return at ? at.index + (at[0].startsWith('\n') ? 1 : 0) : undefined;
+  },
+  tokenizer(source) {
+    const marker =
+      /^ {0,3}<!--\s*(?:platforms:\s*([A-Za-z, ]+?)|os-support)\s*-->[ \t]*(?:\n|$)/.exec(source);
+    if (!marker) return undefined;
+    const markdown = marker[1] === undefined ? osSupportTable() : platforms(marker[0], marker[1]);
+    return { type: 'docMarker', raw: marker[0], tokens: this.lexer.blockTokens(markdown, []) };
+  },
+  renderer(token) {
+    return this.parser.parse(token.tokens ?? []);
+  },
+};
+
 async function render(source: string, headings: DocHeading[]): Promise<string> {
-  const instance = marked.use(gfmHeadingId(), {
-    async: true,
-    gfm: true,
-    renderer: {
-      // Shiki owns the whole `<pre>`, so the fenced-code renderer is replaced rather than wrapped:
-      // `marked-highlight` would nest Shiki's `<pre>` inside one of marked's own.
-      code({ text, lang }) {
-        const language = LANGUAGES.includes(lang ?? '') ? (lang as string) : 'text';
-        return highlightSync(text, language);
+  // A Marked of its own for each page: `marked.use` would add to one shared instance every render.
+  const instance = new Marked(
+    gfmHeadingId(),
+    { extensions: [DOC_MARKERS] },
+    {
+      async: true,
+      gfm: true,
+      renderer: {
+        // Shiki owns the whole `<pre>`, so the fenced-code renderer is replaced rather than wrapped:
+        // `marked-highlight` would nest Shiki's `<pre>` inside one of marked's own.
+        code({ text, lang }) {
+          const language = LANGUAGES.includes(lang ?? '') ? (lang as string) : 'text';
+          return highlightSync(text, language);
+        },
       },
     },
-  });
+  );
   const html = (await instance.parse(source)) as string;
   for (const heading of getHeadingList()) {
     if (heading.level >= 2 && heading.level <= 3) {
