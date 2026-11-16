@@ -10,6 +10,8 @@ with the platform before anything is laid out, or the first paint is in the fall
 reflows when the real one lands. `loadFonts()` is the call an app makes before it mounts, wired to
 `expo-font`.
 
+<!-- platforms: Fonts -->
+
 ## Install
 
 ```sh
@@ -223,9 +225,9 @@ AppRegistry.registerRunnable('main', ({ rootTag }) => {
 });
 ```
 
-`inject(Fonts)` does not throw: `Fonts.available` is `false`, and a call, or a read of a value only
-the module knows, throws it.
+`inject(Fonts)` does not throw: its `available()` is `false`, and a call, or a read of a value
+only the module knows, throws it.
 
 On the web, and in a test that provides no fake, `loadFonts()` resolves without registering
 anything, so text renders in the platform's fallback face rather than failing to mount.
-`Fonts.available` is `false`, `families()` is empty, and `has()` is always `false`.
+`inject(Fonts).available()` is `false`, `families()` is empty, and `has()` is always `false`.

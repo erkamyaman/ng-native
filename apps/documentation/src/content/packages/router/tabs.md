@@ -6,9 +6,10 @@ summary: NativeTabsOutlet renders a real tab bar, with each tab declared as cont
 # Tabs
 
 `<native-tabs-outlet>` renders a real `UITabBarController` on iOS and a bottom navigation bar on
-Android. Tabs are declared as content, the same way a header is declared in a page's own template,
-because a badge is a signal that changes, a title may be translated, and a tab might not exist
-until a feature flag says so - none of which a static route config can express:
+Android. On macOS the tabs are the window's [sidebar](/packages/components/sidebar), each tab an
+item in it. Tabs are declared as content, the same way a header is declared in a page's own
+template, because a badge is a signal that changes, a title may be translated, and a tab might
+not exist until a feature flag says so - none of which a static route config can express:
 
 <!-- api: NativeTabsOutlet -->
 <!-- api: NativeTab -->
@@ -318,7 +319,10 @@ though with no component to pass them, and their `runGuardsAndResolvers` decides
 and resolvers run again. A `canDeactivate` guard that fails when the page is dismissed, as one
 that reads its component does, is reported to the app's `ErrorHandler` and lets the page go.
 While it is up the url names it beside where the app is, `/home(presented:invoices/7)`, and a
-back, or the swipe that dismisses a sheet, returns to `/home`.
+back, or the swipe that dismisses a sheet, returns to `/home`. The url shows the page without
+`present()` too: a link into the app written with it, such as `myapp:///home(presented:invoices/7)`,
+or `router.navigateByUrl()` with it. The url says nothing of how to present the page, so it is shown
+as a modal.
 
 Three things follow from the page being over the tabs rather than in one:
 

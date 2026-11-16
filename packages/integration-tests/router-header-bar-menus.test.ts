@@ -261,3 +261,109 @@ describe('native header bar menus and spacers', () => {
     }
   });
 });
+
+describe('a native header bar menu written as a template of menu items', () => {
+  interface TemplateHost {
+    readonly renaming: WritableSignal<boolean>;
+    readonly pinned: WritableSignal<boolean>;
+    readonly sharing: WritableSignal<boolean>;
+    readonly locked: WritableSignal<boolean>;
+    readonly chosen: string[];
+  }
+  let HostType: Type<TemplateHost>;
+
+  before(async () => {
+    registerScreenComponents();
+    const mod = await compileFixture('fixtures/header-item.ts');
+    HostType = mod['HeaderTemplateMenuHost'] as Type<TemplateHost>;
+  });
+
+  afterEach(() => cleanup());
+
+  async function boot() {
+    const app = await render(HostType);
+    const config = () => app.fabric.find('RNSScreenStackHeaderConfig')!;
+    const menu = () => (config().props['headerRightBarButtonItems'] as Entry[])[0]!['menu'] as Menu;
+    const choose = (menuId: unknown) =>
+      fireEvent(config(), 'pressHeaderBarButtonMenuItem', { menuId });
+    return { ...app, instance: app.instance as TemplateHost, config, menu, choose };
+  }
+
+  /** Each entry as its title, a section or submenu as its entries. */
+  const outline = (items: Menu['items']): unknown[] =>
+    items.map((item) =>
+      'menuId' in item ? item['title'] : { [String(item['title'] ?? '')]: outline(item.items) },
+    );
+
+  it('commits the items as the menu, a separator as a section, and opens on a tap', async () => {
+    const { config, menu } = await boot();
+    const entry = (config().props['headerRightBarButtonItems'] as Entry[])[0]!;
+    assert.equal('buttonId' in entry, false);
+    assert.deepEqual(outline(menu().items), [
+      { '': ['Rename', 'Pinned'] },
+      { '': [{ Share: ['Copy Link'] }, 'Delete'] },
+    ]);
+    const [first, second] = menu().items;
+    assert.equal(first!['displayInline'], true);
+    assert.equal(first!.items[0]!['sfSymbolName'], 'pencil');
+    assert.equal(first!.items[1]!['state'], 'off');
+    assert.equal(second!.items[0]!['sfSymbolName'], 'square.and.arrow.up');
+    assert.equal(second!.items[1]!['destructive'], true);
+  });
+
+  it('runs the chosen item, and follows what the items say', async () => {
+    const { menu, choose, instance, detectChanges } = await boot();
+    await choose(menu().items[0]!.items[0]!['menuId']);
+    await choose(menu().items[1]!.items[0]!.items[0]!['menuId']);
+    assert.deepEqual(instance.chosen, ['rename', 'copy']);
+    await choose(menu().items[0]!.items[1]!['menuId']);
+    await detectChanges();
+    assert.equal(instance.pinned(), true);
+    assert.equal(menu().items[0]!.items[1]!['state'], 'on');
+    instance.sharing.set(false);
+    instance.locked.set(true);
+    await detectChanges();
+    assert.deepEqual(outline(menu().items), ['Rename', 'Pinned', 'Delete']);
+    assert.equal(menu().items[2]!['disabled'], true);
+    await choose(menu().items[2]!['menuId']);
+    assert.deepEqual(instance.chosen, ['rename', 'copy'], 'a disabled item does nothing');
+  });
+
+  it('leaves out, with a warning, an item whose menuRole the OS was to do', async () => {
+    const { NativeHeader, NativeHeaderItem } = await import('../router/src/index.ts');
+    const { MenuItem } = await import('@ng-native/components');
+    const warned: unknown[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => void warned.push(args.join(' '));
+    try {
+      const app = await render(
+        `<native-header title="Menus">
+          <native-header-item type="right" systemImageName="ellipsis" [menu]="more" />
+        </native-header>
+        <ng-template #more>
+          <menu-item menuRole="copy" label="Copy" />
+          <menu-item menuRole="paste" label="Paste" (select)="pasted = true" />
+        </ng-template>`,
+        { imports: [NativeHeader, NativeHeaderItem, MenuItem] },
+      );
+      const config = app.fabric.find('RNSScreenStackHeaderConfig')!;
+      const menu = (config.props['headerRightBarButtonItems'] as Entry[])[0]!['menu'] as Menu;
+      assert.deepEqual(outline(menu.items), ['Paste']);
+      assert.equal(warned.filter((one) => String(one).includes("'Copy'")).length, 1);
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  it('runs nothing for a choice from the menu as it was before an item went', async () => {
+    const { menu, choose, instance, detectChanges } = await boot();
+    const rename = menu().items[0]!.items[0]!['menuId'];
+    instance.renaming.set(false);
+    await detectChanges();
+    assert.deepEqual(outline(menu().items[0]!.items), ['Pinned']);
+    await choose(rename);
+    await detectChanges();
+    assert.deepEqual(instance.chosen, []);
+    assert.equal(instance.pinned(), false, 'the item now first is not chosen in its place');
+  });
+});

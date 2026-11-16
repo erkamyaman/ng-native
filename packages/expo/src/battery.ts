@@ -3,7 +3,7 @@
  */
 import { InjectionToken, Service, computed, inject, type Signal } from '@angular/core';
 import { observed, observedFrom, type Observed } from './observed.ts';
-import { expoModule, present } from './native.ts';
+import { expoModule, presence, present } from './native.ts';
 
 /** What the battery is doing. `unknown` is a real answer on a simulator. */
 export type BatteryState = 'unknown' | 'unplugged' | 'charging' | 'full';
@@ -64,6 +64,13 @@ export class Battery {
   });
 
   private readonly sources = inject(Battery.SOURCE);
+
+  /**
+   * Whether the module is here. False where the service is absent, on an OS the module is not for,
+   * and every call is inert; false too in a build missing the module, where a call can throw a
+   * `MissingModuleError`.
+   */
+  readonly available: Signal<boolean> = presence(this.sources.level);
   private readonly reported: Signal<number> = observed(this.sources.level, 1);
 
   /**

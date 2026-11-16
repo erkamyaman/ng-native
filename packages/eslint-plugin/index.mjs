@@ -6,45 +6,15 @@
  * never sent, the button draws as a plain view and `document` is undefined. Each rule names what
  * to write instead.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import domEvents from '@ng-native/metro/dom-events.cjs';
 import angular from 'angular-eslint';
 import tseslint from 'typescript-eslint';
 
-const PRESS = '(press) on a <pressable>, or <text pressable (press)="...">';
-
-/**
- * DOM events no native view sends, with what to listen for instead. An event the renderer is
- * given is the native one of the same name (`(scroll)` is `topScroll`), so only names no native
- * view or Angular Native component uses are here: `change`, `load`, `error`, `focus` and `blur`
- * are outputs or native events of some element and are left alone.
- */
-const DOM_EVENTS = new Map([
-  ['click', PRESS],
-  ['dblclick', PRESS],
-  ['contextmenu', '(longPress) on a <pressable>'],
-  ['mousedown', '(pressIn) on a <pressable>'],
-  ['mouseup', '(pressOut) on a <pressable>'],
-  ['input', '(changeText) or [(value)] on a <text-input>'],
-  ['beforeinput', '(changeText) on a <text-input>'],
-  ['keydown', '(keyPress) or (submitEditing) on a <text-input>'],
-  ['keyup', '(keyPress) or (submitEditing) on a <text-input>'],
-  ['keypress', '(keyPress) on a <text-input>'],
-  ['submit', '(submitEditing) on a <text-input>, or (press) on a submit <pressable>'],
-  ['wheel', '(scroll) on a <scroll-view>'],
-  ...['mousemove', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave'].map((name) => [
-    name,
-    'a [gesture] from @ng-native/components',
-  ]),
-  ...['drag', 'dragstart', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop'].map((name) => [
-    name,
-    'a pan [gesture] from @ng-native/components',
-  ]),
-  ...['copy', 'cut', 'paste'].map((name) => [name, '(changeText) on a <text-input>']),
-]);
-
 /** HTML elements that draw as a plain view or text, without the behaviour they have in a browser. */
 const HTML_CONTROLS = new Map([
-  ['button', '<pressable>'],
+  ['button', '<native-button>, or <pressable> for a look of your own'],
   [
     'a',
     '<text pressable (press)="...">, opening the link with DeepLinks.open from @ng-native/device',
@@ -163,31 +133,46 @@ const DOM_MEMBERS = new Map([
   ].map((name) => [name, 'a binding in the template: [class.name], [style.name] or an input']),
 ]);
 
+const { DOM_EVENTS, DESKTOP_PLATFORMS, isNativeElement } = domEvents;
+
 /**
- * The elements from @ng-native/components whose names have a hyphen. An element without one is
- * HTML's or a primitive's; any other hyphenated one is a component, which may declare an output
- * called `drag` or `drop`, so its events are its own business.
+ * `expo.platforms` by `app.json` path, with the modification time and size it was read at, so an
+ * editor's long-lived process reads the file again when it changes.
  */
-const NATIVE_ELEMENTS = new Set([
-  'activity-indicator',
-  'gesture-root',
-  'gradient-text',
-  'image-background',
-  'input-accessory-view',
-  'keyboard-avoiding-view',
-  'keyboard-controller-view',
-  'keyboard-dock',
-  'keyboard-gesture-area',
-  'keyboard-motion-view',
-  'refresh-control',
-  'safe-area-provider',
-  'safe-area-view',
-  'scroll-view',
-  'section-list',
-  'text-input',
-  'touchable-opacity',
-  'virtual-list',
-]);
+const PLATFORMS = new Map();
+
+/**
+ * Whether the project a file is in builds for a desktop OS: one the nearest `app.json` lists in
+ * `expo.platforms`. A project with no `app.json`, or none listed, builds for iOS and Android,
+ * Expo's default.
+ */
+function buildsForDesktop(context) {
+  const filename = context.physicalFilename ?? context.filename;
+  return platformsAbove(dirname(filename)).some((os) => DESKTOP_PLATFORMS.has(os));
+}
+
+function platformsAbove(directory) {
+  const file = join(directory, 'app.json');
+  const stat = statSync(file, { throwIfNoEntry: false });
+  if (!stat) {
+    PLATFORMS.delete(file);
+    const parent = dirname(directory);
+    return parent === directory ? [] : platformsAbove(parent);
+  }
+  const cached = PLATFORMS.get(file);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.platforms;
+  }
+  let platforms;
+  try {
+    platforms = JSON.parse(readFileSync(file, 'utf8'))?.expo?.platforms;
+  } catch {
+    platforms = undefined;
+  }
+  if (!Array.isArray(platforms)) platforms = [];
+  PLATFORMS.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, platforms });
+  return platforms;
+}
 
 const DOCS = 'https://ng-native.com/packages/eslint-plugin';
 
@@ -221,6 +206,8 @@ const noDomEvents = {
       routerLink:
         'routerLink listens for a DOM click and never navigates on a device. Use nativeRouterLink from @ng-native/router, on a <pressable>.',
       event: '({{name}}) is a DOM event and never fires on a device. Use {{instead}}.',
+      desktop:
+        '({{name}}) fires only on macOS, and expo.platforms in app.json lists no desktop OS, so it never fires here. Use {{instead}}.',
       global:
         '({{target}}:{{name}}) never fires: there is no {{target}} on a device. Use @ng-native/device for app-wide events.',
     },
@@ -228,6 +215,7 @@ const noDomEvents = {
   },
   create(context) {
     if (isDomComponent(context)) return {};
+    const desktop = () => buildsForDesktop(context);
     /**
      * Report the event `name` on `target` (a global's name, or null for the element's own), with
      * `fixes` naming the replacement of an event a fix or a suggestion can rename.
@@ -239,9 +227,12 @@ const noDomEvents = {
       }
       // `(keydown.enter)` is the event `keydown` with a key filter.
       const event = name.split('.')[0];
-      const instead = DOM_EVENTS.get(event);
-      if (!instead) return;
-      const report = { ...where, messageId: 'event', data: { name: event, instead } };
+      const known = DOM_EVENTS.get(event);
+      if (!known) return;
+      // One a desktop sends is `desktop-only-events`' where the project builds for one.
+      if (known.desktop && desktop()) return;
+      const messageId = known.desktop ? 'desktop' : 'event';
+      const report = { ...where, messageId, data: { name: event, instead: known.instead } };
       if (fixes.press) report.fix = fixes.press;
       if (fixes.changeText) report.suggest = [{ messageId: 'changeText', fix: fixes.changeText }];
       context.report(report);
@@ -253,8 +244,7 @@ const noDomEvents = {
       },
       BoundEvent(event) {
         const element = event.parent?.type === 'Element' ? event.parent : null;
-        const native =
-          element && (!element.name.includes('-') || NATIVE_ELEMENTS.has(element.name));
+        const native = element && isNativeElement(element.name);
         if (event.target || native) {
           const fixes = element ? renames(context, element, event) : {};
           check({ loc: spanLoc(event) }, event.target, event.name, fixes);
@@ -272,6 +262,54 @@ const noDomEvents = {
       'Decorator > CallExpression[callee.name="HostListener"] > Literal:first-child'(literal) {
         const listener = /^(?:(window|document|body):)?(.+)$/.exec(String(literal.value));
         if (listener) check({ node: literal }, listener[1] ?? null, listener[2]);
+      },
+    };
+  },
+};
+
+/** @type {import('eslint').Rule.RuleModule} */
+const desktopOnlyEvents = {
+  meta: {
+    type: 'suggestion',
+    docs: {
+      description: 'Warn of a DOM event only a desktop OS sends, in a project that builds for one',
+      url: `${DOCS}#desktop-only-events`,
+    },
+    messages: {
+      event:
+        '({{name}}) fires only on macOS: iOS and Android never send it. Where it has to work there too, use {{instead}} as well.',
+    },
+    schema: [],
+  },
+  create(context) {
+    if (isDomComponent(context) || !buildsForDesktop(context)) return {};
+    const check = (where, name) => {
+      const event = name.split('.')[0];
+      const known = DOM_EVENTS.get(event);
+      if (!known?.desktop) return;
+      context.report({
+        ...where,
+        messageId: 'event',
+        data: { name: event, instead: known.instead },
+      });
+    };
+    return {
+      BoundEvent(event) {
+        const element = event.parent?.type === 'Element' ? event.parent : null;
+        if (!event.target && element && isNativeElement(element.name)) {
+          check({ loc: spanLoc(event) }, event.name);
+        }
+      },
+      'Decorator > CallExpression > ObjectExpression > Property[key.name="host"] > ObjectExpression > Property'(
+        property,
+      ) {
+        const key = property.key.type === 'Literal' ? String(property.key.value) : '';
+        const listener = /^\(([^:)]+)\)$/.exec(key);
+        if (listener) check({ node: property.key }, listener[1]);
+      },
+      'Decorator > CallExpression[callee.name="HostListener"] > Literal:first-child'(literal) {
+        const name = String(literal.value);
+        if (!name.includes(':')) check({ node: literal }, name);
       },
     };
   },
@@ -474,6 +512,199 @@ const noDomNodeAccess = {
   },
 };
 
+/**
+ * Whether `node` is read for its truth: the test of an `if`, a loop or a `?:`, the operand of `!`,
+ * the left operand of `&&` or `||`, which is tested, or the right one where the whole is itself a
+ * condition: `const shown = ready && x` keeps `x`'s value.
+ */
+function readAsCondition(node) {
+  let at = node;
+  while (at.parent?.type === 'ChainExpression') at = at.parent;
+  const { parent } = at;
+  if (!parent) return false;
+  if (TESTED.has(parent.type)) return parent.test === at;
+  if (parent.type === 'UnaryExpression') return parent.operator === '!';
+  if (parent.type !== 'LogicalExpression') return false;
+  if (parent.operator !== '&&' && parent.operator !== '||') return false;
+  return parent.left === at || readAsCondition(parent);
+}
+
+/** What reads its `test` for its truth. */
+const TESTED = new Set([
+  'IfStatement',
+  'WhileStatement',
+  'DoWhileStatement',
+  'ForStatement',
+  'ConditionalExpression',
+]);
+
+/** The variable `name` refers to from `scope`, or undefined for a global or a typo. */
+function variableOf(scope, name) {
+  for (let at = scope; at; at = at.upper) {
+    const found = at.set.get(name);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** Whether the name `identifier` reads is imported from an `@ng-native/` package. */
+function isNgNativeImport(context, identifier) {
+  const variable = variableOf(context.sourceCode.getScope(identifier), identifier.name);
+  const [def] = variable?.defs ?? [];
+  return def?.type === 'ImportBinding' && String(def.parent.source.value).startsWith('@ng-native/');
+}
+
+/** Whether `node` is `inject(X)` for an `X` imported from `@ng-native/`. */
+const isInjectedService = (context, node) =>
+  node?.type === 'CallExpression' &&
+  node.callee.type === 'Identifier' &&
+  node.callee.name === 'inject' &&
+  node.arguments[0]?.type === 'Identifier' &&
+  isNgNativeImport(context, node.arguments[0]);
+
+/** Whether a declaration's type annotation names a type imported from `@ng-native/`. */
+function typedAsService(context, annotation) {
+  const type = annotation?.typeAnnotation;
+  return (
+    type?.type === 'TSTypeReference' &&
+    type.typeName.type === 'Identifier' &&
+    isNgNativeImport(context, type.typeName)
+  );
+}
+
+/** Whether a class field or parameter property named `name` holds an `@ng-native/` service. */
+function classHolds(context, body, name) {
+  for (const member of body.body) {
+    if (member.type === 'PropertyDefinition' && !member.computed && member.key.name === name) {
+      return (
+        isInjectedService(context, member.value) || typedAsService(context, member.typeAnnotation)
+      );
+    }
+    const held = member.kind === 'constructor' ? parameterProperty(member, name) : null;
+    if (held) return typedAsService(context, held.typeAnnotation);
+  }
+  return false;
+}
+
+/** The parameter property a constructor declares as `name`, if it declares one. */
+function parameterProperty(constructor, name) {
+  for (const param of constructor.value.params) {
+    const held = param.type === 'TSParameterProperty' ? param.parameter : null;
+    if (held?.type === 'Identifier' && held.name === name) return held;
+  }
+  return null;
+}
+
+/** The class body `this` is the instance of at `node`, or null where a function binds its own. */
+function thisClass(node) {
+  for (let at = node.parent; at; at = at.parent) {
+    if (at.type === 'ClassBody') return at;
+    const own = at.type === 'FunctionExpression' || at.type === 'FunctionDeclaration';
+    if (own && at.parent?.type !== 'MethodDefinition') return null;
+  }
+  return null;
+}
+
+/**
+ * Whether `receiver`, what `available` is read off, is known to be an `@ng-native/` service: an
+ * `inject()` of one, a name or a `this.` field initialised with one or typed as one, or a name
+ * imported from the package itself, such as `splashScreen`. Only then is a read reported: anything
+ * else named `available` may be a plain boolean, which a call would break.
+ */
+function isService(context, receiver) {
+  if (isInjectedService(context, receiver)) return true;
+  if (receiver.type === 'Identifier') return nameHolds(context, receiver);
+  const field =
+    receiver.type === 'MemberExpression' &&
+    receiver.object.type === 'ThisExpression' &&
+    !receiver.computed &&
+    receiver.property.type === 'Identifier';
+  const body = field ? thisClass(receiver) : null;
+  return body !== null && classHolds(context, body, receiver.property.name);
+}
+
+/** Whether the name `identifier` reads is declared holding an `@ng-native/` service. */
+function nameHolds(context, identifier) {
+  const variable = variableOf(context.sourceCode.getScope(identifier), identifier.name);
+  const [def] = variable?.defs ?? [];
+  switch (def?.type) {
+    case 'ImportBinding':
+      return isNgNativeImport(context, identifier);
+    case 'Variable':
+      return (
+        isInjectedService(context, def.node.init) ||
+        typedAsService(context, def.node.id.typeAnnotation)
+      );
+    case 'Parameter':
+      return def.name.type === 'Identifier' && typedAsService(context, def.name.typeAnnotation);
+    default:
+      return false;
+  }
+}
+
+/** @type {import('eslint').Rule.RuleModule} */
+const noUncalledAvailable = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: "Disallow a service's available signal read as a condition without calling it",
+      url: `${DOCS}#no-uncalled-available`,
+    },
+    messages: {
+      uncalled: 'available is a signal, so it is always truthy. Call it: available().',
+    },
+    fixable: 'code',
+    schema: [],
+  },
+  create(context) {
+    return {
+      // Every service's `available` is a `Signal<boolean>`: a function, and so always truthy.
+      // ponytail: read from the syntax, not by type, so a service reached any other way, or a
+      // signal kept under another name, is not followed; that would need the type checker, which
+      // the recommended config does not set up.
+      'MemberExpression[computed=false][property.name="available"]'(node) {
+        if (node.parent?.type === 'CallExpression' && node.parent.callee === node) return;
+        if (!readAsCondition(node) || !isService(context, node.object)) return;
+        context.report({
+          node: node.property,
+          messageId: 'uncalled',
+          fix: (fixer) => fixer.insertTextAfter(node, '()'),
+        });
+      },
+    };
+  },
+};
+
+/** @type {import('eslint').Rule.RuleModule} */
+const preferHairlineToken = {
+  meta: {
+    type: 'suggestion',
+    docs: {
+      description:
+        'Suggest the --hairline token over StyleSheet.hairlineWidth, which never updates',
+      url: `${DOCS}#prefer-hairline-token`,
+    },
+    messages: {
+      stale:
+        "StyleSheet.hairlineWidth is worked out once, at startup, so it keeps the first screen's " +
+        'after a window moves to one of another density. Use var(--hairline) in a stylesheet, ' +
+        'which watchConditions() keeps current.',
+    },
+    schema: [],
+  },
+  create(context) {
+    return {
+      // ponytail: read by name, as React Native's `StyleSheet` is usually imported under it; one
+      // renamed on import is not followed.
+      'MemberExpression[computed=false][object.name="StyleSheet"][property.name="hairlineWidth"]'(
+        node,
+      ) {
+        context.report({ node, messageId: 'stale' });
+      },
+    };
+  },
+};
+
 /** Report `window.document`, `globalThis.localStorage`, `window.addEventListener` and the like. */
 function checkWindowMember(context, identifier) {
   const member = identifier.parent;
@@ -525,10 +756,13 @@ const plugin = {
   meta: { name: '@ng-native/eslint-plugin' },
   rules: {
     'no-dom-events': noDomEvents,
+    'desktop-only-events': desktopOnlyEvents,
     'no-html-controls': noHtmlControls,
     'no-browser-apis': noBrowserApis,
     'no-dom-node-access': noDomNodeAccess,
     'lowercase-elements': lowercaseElements,
+    'no-uncalled-available': noUncalledAvailable,
+    'prefer-hairline-token': preferHairlineToken,
   },
 };
 
@@ -548,7 +782,10 @@ const recommended = [
     rules: {
       '@ng-native/no-browser-apis': 'error',
       '@ng-native/no-dom-events': 'error',
+      '@ng-native/desktop-only-events': 'warn',
       '@ng-native/no-dom-node-access': 'error',
+      '@ng-native/no-uncalled-available': 'error',
+      '@ng-native/prefer-hairline-token': 'warn',
     },
   },
   {
@@ -558,6 +795,7 @@ const recommended = [
     plugins: { '@ng-native': plugin },
     rules: {
       '@ng-native/no-dom-events': 'error',
+      '@ng-native/desktop-only-events': 'warn',
       '@ng-native/no-html-controls': 'error',
       '@ng-native/lowercase-elements': 'error',
     },
