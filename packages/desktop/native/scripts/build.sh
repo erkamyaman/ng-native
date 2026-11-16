@@ -3,7 +3,7 @@
 # pinned sources and building Hermes first when they are missing. Prints the build directory.
 #
 #   build.sh [node_modules/react-native] [--backend appkit|none] [--universal] [--debug|--release]
-#            [--test] [--library <node_modules/library>]...
+#            [--test] [--library <node_modules/library>]... [--build-dir <dir>]
 #
 # Without a path, react-native is resolved from the current directory.
 #
@@ -14,6 +14,11 @@
 #   --test          run the core tests after building
 #   --library       a library whose Fabric components the host compiles in (its codegen, by
 #                   scripts/codegen-library.sh); repeatable. A build without one drops them all.
+#   --build-dir     build here instead of the cache's shared build directory, for a build that
+#                   no other may touch before its output is copied (make-prebuilt.mjs)
+#
+# An app that links nothing builds in a directory keyed by this install's native sources and the
+# libraries it compiles in (scripts/host-dir.sh), shared only with apps that build the same.
 #
 # NGN_DESKTOP_LINK names the app's link.json (bin/autolink.mjs): the libraries and app modules
 # compiled in (cmake/linked-modules.cmake). An app that links any builds in a directory of its own,
@@ -39,6 +44,7 @@ config=RelWithDebInfo
 run_tests=0
 tests=ON
 libraries=()
+build_dir=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --backend) backend="$2"; shift ;;
@@ -47,6 +53,7 @@ while [ $# -gt 0 ]; do
     --release) config=Release; tests=OFF ;;
     --test) run_tests=1 ;;
     --library) libraries+=("$2"); shift ;;
+    --build-dir) build_dir="$2"; shift ;;
     *) echo "build.sh: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -70,7 +77,12 @@ for lib in ${libraries[@]+"${libraries[@]}"}; do
 done
 
 link_args=()
-host_dir="$CACHE/host"
+# Keyed by this install's native sources and the libraries compiled in, so another install or an
+# app with other libraries never rebuilds this one's executable.
+native_dir="$(cd "$here/.." && pwd -P)"
+library_list=()
+[ -n "$library_dirs" ] && IFS=';' read -ra library_list <<< "$library_dirs"
+host_dir="$("$here/host-dir.sh" "$CACHE" "$native_dir" ${library_list[@]+"${library_list[@]}"})"
 if [ -n "${NGN_DESKTOP_LINK:-}" ] && [ "$backend" != "none" ]; then
   link="$(cd "$(dirname "$NGN_DESKTOP_LINK")" && pwd -P)/$(basename "$NGN_DESKTOP_LINK")"
   # The libraries' package names and directories, one per line, when the app links anything.
@@ -115,8 +127,8 @@ if [ "$backend" != "none" ]; then
   hermes_args=(-DNGN_HERMES_BUILD="$hermes")
 fi
 
-BUILD="$host_dir/$backend-${arch_key:-native}-$config"
-cmake --log-level=WARNING -G Ninja -S "$here/.." -B "$BUILD" \
+BUILD="${build_dir:-$host_dir/$backend-${arch_key:-native}-$config}"
+cmake --log-level=WARNING -G Ninja -S "$native_dir" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE="$config" \
   -DCMAKE_OSX_ARCHITECTURES="$archs" \
   -DNGN_BACKEND="$backend" \
