@@ -62,8 +62,20 @@ export interface NativeTextRecognition {
 
 const MODULE = 'NgNativeTextRecognition';
 
-/** The module where the build has it. */
+/** What `recognize` answers where it is absent: an image with no text in it. */
+const NOTHING_READ: RecognizedText = Object.freeze({ text: '', lines: [], width: 0, height: 0 });
+
+/**
+ * The module where the build has it: an Expo module on iOS, and the desktop host's TurboModule of
+ * the same name on macOS.
+ */
 function nativeTextRecognition(): NativeTextRecognition | null {
+  if (currentPlatform() === 'macos') {
+    return optional(() => {
+      const { TurboModuleRegistry } = require('react-native') as typeof import('react-native');
+      return TurboModuleRegistry.get(MODULE) as NativeTextRecognition | null;
+    });
+  }
   return optional(
     () =>
       (globalThis as { expo?: { modules?: Record<string, NativeTextRecognition | undefined> } })
@@ -81,15 +93,22 @@ export class TextRecognition {
 
   private readonly native = inject(TextRecognition.SOURCE);
 
-  /** Whether `recognize` can run here: an iOS development or release build. */
+  /** Whether `recognize` can run here: an iOS development or release build, or macOS. */
   readonly available: Signal<boolean> = signal(this.native !== null).asReadonly();
 
   /**
    * The text in the image at `imageUri`, a `file://` URI such as the camera, the image picker or
-   * a downloaded asset gives. Rejects when the image cannot be read.
+   * a downloaded asset gives. Rejects when the image cannot be read. On Android and the web, where
+   * there is no Vision, it answers no text; on iOS and macOS a missing module rejects with a
+   * `MissingModuleError`.
    */
   recognize(imageUri: string, options: TextRecognitionOptions = {}): Promise<RecognizedText> {
-    if (!this.native) return Promise.reject(missing());
+    if (!this.native) {
+      // Absent where Vision cannot exist: nothing is read, as from an image with no text.
+      const platform = currentPlatform();
+      if (platform === 'android' || platform === 'web') return Promise.resolve(NOTHING_READ);
+      return Promise.reject(missing());
+    }
     const languages = options.languages?.map(byScript);
     return this.native.recognize(imageUri, languages ? { ...options, languages } : options);
   }
@@ -123,7 +142,9 @@ function missing(): MissingModuleError {
       ? 'Node, where a test runs, has no native module: provide TextRecognition.SOURCE with a stand-in.'
       : platform === 'ios'
         ? 'This build does not have it, and Expo Go cannot load it: run a development build.'
-        : `It is not available on ${platform}.`;
+        : platform === 'macos'
+          ? 'This build of the desktop host does not have it: rebuild it with "npm run macos".'
+          : `It is not available on ${platform}.`;
   return new MissingModuleError(
     '@ng-native/expo',
     platform ?? 'web',

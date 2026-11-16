@@ -63,8 +63,16 @@ drew. To fill the box, give the image a width and height of `100%` as well.
 `defaultSource` shows until `source` loads. Android also reads `loadingIndicatorSource`, an image
 shown in place of the loading indicator, `resizeMethod` (how a large image is scaled down while
 decoding) and `resizeMultiplier`. iOS reads `capInsets`, the edges of a stretchable image that
-must not stretch. `resizeMode` (defaults to `cover`), `blurRadius` and `fadeDuration` (Android,
-default 300ms) apply on both.
+must not stretch. `resizeMode`, `blurRadius` and `fadeDuration` (Android, default 300ms) apply on
+both.
+
+An image covers its box when the app sets neither `resizeMode` nor `object-fit`, on iOS, Android
+and macOS, as React Native's `Image` does, and in the web host. An explicit `resizeMode` replaces
+it, and so does an `object-fit` in a stylesheet on iOS, Android and macOS. The web host paints the
+picture as a background, so there only `resizeMode` changes how it fits.
+
+On iOS and macOS an image with neither used to stretch to fill its box, without keeping the
+picture's proportions. To keep that fit, set `resizeMode="stretch"`.
 
 ## Events
 

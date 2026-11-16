@@ -25,6 +25,8 @@ import {
   makeEnvironmentProviders,
   provideEnvironmentInitializer,
   type EnvironmentProviders,
+  signal,
+  type Signal,
 } from '@angular/core';
 
 export type NativeScriptPlatform = 'ios' | 'android';
@@ -140,6 +142,16 @@ export class NativeScript {
 
   private readonly runtime = inject(NativeScript.RUNTIME);
   private readonly errors = inject(ErrorHandler);
+
+  /**
+   * Whether the runtime is here and in the build. False where there is no runtime - in Node, on
+   * the web and on macOS - where `call()` answers `undefined` and `runOnUI()` resolves to it; and
+   * false in a build without NativeScript, where `call()` with a function for the platform throws
+   * and `runOnUI()` rejects, saying so. `nativeViewHandle()` throws in both.
+   */
+  readonly available: Signal<boolean> = signal(
+    this.runtime !== null && !this.runtime.missing,
+  ).asReadonly();
 
   /** The platform NativeScript is installed on; null in Node and on the web. */
   readonly platform: NativeScriptPlatform | null = this.runtime?.platform ?? null;

@@ -20,7 +20,7 @@ interface Writable<T> {
 interface Fixture {
   readonly open: Writable<boolean>;
   readonly fit: Writable<boolean>;
-  readonly grabber: Writable<boolean>;
+  readonly grabber: Writable<boolean | null | undefined>;
   readonly detents: Writable<readonly unknown[] | undefined>;
   readonly second: Writable<string>;
   readonly background: Writable<string | undefined>;
@@ -355,13 +355,14 @@ describe('a bottom sheet on iOS, which SwiftUI presents by a prop', () => {
     await pass();
     assert.equal(instance.open(), true);
     assert.ok(byId('first'), 'the sheet was not dismissed');
-    assert.equal(instance.heard(), 2, 'and the event went on its way');
+    // `topDismiss` is a modal's own, delivered to it alone, so only the other one travels on.
+    assert.equal(instance.heard(), 1, 'and the event went on its way');
 
     fabric.emit(named(/ExpoUI_BottomSheetView$/)!, 'topIsPresentedChange', { isPresented: false });
     fabric.emit(named(/ExpoUI_BottomSheetView$/)!, 'topDismiss', {});
     await pass();
     assert.equal(instance.open(), false);
-    assert.equal(instance.heard(), 2, 'the sheet s own events are not the app s to hear');
+    assert.equal(instance.heard(), 1, 'the sheet s own events are not the app s to hear');
   });
 
   const detentsOf = (group: FakeFabricNode) =>
@@ -922,6 +923,18 @@ describe('a bottom sheet on Android, which Compose shows while it is in the tree
     await pass();
     assert.equal(named(/ExpoUI_ModalBottomSheetView$/)!.props['showDragHandle'], false);
   });
+
+  for (const unset of [null, undefined]) {
+    it(`shows the drag handle for a showDragIndicator bound to ${unset}, as an unbound one does`, async () => {
+      const { named, instance, pass } = await boot('android');
+      instance.grabber.set(false);
+      instance.open.set(true);
+      await pass();
+      instance.grabber.set(unset);
+      await pass();
+      assert.equal(named(/ExpoUI_ModalBottomSheetView$/)!.props['showDragHandle'], true);
+    });
+  }
 
   it("gives the sheet its background colour as Compose's container colour, and drops it once cleared", async () => {
     const { named, instance, pass } = await boot('android');

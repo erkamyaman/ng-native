@@ -28,7 +28,7 @@ import {
   signal,
   type Signal,
 } from '@angular/core';
-import { optional } from './native.ts';
+import { optional, presence } from './native.ts';
 
 /** One address the query could be, as the platform words it. */
 export interface AddressSuggestion {
@@ -135,6 +135,13 @@ export class AddressSearch {
   );
 
   private readonly native = inject(AddressSearch.SOURCE);
+
+  /**
+   * Whether the module is here. False where the service is absent, on an OS the module is not for,
+   * and every call is inert; false too in a build missing the module, where a call can throw a
+   * `MissingModuleError`.
+   */
+  readonly available: Signal<boolean> = presence(this.native);
 
   /**
    * The addresses that match `query`, best first, as it changes: empty while it is blank. Called

@@ -52,8 +52,9 @@ export function runPlugins(
     ) => attach(target, eventName, handler, options),
     getZone: () => zone,
   };
+  // Angular's `EventManager` gives every plugin its manager before asking any what it supports.
+  for (const plugin of plugins) plugin.manager = manager;
   const claiming = plugins.filter((plugin) => !plugin.supports(PROBE));
-  for (const plugin of claiming) plugin.manager = manager;
   pluginsOf.set(engine, [...claiming].reverse());
   return () => pluginsOf.delete(engine);
 }

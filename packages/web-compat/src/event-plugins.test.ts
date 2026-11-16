@@ -6,8 +6,10 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import { Component, DOCUMENT, inject } from '@angular/core';
 import { EVENT_MANAGER_PLUGINS } from '@angular/platform-browser';
+import { Engine } from '@ng-native/fabric';
 import { cleanup, render } from '@ng-native/testing';
 import { provideEventPlugins } from './event-plugins-provider.ts';
+import { pluginFor } from './event-plugins.ts';
 import { provideWebCompat } from './index.ts';
 
 type Listener = (event: Event) => void;
@@ -45,6 +47,17 @@ class ZonelessPlugin {
   }
 }
 
+/** A plugin that asks its manager what it supports, as a plugin may once Angular has given it one. */
+class ManagedPlugin {
+  manager!: Manager;
+  supports(name: string): boolean {
+    return this.manager.getZone() !== undefined && name.includes('.managed');
+  }
+  addEventListener(element: unknown, name: string, handler: Listener): () => void {
+    return this.manager.addEventListener(element, name.replace('.managed', ''), handler);
+  }
+}
+
 /** A plugin that claims every name, as Angular's own DOM one does: it is left to the renderer. */
 class EveryEventPlugin {
   manager!: Manager;
@@ -66,6 +79,7 @@ const heard: string[] = [];
   host: {
     '(activate.stop)': 'note("stopped")',
     '(activate.zoneless)': 'note("zoneless")',
+    '(activate.managed)': 'note("managed")',
     '(activate)': 'note("plain")',
   },
 })
@@ -115,6 +129,14 @@ describe("Angular's event-manager plugins in an app that asked for them", () => 
     assert.equal(fixture.instance.outer, 0);
   });
 
+  it('gives each plugin its manager before asking what it supports', async () => {
+    const fixture = await render(Page, {
+      providers: [provideWebCompat(), provideEventPlugins(), ...plugins(ManagedPlugin)],
+    });
+    tabOf(fixture).dispatchEvent(new CustomEvent('activate', { bubbles: true }));
+    assert.deepEqual(heard.sort(), ['managed', 'plain']);
+  });
+
   it('leaves a name no plugin claims, and every name to the renderer for a catch-all plugin', async () => {
     const fixture = await render(Page, {
       providers: [provideWebCompat(), provideEventPlugins(), ...plugins(EveryEventPlugin)],
@@ -125,10 +147,13 @@ describe("Angular's event-manager plugins in an app that asked for them", () => 
   });
 
   it('runs no plugin in an app that did not ask, nor after the app that asked has gone', async () => {
-    await render(Page, {
+    const first = await render(Page, {
       providers: [provideWebCompat(), provideEventPlugins(), ...plugins(StopPlugin)],
     });
+    const engine = first.componentRef.injector.get(Engine);
+    assert.ok(pluginFor(engine, 'activate.stop') instanceof StopPlugin);
     cleanup();
+    assert.equal(pluginFor(engine, 'activate.stop'), undefined);
     const fixture = await render(Page, {
       providers: [provideWebCompat(), ...plugins(StopPlugin)],
     });
