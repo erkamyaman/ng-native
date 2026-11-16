@@ -65,7 +65,10 @@ export default tseslint.config(
           // Off: `@ng-native/metro` and `@ng-native/tailwind` ship as the JavaScript they are
           // written in and have nothing to build, so a built package requiring them is correct.
           enforceBuildableLibDependency: false,
-          allow: [],
+          // The desktop host's config plugin and command validate the plugin options with the
+          // schema the app's runtime checks spawns against. That entry point imports nothing (no
+          // Angular, no React Native), so the host may use it and no other part of the package.
+          allow: ['@ng-native/device/desktop-options'],
           depConstraints: [
             {
               // The engine knows nothing about Angular, and nothing about React Native either:
@@ -128,12 +131,28 @@ export default tseslint.config(
               bannedExternalImports: ['lightningcss', '@oxc-angular/*'],
             },
             {
+              // The desktop host (`@ng-native/desktop`): native code and the Node command that
+              // builds and launches it. It depends on no workspace package and never on Angular,
+              // which `layer:build` alone would not stop.
+              sourceTag: 'layer:host',
+              onlyDependOnLibsWithTags: [],
+              bannedExternalImports: ['@angular/*'],
+            },
+            {
               // A test harness for apps, run by Node and never bundled. The fake Fabric needs the
               // engine's node shapes; `render()` mounts through the platform, the way an app
-              // boots; and the runner hooks compile through Metro's transform, so a test runs
-              // what the bundle would.
+              // boots; the runner hooks compile through Metro's transform, so a test runs what
+              // the bundle would; and the device seams (`OS`, the menu model, the window
+              // navigator) are what a test of an app on another OS provides.
               sourceTag: 'layer:testing',
-              onlyDependOnLibsWithTags: ['layer:runtime', 'layer:angular', 'layer:build'],
+              // It may launch the desktop host, so in-app tests can run on macOS.
+              onlyDependOnLibsWithTags: [
+                'layer:runtime',
+                'layer:device',
+                'layer:angular',
+                'layer:build',
+                'layer:host',
+              ],
             },
             {
               // The integration suite mounts real components through the adapter onto the fake

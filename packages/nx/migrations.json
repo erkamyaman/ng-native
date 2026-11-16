@@ -49,6 +49,16 @@
       "version": "0.18.1",
       "description": "Resolve the workspace's path aliases in Nx Vitest configs with vite-tsconfig-paths, as nxViteTsPaths does nothing from Nx 24.",
       "implementation": "./migrations/run.cjs#vitest-tsconfig-paths"
+    },
+    "os-comparisons-on-macos": {
+      "version": "0.23.0",
+      "description": "Note each comparison with 'ios', which answers differently now that macOS is reported as 'macos', and each !== 'android' and OS_VERSION comparison, which a Mac passes into a branch that may be written for iOS.",
+      "implementation": "./migrations/run.cjs#os-comparisons-on-macos"
+    },
+    "available-signal": {
+      "version": "0.23.0",
+      "description": "Call each service's available, now a Signal<boolean> on every service, and stop awaiting it.",
+      "implementation": "./migrations/run.cjs#available-signal"
     }
   }
 }

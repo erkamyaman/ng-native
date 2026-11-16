@@ -56,6 +56,7 @@ export {
   type TabSystemItem,
 } from './native-tab.ts';
 export { NativeTabsOutlet } from './native-tabs-outlet.ts';
+export { SidebarItemPath, selectedPath } from './sidebar-item-path.ts';
 export { ScreenSafeAreaView, type ScreenSafeAreaEdge } from './screen-safe-area-view.ts';
 export { TabBarInsets } from './tab-bar-insets.ts';
 export { TabSafeAreaView, type TabSafeAreaEdge } from './tab-safe-area-view.ts';
@@ -93,3 +94,4 @@ export {
 } from './markdown-page.ts';
 export { FullWindowOverlay } from './full-window-overlay.ts';
 export { injectPageFocused } from './page-focused.ts';
+export { NavigationHistory, type OutletHistory } from './navigation-history.ts';

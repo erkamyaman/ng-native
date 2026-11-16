@@ -11,6 +11,8 @@ taps and the response that launched the app as signals, and the permission, sche
 Android's channels, action buttons, the foreground handler, push tokens and background tasks as
 methods that take and return the module's own types.
 
+<!-- platforms: Notifications -->
+
 The signals are the part that was only reachable through a hook - the difference between a
 notification _arriving_ while the app is in front, and a user _tapping_ one, which is a navigation
 instruction and must not be missed, including the one that launched the app, which arrived before
@@ -314,7 +316,7 @@ types.
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `schedule(request)`                                                                           | Schedules a local notification, or shows one now with a `null` trigger; the identifier, or null without the module |
 | `cancel(id)`, `cancelAll()`                                                                   | Cancels one scheduled notification, or all of them                                                                 |
-| `scheduled()`                                                                                 | Every local notification still waiting for its trigger                                                             |
+| `scheduled()`                                                                                 | Every local notification still waiting for its trigger, each with when it fires as `at`                            |
 | `nextTriggerDate(trigger)`                                                                    | When a trigger would next fire, in milliseconds since the epoch                                                    |
 | `presented()`, `dismiss(id)`, `dismissAll()`                                                  | The app's notifications in the notification center, and clearing them                                              |
 | `badge()`, `setBadge(count)`                                                                  | The app icon's badge                                                                                               |
@@ -342,6 +344,28 @@ await notifications.schedule({
   trigger: { type: TriggerType.DAILY, hour: 9, minute: 0 },
 });
 ```
+
+A channel's importance is `ImportanceLevel`, the same way: the module's `AndroidImportance`, typed
+as that enum, without loading the module. The numbers are Expo's (`DEFAULT` is 5, `HIGH` is 6),
+not Android's own:
+
+```ts
+import { ImportanceLevel } from '@ng-native/expo/notifications';
+
+await notifications.setChannel('reminders', {
+  name: 'Reminders',
+  importance: ImportanceLevel.HIGH,
+});
+```
+
+`scheduled()` answers Expo's requests, each with `at`, a `Date` for when it fires. Only a request
+that fires once at a moment its trigger names has one: a date trigger on Android, or, on iOS, a
+calendar trigger in the Gregorian calendar with a whole date and time and no time zone of its
+own, read in the device's. iOS
+schedules a date trigger as an interval and reports it as one, so there `at` is `null` for it. `at`
+is `null` for an interval, which counts from a moment the request does not keep, for a repeating
+trigger, and for one the platform did not describe. Ask `nextTriggerDate(trigger)` when a trigger
+you have in hand repeats.
 
 ## Action buttons and replies
 

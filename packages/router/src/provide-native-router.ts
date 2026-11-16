@@ -24,6 +24,8 @@ import {
   type RouterFeatures,
   type Routes,
 } from '@angular/router';
+import { NavigationHistory } from './navigation-history.ts';
+import { routeWindows } from './route-windows.ts';
 import {
   DestroyRef,
   ErrorHandler,
@@ -56,7 +58,7 @@ import {
   intentOf,
 } from './native-navigation.ts';
 import { NativePlatformLocation } from './native-platform-location.ts';
-import { copyPresentedOf } from './presented-route.ts';
+import { copyPresentedPages } from './presented-route.ts';
 import { refuseScreensUnderFullScreen } from './refuse-screens-under-full-screen.ts';
 import { SVG_ICON_RENDERER, type SvgIconRenderer } from './svg-icons.ts';
 import { NativeStackReuseStrategy } from './native-stack-reuse-strategy.ts';
@@ -163,7 +165,10 @@ function nativeProviders(parentOf: LinkParent | undefined): (Provider | Environm
     provideEnvironmentInitializer(discardFailedEntries),
     provideEnvironmentInitializer(restoreFailedSnapshots),
     provideEnvironmentInitializer(refuseScreensUnderFullScreen),
+    provideEnvironmentInitializer(copyPresentedPages),
     provideEnvironmentInitializer(keepHistoryAcrossReloads),
+    routeWindows,
+    provideEnvironmentInitializer(() => void inject(NavigationHistory)),
   ];
   if (!parentOf) {
     return [
@@ -308,7 +313,6 @@ function keepHistoryAcrossReloads(): void {
       for (const { url, presentation } of parked) {
         if (url === router.url) continue;
         const state = presentation && { [NATIVE_INTENT]: { stack: 'push', presentation } };
-        await copyPresentedOf(router, url);
         moved = (await router.navigateByUrl(url, { state })) || moved;
       }
       // The last page is still sliding in when its navigation ends.
