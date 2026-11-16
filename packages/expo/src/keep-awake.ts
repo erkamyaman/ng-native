@@ -20,7 +20,7 @@ import {
   type Signal,
 } from '@angular/core';
 import { onWindowFront, sharedBySource } from '@ng-native/device';
-import { expoModule } from './native.ts';
+import { expoModule, presence } from './native.ts';
 
 export interface NativeKeepAwake {
   activate(tag: string): Promise<void>;
@@ -54,6 +54,13 @@ export class KeepAwake {
   );
 
   private readonly native = inject(KeepAwake.SOURCE);
+
+  /**
+   * Whether the module is here. False where the service is absent, on an OS the module is not for,
+   * and every call is inert; false too in a build missing the module, where a call can throw a
+   * `MissingModuleError`.
+   */
+  readonly available: Signal<boolean> = presence(this.native);
   /** Every app's holds: the screen is the runtime's, not an app's. */
   private readonly window = sharedBySource(
     KeepAwakeWindow,

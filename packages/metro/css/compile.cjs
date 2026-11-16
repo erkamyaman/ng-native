@@ -986,10 +986,41 @@ function mediaLength(value, context) {
 const PLAIN_FEATURES = new Set(['orientation', 'prefers-color-scheme', 'prefers-reduced-motion']);
 
 /**
+ * Features about the pointer, each with the values it can have. The engine answers them from the
+ * OS: a desktop hovers with a fine pointer, a phone has a coarse one that cannot hover.
+ */
+const POINTER_FEATURES = {
+  hover: ['hover', 'none'],
+  'any-hover': ['hover', 'none'],
+  pointer: ['fine', 'coarse', 'none'],
+  'any-pointer': ['fine', 'coarse', 'none'],
+};
+
+/** A pointer feature as a condition, or null for any other feature. */
+function pointerCondition(feature, context) {
+  if (!Object.hasOwn(POINTER_FEATURES, feature.name)) return null;
+  const values = POINTER_FEATURES[feature.name];
+  // With no value a feature is true for any value but its "none".
+  if (feature.type === 'boolean') {
+    const some = values.filter((value) => value !== 'none');
+    return some.length === 1
+      ? { feature: feature.name, value: some[0] }
+      : { any: some.map((value) => ({ feature: feature.name, value })) };
+  }
+  const value = feature.type === 'plain' && keyword(feature.value, `${context} (${feature.name})`);
+  if (!values.includes(value)) {
+    throw new CssUnsupported(
+      `${context}: '${feature.name}' is one of ${values.join(', ')}, not '${value || feature.type}'`,
+    );
+  }
+  return { feature: feature.name, value };
+}
+
+/**
  * A media query condition, compiled to a tree the runtime can walk without parsing anything.
  *
- * Only features a device can actually answer are accepted. `hover`, `pointer` and the print media
- * type have no meaning here, and a query that silently never matches is worse than a build warning.
+ * Only features a device can actually answer are accepted. The print media type has no meaning
+ * here, and a query that silently never matches is worse than a build warning.
  */
 // Navigating lightningcss's untyped AST. Every `?.` and `??` counts as a branch, so the
 // complexity score here measures defensiveness rather than logic: one line of
@@ -1009,6 +1040,8 @@ function mediaCondition(condition, context) {
 
   if (condition.type === 'feature') {
     const feature = condition.value;
+    const pointer = pointerCondition(feature, context);
+    if (pointer) return pointer;
     const measured = feature.name === 'width' || feature.name === 'height';
     if (measured && feature.type === 'plain') {
       return { feature: feature.name, op: 'eq', value: mediaLength(feature.value, context) };
@@ -1040,7 +1073,7 @@ function mediaCondition(condition, context) {
       if (!op || !measured) {
         throw new CssUnsupported(
           `${context}: '${feature.name}' is not a media feature a device can answer ` +
-            `(width, height, orientation, prefers-color-scheme and prefers-reduced-motion are)`,
+            `(width, height, orientation, prefers-color-scheme, prefers-reduced-motion, hover, any-hover, pointer and any-pointer are)`,
         );
       }
       return { feature: feature.name, op, value: mediaLength(feature.value, context) };
@@ -1053,7 +1086,7 @@ function mediaCondition(condition, context) {
     }
     throw new CssUnsupported(
       `${context}: '${feature.name ?? feature.type}' is not a media feature a device can answer ` +
-        `(width, height, orientation, prefers-color-scheme and prefers-reduced-motion are)`,
+        `(width, height, orientation, prefers-color-scheme, prefers-reduced-motion, hover, any-hover, pointer and any-pointer are)`,
     );
   }
 
@@ -1162,7 +1195,7 @@ function compound(parts, context) {
           classes++;
           break;
         }
-        if (part.kind === 'focus' || part.kind === 'active') {
+        if (TRACKED_STATE.has(part.kind)) {
           (out.pseudo ??= []).push(part.kind);
           classes++;
           break;
@@ -1191,10 +1224,11 @@ function compound(parts, context) {
           classes++;
           if (part.selectors) {
             const inner = compound(part.selectors, context);
-            Object.assign(out, inner.compound, {
-              host: true,
-              classes: out.classes.concat(inner.compound.classes),
-            });
+            // One compound: a list either side wrote, of classes, states or attributes, is joined.
+            for (const [key, value] of Object.entries(inner.compound)) {
+              out[key] =
+                Array.isArray(value) && Array.isArray(out[key]) ? out[key].concat(value) : value;
+            }
             ids += inner.ids;
             classes += inner.classes;
             types += inner.types;
@@ -1257,6 +1291,12 @@ function compound(parts, context) {
               `what it styles: ':host ::ng-deep .inner'.`,
           );
         }
+        if (String(part.kind).startsWith('webkit-scrollbar')) {
+          throw new CssUnsupported(
+            `${context}: '::-webkit-scrollbar' is not supported: the scroll bar is the system's. ` +
+              `Use 'scrollbar-width: none' or 'thin', and 'scrollbar-gutter: stable'.`,
+          );
+        }
         throw new CssUnsupported(
           `${context}: pseudo-elements like ::before are never supported. They would mean ` +
             `synthesising nodes no template declares, which puts the style engine in the ` +
@@ -1270,7 +1310,6 @@ function compound(parts, context) {
   return { compound: out, ids, classes, types };
 }
 
-/** Pseudo-classes about a pointer or about where focus came from, neither of which native has. */
 /** Whether a value is one relative colour, `oklch(from var(--brand) l c h)`. */
 function isRelativeColour(parts) {
   const written = meaningful(parts);
@@ -1614,7 +1653,12 @@ function darkSide(rule) {
   };
 }
 
-const HOVER_OR_FOCUS = new Set(['hover', 'focus-visible', 'focus-within']);
+/**
+ * Interaction state the engine tracks on each node: focus from the native focus and blur events
+ * (and whether the host said it came from the keyboard), a press from the responder, and a
+ * pointer from the pointer events of a view a `:hover` rule could match.
+ */
+const TRACKED_STATE = new Set(['focus', 'active', 'hover', 'focus-visible', 'focus-within']);
 
 /** Form-control state the web keeps on the element and native keeps in a component's inputs. */
 const CONTROL_STATE = new Set(['checked', 'indeterminate', 'default']);
@@ -1633,13 +1677,6 @@ function refusedPseudoClass(part, name, context) {
       `${context}: ':${name}' has no state on native to read: whether a control is checked is ` +
         `an input of its component, not a prop a selector can see. Bind an attribute from the ` +
         `same signal, such as [attr.data-checked], and select on that.`,
-    );
-  }
-  if (HOVER_OR_FOCUS.has(part.kind)) {
-    return new CssUnsupported(
-      `${context}: ':${name}' is not supported. Native has no hover or focus cascade: use ` +
-        `':active' or ':focus', which the engine tracks, or a bound attribute such as ` +
-        `[attr.data-hover].`,
     );
   }
   return new CssUnsupported(
@@ -3137,8 +3174,23 @@ const KEPT_BY_LIGHTNINGCSS = new Set(['UnsupportedPseudoClass', 'UnsupportedPseu
 /** Both native platforms, which is who a sheet is for when the build does not say. */
 const NATIVE = ['ios', 'android'];
 
+/** The platforms a build can name, each of which a sheet is then built for alone. */
+const BUILDS = [...NATIVE, 'macos'];
+
+/**
+ * The platforms refused a filter iOS does not draw: iOS, and macOS, whose host draws no more of them
+ * than iOS does. The macOS host hands AppKit the whole transform matrix, skews included, so a skew
+ * is refused on Android alone.
+ */
+const IOS_FILTERS = new Set(['ios', 'macos']);
+const drawsIosFilters = (platforms) => platforms.some((platform) => IOS_FILTERS.has(platform));
+
 /** The class `mount` puts on the root for each platform, which is how a rule is scoped to one. */
-const PLATFORM_CLASS = { 'platform-ios': 'ios', 'platform-android': 'android' };
+const PLATFORM_CLASS = {
+  'platform-ios': 'ios',
+  'platform-android': 'android',
+  'platform-macos': 'macos',
+};
 
 /**
  * The platforms named by `.platform-*` classes in one selector: in any compound, or inside an
@@ -3163,7 +3215,7 @@ function rulePlatforms(selectors, targets) {
   for (const parts of selectors ?? []) {
     const named = platformClasses(parts);
     // Two platform classes in one selector ask for a root that is both, which never exists.
-    const scope = named.size === 0 ? NATIVE : named.size === 1 ? [...named] : [];
+    const scope = named.size === 0 ? targets : named.size === 1 ? [...named] : [];
     for (const platform of scope) if (targets.includes(platform)) platforms.add(platform);
   }
   return [...platforms];
@@ -3175,7 +3227,7 @@ function rulePlatforms(selectors, targets) {
  * dropped with a warning keeps the rest of the rule.
  */
 function assertDrawn(out, deferred, from, platforms, context) {
-  if (!platforms.includes('ios')) return;
+  if (!drawsIosFilters(platforms)) return;
   const settled = undrawnOnIos(out.filter);
   const pending = deferred
     .slice(from)
@@ -3193,7 +3245,7 @@ function assertDrawn(out, deferred, from, platforms, context) {
  * filter slot read on device, so this is the last place that knows which platforms it is for.
  */
 function assertTokenDrawn(tokens, name, platforms, context) {
-  if (!platforms.includes('ios') || typeof name !== 'string') return;
+  if (!drawsIosFilters(platforms) || typeof name !== 'string') return;
   const fn = undrawnOnIos(tokens[name]?.filter);
   if (!fn) return;
   delete tokens[name];
@@ -3394,7 +3446,7 @@ function compileCss(source, context = 'styles', options = {}) {
   const fonts = [];
   const { onUnsupported } = options;
   /** The platforms this sheet is built for: the one Metro is bundling, or both when it is not said. */
-  const targets = NATIVE.includes(options.platform) ? [options.platform] : NATIVE;
+  const targets = BUILDS.includes(options.platform) ? [options.platform] : NATIVE;
   let order = 0;
   /** The tokens each declaration reads, for `reportPlatformColourReads` once the sheet is read. */
   const reads = [];

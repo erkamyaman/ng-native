@@ -12,7 +12,7 @@
  * platform - and the one thing neither can do is fail silently on the platform it is not for.
  */
 
-import { InjectionToken, Service, inject } from '@angular/core';
+import { InjectionToken, Service, inject, signal, type Signal } from '@angular/core';
 import { reactNative, type ReactNative } from './react-native.ts';
 
 /** One choice in a dialog or an action sheet. */
@@ -63,6 +63,9 @@ export class Dialogs {
 
   private readonly native = inject(Dialogs.SOURCE);
 
+  /** Whether React Native's module is here. Where it is not, every call is inert. */
+  readonly available: Signal<boolean> = signal(this.native !== null).asReadonly();
+
   /** Say something, and wait until it has been read. Resolves when the dialog is dismissed. */
   tell(title: string, message?: string, dismiss = 'OK'): Promise<void> {
     return new Promise((resolve) => {
@@ -99,9 +102,9 @@ export class Dialogs {
   /**
    * Ask for a line of text. Resolves to null if they cancelled.
    *
-   * iOS only: `Alert.prompt` has no Android equivalent, and inventing one out of a modal and a
-   * text input would be a dialog that looks nothing like the platform's. On Android this resolves
-   * to null so a caller can fall back to a screen of its own.
+   * iOS and macOS only: `Alert.prompt` has no Android equivalent, and inventing one out of a modal
+   * and a text input would be a dialog that looks nothing like the platform's. On Android this
+   * resolves to null so a caller can fall back to a screen of its own.
    */
   ask(title: string, options: { message?: string; value?: string } = {}): Promise<string | null> {
     return new Promise((resolve) => {
@@ -157,7 +160,8 @@ export class Dialogs {
        *
        * Android's dialog holds three buttons: a negative, a neutral and a positive. Anything past
        * that is dropped by the platform without a word, and a choice the user cannot see is worse
-       * than a list that refused to open, so it says so.
+       * than a list that refused to open, so it says so. A Mac's alert, the same call, has a
+       * button for every choice, with Cancel bound to Escape.
        */
       const buttons = choices.map((choice, index) => ({
         text: choice.label,
@@ -167,7 +171,7 @@ export class Dialogs {
       if (cancelAt < 0) {
         buttons.push({ text: 'Cancel', style: 'cancel', onPress: () => resolve(null) });
       }
-      if (buttons.length > 3) {
+      if (this.native.platform === 'android' && buttons.length > 3) {
         console.error(
           `[angular-native] Dialogs.choose was given ${choices.length} choices and Android shows ` +
             'at most three buttons, counting the cancel. The rest will not appear. Use a ' +
@@ -193,9 +197,9 @@ export class Dialogs {
 /**
  * The platform's dialogs, from React Native's own modules.
  *
- * `Alert.prompt` and `ActionSheetIOS` are iOS-only and `ToastAndroid` is Android-only; each is
- * left absent rather than shimmed, which is what lets `ask`, `choose` and `notify` above decide
- * what to do about it.
+ * `Alert.prompt` is iOS and macOS only, `ActionSheetIOS` iOS only and `ToastAndroid` Android
+ * only; each is left absent rather than shimmed, which is what lets `ask`, `choose` and `notify`
+ * above decide what to do about it.
  *
  * Which platform it is has to be asked outright, because React Native's own modules do not answer
  * it. `react-native` exports `ActionSheetIOS` on Android too - the object is there and so is
@@ -212,6 +216,8 @@ export function dialogSource(
   if (!native) return null;
 
   const ios = native.Platform.OS === 'ios';
+  // A Mac's alert module is iOS's, and React Native's `Alert.prompt` takes its iOS body there.
+  const apple = ios || native.Platform.OS === 'macos';
   const android = native.Platform.OS === 'android';
 
   return {
@@ -219,7 +225,7 @@ export function dialogSource(
     alert: (title, message, buttons) => native.Alert.alert(title, message, [...buttons]),
     // Buttons rather than a callback: given a callback, `Alert.prompt` answers OK alone, and the
     // Cancel the native alert adds calls nothing, so a cancelled `ask` never settled.
-    ...(ios && native.Alert.prompt
+    ...(apple && native.Alert.prompt
       ? {
           prompt: (title, message, onResult, defaultValue) =>
             native.Alert.prompt!(

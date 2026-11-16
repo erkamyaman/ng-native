@@ -21,7 +21,8 @@ import {
   handsDownPaint,
   StyleResolver,
   underOwnShorthands,
-  usesActive,
+  usesState,
+  type StateUse,
   elementsAtEnd,
   hasAbove,
   couldAsk,
@@ -111,6 +112,7 @@ import {
   type FlowPlan,
   type FlowTree,
 } from './flow.ts';
+import { joinEvents } from './event-dispatcher.ts';
 import { FontFaces } from './font-faces.ts';
 import { premultipliedStops } from './premultiplied-stops.ts';
 
@@ -478,6 +480,22 @@ export const DIRECT_EVENTS: ReadonlySet<string> = new Set([
   'topTabSelected',
   // Safe-area insets, reported by the provider that measured them.
   'topInsetsChange',
+  // Native sends an enter and a leave to each view the pointer crosses into or out of, as the
+  // W3C's do not bubble: one bubbling up as well ran a parent's handler twice for one entry.
+  'topPointerEnter',
+  'topPointerLeave',
+  // ModalHostView's. A modal inside a modal would otherwise hand its close request to the one
+  // around it, so one Escape or back press closed both.
+  'topRequestClose',
+  'topShow',
+  'topDismiss',
+  'topOrientationChange',
+  // macOS's host sends these to the view they happened on. A menu or a drop zone inside another
+  // would otherwise run the handlers of the one around it too.
+  'topContextMenuSelect',
+  'topDropEnter',
+  'topDropLeave',
+  'topDropPerform',
 ]);
 
 /**
@@ -591,6 +609,22 @@ const EVENT_OPT_IN_PROPS: Record<string, string> = {
    */
   topPointerEnter: 'onPointerEnter',
   topPointerLeave: 'onPointerLeave',
+  topPointerMove: 'onPointerMove',
+  topPointerOver: 'onPointerOver',
+  topPointerOut: 'onPointerOut',
+  // A desktop host's, for `(dblclick)`, `(contextmenu)` and `(wheel)`: see `DOM_EVENT_TYPES`.
+  topDoubleClick: 'onDoubleClick',
+  topContextMenu: 'onContextMenu',
+  topWheel: 'onWheel',
+  /*
+   * A screen reader's: iOS and the macOS host send a declared action, an accessibility tap, a
+   * magic tap and an escape only to a view whose props say something listens, and otherwise fall
+   * back to a synthesized tap or nothing.
+   */
+  topAccessibilityAction: 'onAccessibilityAction',
+  topAccessibilityTap: 'onAccessibilityTap',
+  topMagicTap: 'onAccessibilityMagicTap',
+  topAccessibilityEscape: 'onAccessibilityEscape',
 };
 
 /**
@@ -731,6 +765,12 @@ export interface EngineNode extends HostNode {
   focused?: boolean;
   /** `:active`, set on the responder and every ancestor of it. */
   active?: boolean;
+  /** `:hover`, from the pointer events of a view a `:hover` rule could match. */
+  hovered?: boolean;
+  /** `:focus-within`, set on the focused node and every ancestor of it. */
+  focusWithin?: boolean;
+  /** `:focus-visible`, set on a focused node the host says the keyboard focused. */
+  focusVisible?: boolean;
   /**
    * The style object the platform adapter made for this node, and may therefore write into.
    *
@@ -906,6 +946,8 @@ export interface EngineNode extends HostNode {
    * it out. The native stack outlet tells a page's own binding from a value it carried this way.
    */
   writes?: Set<string>;
+  /** Who hears a prop change, by key. See `watchProp`. */
+  propWatches?: Map<string, Set<(value: unknown) => void>>;
   /** The child this node's background is painted on instead of itself. See `paintOn`. */
   paintsOn?: EngineNode;
   /** What this node's background colour is handed to instead of painted. See `takePaint`. */
@@ -1202,11 +1244,23 @@ export const ANDROID_VIEW_NAMES: Record<string, string> = {
 };
 
 /**
- * iOS's names for the elements Android names differently, so reporting iOS after Android puts
- * them back.
+ * The views only an iPhone or iPad has, as a Mac draws them: a plain view, as on Android. Pull to
+ * refresh has no meaning with a mouse, and an input accessory rides a software keyboard.
+ */
+const MACOS_VIEW_NAMES: Record<string, string> = {
+  'refresh-control': 'View',
+  'input-accessory-view': 'View',
+};
+
+/**
+ * iOS's names for the elements Android and macOS name differently, so reporting iOS after either
+ * puts them back.
  */
 const IOS_VIEW_NAMES: Record<string, string> = Object.fromEntries(
-  Object.keys(ANDROID_VIEW_NAMES).map((element) => [element, VIEW_NAMES[element] as string]),
+  [...Object.keys(ANDROID_VIEW_NAMES), ...Object.keys(MACOS_VIEW_NAMES)].map((element) => [
+    element,
+    VIEW_NAMES[element] as string,
+  ]),
 );
 
 /**
@@ -1224,12 +1278,26 @@ export function nativePlatform(): string {
 }
 
 /**
+ * Whether the host is one of Apple's: iOS or macOS. The desktop host implements React Native's
+ * iOS-named modules and views, so behaviour Apple's platforms share takes this rather than a check
+ * for `'ios'`, which a Mac fails.
+ */
+export function isApplePlatform(): boolean {
+  return platformOS === 'ios' || platformOS === 'macos';
+}
+
+/**
  * Call once at startup with `Platform.OS`. The view names above are the iOS/canonical ones, so
- * only the mapping half is a no-op elsewhere.
+ * only the mapping half is a no-op elsewhere. macOS takes iOS's: the desktop host implements them.
  */
 export function registerPlatformComponents(platform: string): void {
   platformOS = platform;
-  const names = platform === 'android' ? ANDROID_VIEW_NAMES : IOS_VIEW_NAMES;
+  const names =
+    platform === 'android'
+      ? ANDROID_VIEW_NAMES
+      : platform === 'macos'
+        ? { ...IOS_VIEW_NAMES, ...MACOS_VIEW_NAMES }
+        : IOS_VIEW_NAMES;
   for (const [element, viewName] of Object.entries(names)) registerViewName(element, viewName);
 }
 
@@ -1252,8 +1320,11 @@ const DEFAULT_PROPS: Record<string, Record<string, unknown>> = {
     flexDirection: 'row',
     overflow: 'scroll',
   },
-  // RN's Image.ios.js: without it a border radius rounds the view but not the picture.
-  Image: { overflow: 'hidden' },
+  // RN's Image.ios.js: without it a border radius rounds the view but not the picture. And its
+  // `resizeMode` of `cover`, which native's own default of `stretch` is not: a default rather
+  // than a prop the component writes, so `object-fit` in a stylesheet and a bound `resizeMode`
+  // both stand over it.
+  Image: { overflow: 'hidden', resizeMode: 'cover' },
   // RN's Modal.js gives the native host this; without it the modal does not lay out.
   ModalHostView: { position: 'absolute' },
   // RN's InputAccessoryView.js does the same for the keyboard bar.
@@ -5198,8 +5269,14 @@ function describeViews(
   elementName: string,
   { viewName, defaultProps, options }: ViewNameRegistration,
 ): void {
-  for (const name of typeof viewName === 'string' ? [viewName] : [viewName.ios, viewName.android]) {
-    describeView(name, defaultProps, options);
+  const names =
+    typeof viewName === 'string'
+      ? [viewName]
+      : [viewName.ios, viewName.android, ...(viewName.macos ? [viewName.macos] : [])];
+  for (const name of names) {
+    // React Native's plain view, which an element is on an OS that has no view of its own for it,
+    // is every element's: what this registration says of its own view is not said of that one.
+    if (name !== 'View' || typeof viewName === 'string') describeView(name, defaultProps, options);
   }
   // The element's, not the view's: another element may name the same view without it.
   if (options?.spacedText) SPACED_TEXT.add(elementName);
@@ -5285,6 +5362,14 @@ const YIELDING = new Set<string>();
 
 /** The prop each view that takes its text content as a prop reads it from. See `ViewNameOptions`. */
 const TEXT_CONTENT_PROPS: Record<string, string> = {};
+
+/**
+ * The prop a view takes its text content as, or undefined for a view that takes text children:
+ * `title` for `NgNativeButton`. What a screen reader reads as its name, with no text inside it.
+ */
+export function textContentProp(viewName: string): string | undefined {
+  return TEXT_CONTENT_PROPS[viewName];
+}
 
 /** Whether `node` takes its text content as a prop rather than as text children. */
 function takesTextAsProp(node: EngineNode): boolean {
@@ -5417,13 +5502,16 @@ function textContent(node: EngineNode): string {
 export interface PlatformViewName {
   readonly ios: string;
   readonly android: string;
+  /** The view on macOS, where it is not iOS's: an iOS-only view the desktop host has none of. */
+  readonly macos?: string;
 }
 
 /** An element's registered view name, for the platform the host reported. */
 export function registeredViewName(elementName: string): string | undefined {
   const name = VIEW_NAMES[elementName];
   if (name === undefined || typeof name === 'string') return name;
-  return platformOS === 'android' ? name.android : name.ios;
+  if (platformOS === 'android') return name.android;
+  return platformOS === 'macos' ? (name.macos ?? name.ios) : name.ios;
 }
 
 /**
@@ -6559,6 +6647,9 @@ const ENGINE_NODE_FIELDS = {
   styled: true,
   focused: true,
   active: true,
+  hovered: true,
+  focusWithin: true,
+  focusVisible: true,
   ownStyle: true,
   styleCommitted: true,
   fitContainer: true,
@@ -6604,6 +6695,7 @@ const ENGINE_NODE_FIELDS = {
   attributeOnly: true,
   keptAttributes: true,
   writes: true,
+  propWatches: true,
   paintsOn: true,
   paintTaker: true,
   paintTaken: true,
@@ -6713,6 +6805,11 @@ function removeMember(name: string, descriptor: PropertyDescriptor): void {
 /**
  * RN-specific helpers, injected rather than imported so the engine stays runnable under Node.
  */
+/** What `Engine.watchShared` reports. A `sheet` change with no `sheet` removes `replacing`. */
+export type SharedChange =
+  | { kind: 'sheet'; sheet: StyleSheet | null; replacing?: StyleSheet }
+  | { kind: 'tokens'; tokens: Readonly<Record<string, TokenValue>> };
+
 export interface EngineOptions {
   /**
    * React Native's `NativeAnimatedHelper`, which lets native move a view by a scroll with no
@@ -7322,6 +7419,34 @@ function couldBe(compound: Compound, node: EngineNode): boolean {
   );
 }
 
+/** What a sheet asks about each state the engine tracks across nodes: see `usesState`. */
+interface SheetStates {
+  readonly active: StateUse;
+  readonly hover: StateUse;
+  readonly focusWithin: StateUse;
+}
+
+const NO_USE: StateUse = { own: false, elsewhere: [], asked: [] };
+
+/** Whether a sheet, or the sheets in play, ask about a state at all. */
+const inPlay = (use: StateUse): boolean => use.own || use.elsewhere.length > 0;
+
+/**
+ * Whether the host says a focus came from the keyboard, which is what `:focus-visible` matches.
+ *
+ * The contract for a host: a `topFocus` event whose payload has `focusVisible: true` was moved
+ * there by Tab, Shift-Tab or another key, and draws a focus ring; one without it (a click, a tap,
+ * a call to `focus()`) does not. iOS and Android send no such flag: see `setFocused`.
+ */
+function focusVisible(nativeEvent: unknown): boolean {
+  return (nativeEvent as { focusVisible?: unknown } | null)?.focusVisible === true;
+}
+
+/** Whether the host says which focus came from the keyboard: the desktop host does. */
+function hostReportsKeyboardFocus(): boolean {
+  return platformOS === 'macos';
+}
+
 /** Dev-time commit accounting, so a slow frame can be attributed rather than guessed at. */
 export interface EngineStats {
   commits: number;
@@ -7555,19 +7680,50 @@ export class Engine implements HostEngine {
    * Precise rather than by generation: unlike a rotation, the engine knows exactly which nodes
    * changed, and a keystroke's worth of focus movement should not invalidate the tree.
    */
-  private setFocused(node: EngineNode | null): void {
+  private setFocused(node: EngineNode | null, visible = false): void {
     if (this.focusedNode === node) return;
     if (this.focusedNode) {
       this.focusedNode.focused = false;
+      this.focusedNode.focusVisible = undefined;
       this.markProps(this.focusedNode);
     }
     this.focusedNode = node;
     if (node) {
       node.focused = true;
+      // A text field takes the keyboard however focus arrived, so a browser rings it on a click too.
+      // A phone focuses anything else only from a keyboard, a remote or an assistive technology,
+      // and its host sends no flag, so every focus there is one a ring is for.
+      if (visible || TEXT_INPUTS.has(viewNameOf(node)) || !hostReportsKeyboardFocus()) {
+        node.focusVisible = true;
+      }
       this.markProps(node);
     }
+    this.setFocusWithin(node);
     this.commit();
   }
+
+  /**
+   * Move `:focus-within` to `node` and its ancestors. Kept whether or not a rule asks, as it is a
+   * walk up from one node, so a sheet that arrives later reads it right; only marked where one asks.
+   */
+  private setFocusWithin(node: EngineNode | null): void {
+    const chain = new Set<EngineNode>();
+    for (let at = node; at; at = at.parent) chain.add(at);
+    for (const was of this.focusWithinNodes) {
+      if (chain.has(was)) continue;
+      was.focusWithin = undefined;
+      this.markState(was, this.focusWithinUse);
+    }
+    for (const now of chain) {
+      if (now.focusWithin) continue;
+      now.focusWithin = true;
+      this.markState(now, this.focusWithinUse);
+    }
+    this.focusWithinNodes = chain;
+  }
+
+  /** The nodes `:focus-within` is set on, to clear whatever happened to the tree meanwhile. */
+  private focusWithinNodes = new Set<EngineNode>();
 
   /**
    * Set or clear `:active` along a responder chain, marking each node so its style re-resolves.
@@ -7600,25 +7756,32 @@ export class Engine implements HostEngine {
   private readonly activeNodes = new Set<EngineNode>();
 
   /** Whether any sheet styles a pressed element, and each compound that asks about one from another. */
-  private activeUse: { own: boolean; elsewhere: readonly Compound[] } = {
-    own: false,
-    elsewhere: [],
-  };
+  private activeUse: StateUse = NO_USE;
+  /** The same for a hovered element. */
+  private hoverUse: StateUse = NO_USE;
+  /** The same for an element with the focus in it. */
+  private focusWithinUse: StateUse = NO_USE;
 
-  /** What each sheet in play asks about a pressed element: `activeUse` is all of them together. */
-  private readonly activeBySheet = new Map<StyleSheet, ReturnType<typeof usesActive>>();
+  /** What each sheet in play asks about each state: the uses above are all of them together. */
+  private readonly usesBySheet = new Map<StyleSheet, SheetStates>();
 
-  /** Note what a sheet in play asks about a pressed element. See `markActive`. */
+  /** Note what a sheet in play asks about a pressed, hovered or focused-within element. */
   private watchActive(sheet: StyleSheet | null | undefined): void {
     // Asked for every element a component's sheet is given to: noted once a sheet.
-    if (!sheet || this.activeBySheet.has(sheet)) return;
-    const use = usesActive(sheet);
-    this.activeBySheet.set(sheet, use);
-    if (!use.own && !use.elsewhere.length) return;
+    if (!sheet || this.usesBySheet.has(sheet)) return;
+    const uses: SheetStates = {
+      active: usesState(sheet, 'active'),
+      hover: usesState(sheet, 'hover'),
+      focusWithin: usesState(sheet, 'focus-within'),
+    };
+    this.usesBySheet.set(sheet, uses);
+    if (!inPlay(uses.active) && !inPlay(uses.hover) && !inPlay(uses.focusWithin)) return;
     this.countActive();
+    if (uses.hover.asked.length) this.markHoverable();
     if (this.styles.tracksHas) return;
-    // What a pressed element is compared with is the rules it matched, which no cache kept until
-    // a sheet asked. Nothing is resolved yet when the sheet is the one the engine was made with.
+    // What an element in a state is compared with is the rules it matched, which no cache kept
+    // until a sheet asked. Nothing is resolved yet when the sheet is the one the engine was made
+    // with.
     this.styles.tracksHas = true;
     if (!this.root) return;
     this.root.styleDirty = true;
@@ -7627,17 +7790,32 @@ export class Engine implements HostEngine {
 
   /** A sheet has left play, by a hot swap or by being removed: what it asked goes with it. */
   private unwatchActive(sheet: StyleSheet): void {
-    if (!this.activeBySheet.delete(sheet)) return;
+    const uses = this.usesBySheet.get(sheet);
+    if (!uses) return;
+    this.usesBySheet.delete(sheet);
     this.countActive();
     this.trackMatched();
+    if (uses.hover.asked.length) this.markHoverable();
   }
 
   private countActive(): void {
-    const all = [...this.activeBySheet.values()];
-    this.activeUse = {
-      own: all.some((use) => use.own),
-      elsewhere: all.flatMap((use) => use.elsewhere),
-    };
+    const all = [...this.usesBySheet.values()];
+    const merge = (state: keyof SheetStates): StateUse => ({
+      own: all.some((uses) => uses[state].own),
+      elsewhere: all.flatMap((uses) => uses[state].elsewhere),
+      asked: all.flatMap((uses) => uses[state].asked),
+    });
+    this.activeUse = merge('active');
+    this.hoverUse = merge('hover');
+    this.focusWithinUse = merge('focusWithin');
+    const byClass = new Map<string, Compound[]>();
+    const any: Compound[] = [];
+    for (const compound of this.hoverUse.asked) {
+      const first = compound.classes[0];
+      if (first === undefined) any.push(compound);
+      else byClass.set(first, [...(byClass.get(first) ?? []), compound]);
+    }
+    this.hoverIndex = { byClass, any };
   }
 
   /**
@@ -7650,11 +7828,122 @@ export class Engine implements HostEngine {
    * is nothing to match.
    */
   private markActive(node: EngineNode): void {
-    const { own, elsewhere } = this.activeUse;
+    this.markState(node, this.activeUse);
+  }
+
+  /** `markActive` for any state, by what the sheets in play ask about it. */
+  private markState(node: EngineNode, use: StateUse): void {
+    const { own, elsewhere } = use;
     if (!own && !elsewhere.length) return;
     if (elsewhere.some((compound) => couldBe(compound, node))) return this.markProps(node);
     node.stateDirty = true;
     this.markPath(node.parent ?? node);
+  }
+
+  /** The nodes the pointer is over, to clear whatever happens to the tree meanwhile. */
+  private readonly hoveredNodes = new Set<EngineNode>();
+
+  /**
+   * The compounds that ask about `:hover`, by the first class each names, and those that name
+   * none. Asked of every element each time it resolves, so a node is tested only against the
+   * compounds one of its classes could start.
+   */
+  private hoverIndex: { readonly byClass: Map<string, Compound[]>; readonly any: Compound[] } = {
+    byClass: new Map(),
+    any: [],
+  };
+
+  /** Whether a `:hover` rule could match `node`, so that native is to tell it of the pointer. */
+  private hoverable(node: EngineNode): boolean {
+    const { byClass, any } = this.hoverIndex;
+    if (any.some((compound) => couldBe(compound, node))) return true;
+    if (!node.classes) return false;
+    for (const name of node.classes) {
+      if (byClass.get(name)?.some((compound) => couldBe(compound, node))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * `:hover` from the pointer events of a view that opted in. A finger is no hover: with pointer
+   * events on, a touch enters what it lands on and leaves as it lifts, so neither is heard. Only
+   * on a view a rule could match, so the state is never left on one native stopped telling of.
+   */
+  private trackHover(target: EngineNode | null, topLevelType: string, nativeEvent: unknown): void {
+    if (!target || !this.hoverUse.asked.length) return;
+    const entered = topLevelType === 'topPointerEnter';
+    if (!entered && topLevelType !== 'topPointerLeave') return;
+    if (isTouchPointer({ nativeEvent }) || !this.hoverable(target)) return;
+    if (this.setHovered(target, entered)) this.commit();
+  }
+
+  private setHovered(node: EngineNode, hovered: boolean): boolean {
+    if ((node.hovered === true) === hovered) return false;
+    node.hovered = hovered || undefined;
+    if (hovered) this.hoveredNodes.add(node);
+    else this.hoveredNodes.delete(node);
+    this.markState(node, this.hoverUse);
+    return true;
+  }
+
+  /**
+   * The `:hover` rules in play changed: commit the pointer opt-in again on each view whose answer
+   * moved, and forget the hover of one no rule can match now, as native stops telling it of the
+   * pointer.
+   */
+  private markHoverable(): void {
+    if (!this.root) return;
+    const walk = (node: EngineNode): void => {
+      if (node.nodeKind === 'element') {
+        const could = this.hoverable(node);
+        const committed = node.committed?.props['onPointerEnter'] === true;
+        if (node.committed && committed !== (could || node.props['onPointerEnter'] === true)) {
+          this.markProps(node, false);
+        }
+        if (!could && node.hovered) this.setHovered(node, false);
+      }
+      for (const child of node.childList) walk(child);
+    };
+    walk(this.root);
+  }
+
+  /** Commit the pointer opt-in on a view a `:hover` rule could match. See `trackHover`. */
+  private optInHover(node: EngineNode, props: Record<string, unknown>): void {
+    if (this.hoverable(node)) {
+      props['onPointerEnter'] = true;
+      props['onPointerLeave'] = true;
+    } else if (node.hovered) {
+      // Its classes moved off every rule: native will not say when the pointer leaves.
+      node.hovered = undefined;
+      this.hoveredNodes.delete(node);
+    }
+  }
+
+  /** Hovered nodes whose views were forgotten, as one hidden with `display: none` is. */
+  private readonly hoverForgotten = new Set<EngineNode>();
+
+  /**
+   * Forget the hover of each node whose view went, once the commit that let it go is done, so it is
+   * not hovered when it is made again and native says nothing of a pointer over it.
+   */
+  private unhoverForgotten(): void {
+    if (!this.hoverForgotten.size) return;
+    let moved = false;
+    for (const node of this.hoverForgotten) moved = this.setHovered(node, false) || moved;
+    this.hoverForgotten.clear();
+    if (moved) this.commit();
+  }
+
+  /** A hovered node losing its view, which native has none left to say the pointer left. */
+  private noteHoverForgotten(node: EngineNode): void {
+    if (node.hovered) this.hoverForgotten.add(node);
+  }
+
+  /** Hovered nodes out of the tree: native has no view to say the pointer left. */
+  private dropDetachedHover(): void {
+    for (const node of this.hoveredNodes) {
+      if (this.topOf(node) !== this.root) this.setHovered(node, false);
+    }
   }
 
   /**
@@ -7681,6 +7970,7 @@ export class Engine implements HostEngine {
     this.watchGenerated(sheet);
     this.markPath(this.root);
     this.sheetsAdded.push(sheet);
+    this.sharedChanged({ kind: 'sheet', sheet, replacing });
     return true;
   }
 
@@ -7720,7 +8010,61 @@ export class Engine implements HostEngine {
     if (!this.styles.removeGlobalSheet(sheet)) return false;
     this.sheetReplaced(sheet, null);
     this.markPath(this.root);
+    this.sharedChanged({ kind: 'sheet', sheet: null, replacing: sheet });
     return true;
+  }
+
+  /** The global sheets added since the engine was made and not removed, in order. */
+  get globalSheetsAdded(): readonly StyleSheet[] {
+    return this.styles.sheetsAdded;
+  }
+
+  /** The custom properties the host has supplied, which `updateTokens` adds to. */
+  get tokens(): Readonly<Record<string, TokenValue>> {
+    return this.styles.rootTokens;
+  }
+
+  private readonly sharedWatchers = new Set<(change: SharedChange) => void>();
+
+  /**
+   * Calls `listener` after each change to what a platform with several surfaces keeps the same
+   * on all of them: a global sheet added, replaced or removed, and tokens updated. The engine of
+   * a surface that follows this one applies the change to itself.
+   */
+  watchShared(listener: (change: SharedChange) => void): () => void {
+    this.sharedWatchers.add(listener);
+    return () => this.sharedWatchers.delete(listener);
+  }
+
+  /** The changes still to reach every follower while one is being handed out; null when none is. */
+  private sharedQueue: SharedChange[] | null = null;
+
+  private sharedChanged(change: SharedChange): void {
+    // A follower that changes this engine as it hears a change (a token watcher setting the token
+    // again) waits its turn: handed out at once, it would reach the followers after it before the
+    // change it answered, and they would end on the older one.
+    if (this.sharedQueue) {
+      // A copy of a token record: the caller's patch is still its own once its update returns.
+      this.sharedQueue.push(
+        change.kind === 'tokens' ? { ...change, tokens: { ...change.tokens } } : change,
+      );
+      return;
+    }
+    const queue = (this.sharedQueue = [change]);
+    try {
+      for (let at = 0; at < queue.length; at++) {
+        // One follower that throws stops neither the rest nor this engine's own commit after them.
+        for (const watcher of this.sharedWatchers) {
+          try {
+            watcher(queue[at]!);
+          } catch (error) {
+            this.reportEventError(error, 'shared');
+          }
+        }
+      }
+    } finally {
+      this.sharedQueue = null;
+    }
   }
 
   updateTokens(next: Readonly<Record<string, TokenValue>>): void {
@@ -7728,6 +8072,9 @@ export class Engine implements HostEngine {
     this.want(tokensAsk(next));
     this.root.subtreeDirty = true;
     this.layoutStale = true;
+    // Before the commit, whose token watchers can update the tokens again: those who follow hear
+    // each update in the order it was made, and end at the last.
+    this.sharedChanged({ kind: 'tokens', tokens: next });
     this.commit();
   }
 
@@ -8564,8 +8911,20 @@ export class Engine implements HostEngine {
         this.markProps(node, false);
       }
     }
-    if (this.focusedNode && this.topOf(this.focusedNode) !== this.root) this.dropFocus();
+    this.settleFocus();
     this.dropDetachedPress();
+    if (this.hoveredNodes.size) this.dropDetachedHover();
+  }
+
+  /**
+   * The focused node after a removal: forgotten if it left the tree, and if it only moved, focused
+   * still, with `:focus-within` on its new ancestors rather than the ones it left.
+   */
+  private settleFocus(): void {
+    const node = this.focusedNode;
+    if (!node) return;
+    if (this.topOf(node) !== this.root) this.dropFocus();
+    else this.setFocusWithin(node);
   }
 
   /** A pressed node out of the tree gets no release: native has no view to end the touch on. */
@@ -8583,8 +8942,10 @@ export class Engine implements HostEngine {
   private dropFocus(): void {
     const node = this.focusedNode!;
     node.focused = false;
+    node.focusVisible = undefined;
     this.markProps(node);
     this.focusedNode = null;
+    this.setFocusWithin(null);
   }
 
   /** Forget the committed views of each node removed since the last commit that is still out. */
@@ -8782,6 +9143,42 @@ export class Engine implements HostEngine {
     // another, `[data-on] ~ .x`: a point of a chart set as a finger moves leaves those after it.
     this.markProps(node, read || heirs, this.styles.readsBeside(key));
     if (SIZES_A_RUN.has(key)) this.markParagraph(node);
+    if (node.propWatches !== undefined) this.reportProp(node, key);
+  }
+
+  /**
+   * Call `listener` with the prop's new value each time `setProp` changes it on `node`, taking it
+   * away included: what follows an app's own `nativeID`, which a directive on the element names
+   * the view by. The function returned stops it.
+   */
+  watchProp(node: EngineNode, key: string, listener: (value: unknown) => void): () => void {
+    const watches = (node.propWatches ??= new Map());
+    let heard = watches.get(key);
+    if (!heard) watches.set(key, (heard = new Set()));
+    heard.add(listener);
+    let stopped = false;
+    return () => {
+      // Once: a second call would otherwise take away a set a later watcher made for the key.
+      if (stopped) return;
+      stopped = true;
+      heard.delete(listener);
+      if (heard.size === 0) watches.delete(key);
+      if (watches.size === 0) delete node.propWatches;
+    };
+  }
+
+  private reportProp(node: EngineNode, key: string): void {
+    const heard = node.propWatches?.get(key);
+    if (!heard) return;
+    const value = node.props[key];
+    // One listener that throws stops neither the rest nor the write.
+    for (const listener of [...heard]) {
+      try {
+        listener(value);
+      } catch (error) {
+        this.reportEventError(error, 'prop');
+      }
+    }
   }
 
   /**
@@ -9188,8 +9585,12 @@ export class Engine implements HostEngine {
    * stop once none does. A sheet that asks about a place in a child list is never unset.
    */
   private trackMatched(): void {
-    const { own, elsewhere } = this.activeUse;
-    this.styles.tracksHas = this.hasSheets || this.structuralSheets || own || elsewhere.length > 0;
+    this.styles.tracksHas =
+      this.hasSheets ||
+      this.structuralSheets ||
+      inPlay(this.activeUse) ||
+      inPlay(this.hoverUse) ||
+      inPlay(this.focusWithinUse);
   }
 
   /**
@@ -9608,6 +10009,7 @@ export class Engine implements HostEngine {
     if (facesAdded) this.rematchFonts();
     this.commitHandedOn();
     this.blurHidden();
+    this.unhoverForgotten();
     return true;
   }
 
@@ -12621,6 +13023,7 @@ export class Engine implements HostEngine {
     hiddenOutOfFlow(merged);
     delete merged['touchAction'];
     if (this.responders.has(node)) stillTouched(merged);
+    if (this.hoverUse.asked.length) this.optInHover(node, merged);
     // Each read here, so asked for as a layout of CSS's is: see `LAID_OUT_HERE`.
     if (this.asked & CSS_LAYOUT) seenByCss(merged);
     this.heldFor(node, merged);
@@ -13951,6 +14354,10 @@ export class Engine implements HostEngine {
     const inScript = [...state.values()].some(
       (eased) => !eased.done && !eased.native && !eased.laid,
     );
+    // A layout animation ends at its last frame when a later commit updates the view it moves,
+    // and one eased here commits the view every frame: a box whose colour is eased here has its
+    // size and place eased here too.
+    if (inScript) this.easeLaidHere(node, state, props, now);
     if (!inScript) this.running.delete(node);
     // As Animated does: Fabric flattens a view that only lays out, and then there is no native
     // view for a transition to move.
@@ -14136,6 +14543,25 @@ export class Engine implements HostEngine {
     this.flushTransitionEvents();
     // And what a listener did, taking away an element that has left, is committed.
     if (this.pending) this.commit();
+  }
+
+  /** Take back to ease from here each of the node's transitions native was to lay out. */
+  private easeLaidHere(
+    node: EngineNode,
+    state: Map<string, Transition>,
+    props: Record<string, unknown>,
+    now: number,
+  ): void {
+    let took = false;
+    for (const [key, eased] of state) {
+      if (!eased.laid || eased.done) continue;
+      const progress = Math.min(1, Math.max(0, (now - eased.start) / eased.duration));
+      eased.current = interpolate(eased.from, eased.to, bezier(eased.easing, progress));
+      eased.laid = undefined;
+      props[key] = eased.current;
+      took = true;
+    }
+    if (took) this.laying = this.laying.filter((one) => one.node !== node);
   }
 
   /**
@@ -15879,6 +16305,7 @@ export class Engine implements HostEngine {
    * for hoisted names go too: they are children of the native view it is losing.
    */
   private forgetCommitted(node: EngineNode): void {
+    this.noteHoverForgotten(node);
     node.committed = null;
     node.committedUnder = null;
     // Another view, with another tag, which no graph has set anything on.
@@ -16589,12 +17016,26 @@ export class Engine implements HostEngine {
 
   // --- events -----------------------------------------------------------
 
+  /**
+   * Through the runtime's one dispatcher, which every surface shares: Fabric keeps a single
+   * handler, and a second engine's would take the first one's events. See `event-dispatcher.ts`.
+   */
   private registerEventHandler(): void {
-    if (this.eventsRegistered || !this.fabric.registerEventHandler) return;
+    if (this.eventsRegistered) return;
     this.eventsRegistered = true;
-    this.fabric.registerEventHandler((instanceHandle, topLevelType, nativeEvent) =>
-      this.dispatchEvent(instanceHandle, topLevelType, nativeEvent),
-    );
+    this.leave = joinEvents(this.fabric, this);
+  }
+
+  private leave: (() => void) | null = null;
+
+  /**
+   * Stop taking events, as the surface goes: a closed window's engine is told nothing more, and
+   * the dispatcher lets go of it. It takes them again if a listener is added after.
+   */
+  leaveEvents(): void {
+    this.leave?.();
+    this.leave = null;
+    this.eventsRegistered = false;
   }
 
   /**
@@ -16645,7 +17086,8 @@ export class Engine implements HostEngine {
       }
       this.holdSwipe(target, topLevelType, nativeEvent);
       this.trackFinger(target, topLevelType, nativeEvent);
-      this.trackFocus(target, topLevelType);
+      this.trackFocus(target, topLevelType, nativeEvent);
+      this.trackHover(target, topLevelType, nativeEvent);
       if (target) this.cancelPressForScroll(target, topLevelType, event as ResponderEvent);
       if (target) this.runResponder(target, topLevelType, event as ResponderEvent);
     } catch (error) {
@@ -16892,8 +17334,8 @@ export class Engine implements HostEngine {
    * `:focus` follows the native events rather than being inferred from a tap, so it is right for a
    * field focused programmatically or by the keyboard's next-field button.
    */
-  private trackFocus(target: EngineNode | null, topLevelType: string): void {
-    if (topLevelType === 'topFocus') this.setFocused(target);
+  private trackFocus(target: EngineNode | null, topLevelType: string, nativeEvent: unknown): void {
+    if (topLevelType === 'topFocus') this.setFocused(target, focusVisible(nativeEvent));
     else if (topLevelType === 'topBlur' && this.focusedNode === target) this.setFocused(null);
   }
 

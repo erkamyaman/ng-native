@@ -7,6 +7,8 @@ summary: Impact, notification and selection feedback, fired and forgotten.
 
 `Haptics` fires haptic feedback: a collision, a success or failure, a selection change.
 
+<!-- platforms: Haptics -->
+
 It talks to Expo's native module directly rather than through `expo-haptics`'s own JavaScript,
 which adds exactly one thing on top: a throw when the module is missing. Asking for it optionally
 answers the same question without the throw, and sidesteps the enum its functions take. The
@@ -67,9 +69,10 @@ rebuilt since - leaves the service made, so injecting it does not throw. A call,
 value only the module knows, throws a `MissingModuleError`. Its message names the module and the
 commands that fix it; see
 [Using a module](/packages/expo/using-a-module#what-happens-without-the-module-installed).
-`available` is `false`.
+`available()` is `false`.
 
-On the web, and in a test that provides no fake, every method does nothing. `available` is `false`.
+On the web, and in a test that provides no fake, every method does nothing, and `available()` is
+`false`.
 
 ## Reference
 
