@@ -22,6 +22,7 @@ import { DestroyRef, InjectionToken, Service, inject, signal, type Signal } from
 import { onWindowFront, sharedBySource } from '@ng-native/device';
 import { currentPlatform, expoModule, present, asked } from './native.ts';
 import { Permission, UNAVAILABLE } from './permissions.ts';
+import { desktopHost } from './desktop-host.ts';
 
 type Expo = typeof import('expo-screen-capture');
 
@@ -59,6 +60,7 @@ export class ScreenCapture {
         const expo = expoModule(
           'expo-screen-capture',
           () => require('expo-screen-capture') as Expo,
+          { desktop: desktopScreenCapture },
         );
         const loaded = present(expo);
         if (!loaded) return expo;
@@ -192,4 +194,42 @@ class CaptureWindow {
   leave(owner: object): void {
     for (const name of [...this.holders.keys()]) void this.allow(owner, name).catch(() => {});
   }
+}
+
+/**
+ * expo-screen-capture over the desktop host's `NgNativeScreenCapture`, which keeps every window of
+ * the app out of capture while a key is held. macOS tells an app of no screenshot, so the listener
+ * never fires and `screenshots` stays at zero. Null where the host has no such module.
+ */
+function desktopScreenCapture(): NativeScreenCapture | null {
+  const host =
+    desktopHost<Record<string, (...args: unknown[]) => Promise<never> | undefined>>(
+      'NgNativeScreenCapture',
+    );
+  if (!host) return null;
+  const native = host.module;
+  // One per host module, so every app shares the keys held: the host's are one set for the app.
+  let adapter = desktopAdapters.get(native);
+  if (!adapter) desktopAdapters.set(native, (adapter = desktopAdapter(native)));
+  return adapter;
+}
+
+const desktopAdapters = new WeakMap<object, NativeScreenCapture>();
+
+function desktopAdapter(
+  native: Record<string, (...args: unknown[]) => Promise<never> | undefined>,
+): NativeScreenCapture {
+  // A host built without a method is inert: nothing kept out of capture, and no permission.
+  const call = async (name: string, ...args: unknown[]) => native[name]?.(...args);
+  return {
+    isAvailableAsync: async () => (await call('isAvailableAsync')) ?? false,
+    preventScreenCaptureAsync: (key) => call('preventScreenCaptureAsync', key ?? null),
+    allowScreenCaptureAsync: (key) => call('allowScreenCaptureAsync', key ?? null),
+    enableAppSwitcherProtectionAsync: () => call('enableAppSwitcherProtectionAsync'),
+    disableAppSwitcherProtectionAsync: () => call('disableAppSwitcherProtectionAsync'),
+    addScreenshotListener: () => ({ remove() {} }) as never,
+    getPermissionsAsync: async () => (await call('getPermissionsAsync')) ?? (UNAVAILABLE as never),
+    requestPermissionsAsync: async () =>
+      (await call('requestPermissionsAsync')) ?? (UNAVAILABLE as never),
+  };
 }
