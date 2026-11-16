@@ -61,11 +61,47 @@ for every project that has one. A plain `ng build` and `ng serve` still mean the
 
 `ng test native` does not use `@angular/build:unit-test`. That builder compiles tests with the web
 build and runs them against a DOM, and a native test renders onto the fake Fabric instead,
-compiled by the same transform Metro uses.
+compiled by the same transform Metro uses. The Vitest builder's options are `watch`, `filter`
+(only the test files whose path contains it) and `project` (only the Vitest project of that name).
 
 `ng run native:typecheck` loads `metro.config.js` before `ngc`, as the template's `typecheck`
 script does, so that once [Tailwind](/packages/tailwind) is added, the sheet `src/main.ts` imports
 exists on a fresh checkout. A project without a Metro config runs `ngc` alone.
+
+## macOS
+
+```sh
+ng generate @ng-native/schematics:desktop native
+```
+
+This adds macOS to a native app: `@ng-native/desktop` in the root `package.json`, `macos` in
+`expo.platforms` with `experiments.outOfTreePlatforms: true` (Expo drops `macos` from every bundle
+and export without it, and says nothing), `@ng-native/desktop` among the config plugins in
+`app.json`, `/dist/macos` in the project's `.gitignore`, and two targets on the `expo` builder:
+
+| Command                 | What runs                                                                 |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `ng run native:macos`   | `ng-native-desktop run`: builds the desktop host and opens the app in it. |
+| `ng run native:package` | `ng-native-desktop package`: the `.app`, `.dmg` or Mac App Store package. |
+
+The Expo CLI has no `run:macos`, so the builder runs `ng-native-desktop` from
+[`@ng-native/desktop`](/packages/desktop) for these two. `macos` loads the app from the dev server
+`ng serve native` runs, and takes `--port` for another one. `package` makes the `.app`; another
+format goes to it through the target's `args` in `angular.json`, for instance as a configuration
+that `ng run native:package:dmg` runs:
+
+```json
+"package": {
+  "builder": "@ng-native/schematics:expo",
+  "options": { "command": "package" },
+  "configurations": {
+    "dmg": { "args": ["--format", "dmg"] }
+  }
+}
+```
+
+Running the schematic again changes nothing, and it stops with an error on a project with no
+`app.json`, which is not an Angular Native app.
 
 ## ng generate
 
@@ -93,12 +129,25 @@ ng generate @ng-native/schematics:component profile-card --project native
 ## Options
 
 `ng add` takes `--name` (the project name and Expo slug, `native` by default), `--directory`
-(`projects/<name>` by default), `--bundleIdentifier`, `--linter` and `--skip-install`.
+(`projects/<name>` by default), `--bundleIdentifier`, `--linter`, `--desktop-only` and
+`--skip-install`.
 `--linter=eslint` adds an `eslint.config.mjs` with
 [`@ng-native/eslint-plugin`](/packages/eslint-plugin)'s recommended rules, its four packages and a
 `lint` target on angular-eslint's builder; `--linter=none`, the default, adds none of them.
 `ng generate @ng-native/schematics:application mobile` adds another native app to the same
 workspace, and takes `--prefix` for its components' selectors as well.
+
+`--desktop-only` makes a macOS-only app from the desktop template (`@ng-native/template-desktop`):
+`macos` alone in `expo.platforms`, its sidebar and menu bar starter screen, `@ng-native/desktop`
+and `@ng-native/expo` in place of the phone's status bar and system UI packages, and `macos` and
+`package` targets (see [macOS](#macos)) in place of `run-ios` and `run-android`. `ng add` and
+`ng generate @ng-native/schematics:application` both take it. Its `vitest.config.mts` has two
+projects: `node-macos`, in Node, which its `test` target runs alone through the Vitest builder's
+`project` option (`"options": { "project": "node-macos" }`), and `macos`, which runs
+`src/**/*.device.ts` inside the app and opens it. `src/app/app.device.ts` is the example, and its
+`metro.config.js` adds the in-app tests only when Metro starts with `EXPO_PUBLIC_DEVICE_TESTS=1`:
+run `EXPO_PUBLIC_DEVICE_TESTS=1 npx expo start` in the project's folder, then
+`npx vitest --project macos` there.
 
 `--bundleIdentifier` is the iOS bundle identifier and Android package in `app.json`. It defaults to
 `com.<scope>.<name>`, from the npm scope of the root `package.json`'s name and the app's name with
