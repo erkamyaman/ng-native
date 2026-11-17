@@ -661,6 +661,8 @@ const ENGINE_PROPS = new Set<string>([
   'disabled',
   'intrinsicSize',
   'styleOverride',
+  // A component's name in interaction reports: see `INTERACTION_NAME`.
+  'interactionName',
   // A text field's latest event count, committed as `mostRecentEventCount`: see `echoedEventCount`.
   'latestEventCount',
   ...Object.values(EVENT_OPT_IN_PROPS),
@@ -7235,8 +7237,20 @@ const FIELD_SIZE = 'size';
  */
 const STYLE_OVERRIDE = 'styleOverride';
 
+/**
+ * The name a component's host gives it in interaction reports, or `''` to be left out of them:
+ * `host: { interactionName: 'Card' }`, or the attribute where the component is used. Read only
+ * when a report is made, and it never reaches native.
+ */
+export const INTERACTION_NAME = 'interactionName';
+
 /** The props that are the engine's to read, and no prop of any native view. */
-const ENGINES_OWN: ReadonlySet<string> = new Set(['style', INTRINSIC_SIZE, STYLE_OVERRIDE]);
+const ENGINES_OWN: ReadonlySet<string> = new Set([
+  'style',
+  INTRINSIC_SIZE,
+  STYLE_OVERRIDE,
+  INTERACTION_NAME,
+]);
 
 interface IntrinsicSize {
   readonly width: number;
