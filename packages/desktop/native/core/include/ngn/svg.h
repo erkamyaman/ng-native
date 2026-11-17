@@ -6,9 +6,9 @@
 // backend's view for the RNSVGSvgView draws it by calling drawSvg with an SvgCanvas over its own
 // graphics context. Everything SVG means (inheritance through `propList`, `currentColor`,
 // lengths and percentages, the viewBox, path data and arcs, gradients and their units, clip
-// paths, masks, `use` and `symbol`, markers, patterns and filters) is decided here; the canvas only
-// draws paths, gradients, images and runs of text, tiles a pattern's tile, and runs a filter's
-// steps over pixels with runSvgFilter.
+// paths, masks, `use` and `symbol`, markers, patterns and filters, text anchors and text along a
+// path) is decided here; the canvas only measures and draws runs of text, draws paths, gradients
+// and images, tiles a pattern's tile, and runs a filter's steps over pixels with runSvgFilter.
 #pragma once
 
 #include "ngn/view-tree.h"
@@ -114,6 +114,7 @@ enum class SvgKind {
   Image,
   Text,
   TSpan,
+  TextPath,
   Marker,
   Pattern,
   Filter,
@@ -200,11 +201,16 @@ struct SvgElement {
 
   std::string uri; // an image's source
 
-  // Text: a span's characters, the font, and the positions written on the element.
+  // Text: a span's characters, the font, its text-anchor ("start", "middle" or "end"; empty
+  // inherits), and the positions written on the element. A textPath's path is `href`, how far
+  // along it the text starts is the length "startOffset", and `side` "right" sets it along the
+  // path reversed.
   std::string content;
   SvgLength fontSize;
   std::string fontFamily;
   std::string fontWeight;
+  std::string textAnchor;
+  std::string side;
   std::vector<SvgLength> xs, ys, dxs, dys;
 
   bool operator==(const SvgElement &) const = default;
@@ -266,6 +272,16 @@ struct SvgMarkerVertex {
 };
 // The vertices a path's markers are drawn at, in order: the first is the start, the last the end.
 std::vector<SvgMarkerVertex> svgMarkerVertices(const SvgPath &path);
+
+// A glyph as text along a path draws it: what draws as one (a grapheme cluster, or the clusters a
+// ligature joins), where it starts in its shaped run and its advance there, kerning included, and
+// the canvas's own record of the glyphs the run shaped for it, which glyphCluster draws.
+struct SvgGlyphCluster {
+  std::string text;
+  double x{0};
+  double advance{0};
+  std::shared_ptr<const void> glyphs;
+};
 
 // A pattern's tile: what one tile covers in the pattern's own space, and from that space to the
 // user space the pattern fills.
@@ -347,15 +363,24 @@ class SvgCanvas {
   virtual void beginFilter(const SvgFilter &filter) = 0;
   virtual void endFilter() = 0;
   virtual void image(const std::string &uri, const SvgRect &rect, const std::string &align, int meetOrSlice, double opacity) = 0;
-  // Draws `text` with its baseline's start at (x, y) and answers its advance.
-  virtual double text(
+  // The advance of `text` in the font, as text() draws it.
+  virtual double measureText(const std::string &text, double fontSize, const std::string &fontFamily, const std::string &fontWeight) = 0;
+  // `text` shaped in the font as one run, split into the glyphs text along a path draws one at a
+  // time, in the order of the text.
+  virtual std::vector<SvgGlyphCluster> glyphClusters(
+      const std::string &text, double fontSize, const std::string &fontFamily, const std::string &fontWeight) = 0;
+  // Draws a cluster's glyphs as its run shaped them, contextual forms kept, with the cluster's start
+  // on the baseline at (x, y).
+  virtual void glyphCluster(const SvgGlyphCluster &cluster, double x, double y, const SvgPaint &fill) = 0;
+  // Draws `text` with its baseline's start at (x, y).
+  virtual void text(
       const std::string &text,
       double x,
       double y,
       double fontSize,
       const std::string &fontFamily,
       const std::string &fontWeight,
-      const SvgPaint *fill) = 0;
+      const SvgPaint &fill) = 0;
 };
 
 // Draws `document` into a viewport of `width` by `height`, its origin at the canvas's.
