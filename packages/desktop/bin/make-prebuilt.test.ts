@@ -80,6 +80,17 @@ describe('make-prebuilt.mjs', () => {
     const source = readFileSync(path.join(scripts, 'make-prebuilt.mjs'), 'utf8');
     assert.match(source, /flavour: \{ type: 'string', default: 'release' \}/);
     assert.match(source, /flavour === 'release' \? '--release' : '--no-tests'/);
+    // Stripped before packing, so the debug host is built without debug info.
+    assert.match(source, /flavour === 'release' \? \[\] : \['--no-debug-info'\]/);
+    const build = readFileSync(path.join(scripts, 'build.sh'), 'utf8');
+    assert.match(build, /--no-debug-info\) debug_info=0/);
+    // Set with debug info too, so a build after one without it in the same directory gets it back.
+    assert.match(
+      build,
+      /flags="-O2 -g -DNDEBUG"\n\s*\[ "\$debug_info" = 0 \] && flags="-O2 -DNDEBUG"/,
+    );
+    assert.match(build, /-DCMAKE_\$\{lang\}_FLAGS_RELWITHDEBINFO=\$flags/);
+    assert.match(build, /\$\{flags_args\[@\]\+"\$\{flags_args\[@\]\}"\}/);
     assert.match(source, /prebuiltName\(desktopVersion, reactNative, flavour\)/);
     assert.match(source, /const host = \{\s*reactNative,\s*flavour,/);
   });
