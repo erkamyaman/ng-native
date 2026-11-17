@@ -37,14 +37,41 @@ export class Region {}
 })
 export class ObservedCard {}
 
+/** Alternatives on one element name: named by the one whose attribute the host has. */
+@Component({
+  selector: 'section[x-primary], section[x-secondary]',
+  imports: [Pressable, Text],
+  template: `<pressable testID="panel-action"><text>panel-action</text></pressable>`,
+})
+export class Panel {}
+
+/** Alternatives its host is ruled out of by a :not(): named by the one it matches. */
+@Component({
+  selector: 'header:not(.x-off), header:not(header[x-mute]), header[x-on]',
+  imports: [Pressable, Text],
+  template: `<pressable testID="banner-action"><text>banner-action</text></pressable>`,
+})
+export class Banner {}
+
+/** Alternatives of classes alone: named by the one whose class the host has. */
+@Component({
+  selector: '.x-first-badge, .x-second-badge',
+  imports: [Pressable, Text],
+  template: `<pressable testID="badge-action"><text>badge-action</text></pressable>`,
+})
+export class Badge {}
+
 @Component({
   selector: 'app-root',
-  imports: [ObservedCard, Pressable, Text],
+  imports: [Badge, Banner, ObservedCard, Panel, Pressable, Text],
   template: `
     <pressable testID="save"><text>save</text></pressable>
     <x-observed-card>
       <pressable testID="projected"><text>projected</text></pressable>
     </x-observed-card>
+    <section x-secondary></section>
+    <section class="x-second-badge"></section>
+    <header class="x-off" x-mute x-on></header>
   `,
 })
 export class InteractionObserverApp {}

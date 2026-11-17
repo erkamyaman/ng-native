@@ -1,4 +1,4 @@
-import { Component, Directive, ElementRef, viewChild } from '@angular/core';
+import { Component, Directive, ElementRef, signal, viewChild } from '@angular/core';
 import { PressBehavior, Pressable } from '../../components/src/pressable.ts';
 import { ScrollView } from '../../components/src/scroll-view.ts';
 import { Text } from '../../components/src/text.ts';
@@ -53,15 +53,109 @@ export class ObservedCard {}
 })
 export class TopBar {}
 
+/** A component on a plain element, matched by an attribute: named by its selector. */
+@Component({
+  selector: 'section[x-attribute-card]',
+  imports: [Pressable],
+  template: `<pressable testID="attribute-action" />`,
+})
+export class AttributeCard {}
+
+/** One of several selectors: named by the one for the element it is on. */
+@Component({
+  selector: 'x-tile, article[x-tile].wide',
+  imports: [Pressable],
+  template: `<pressable testID="tile-action" />`,
+})
+export class Tile {}
+
+/** Alternatives on one element name: named by the one whose attribute the host has. */
+@Component({
+  selector: 'section[x-primary], section[x-secondary]:not(.x-off)',
+  imports: [Pressable],
+  template: `<pressable testID="panel-action" />`,
+})
+export class Panel {}
+
+/** Alternatives told apart by an attribute's value: named by the one the host's value matches. */
+@Component({
+  selector: 'aside[x-level=info], aside[x-level=warn]',
+  imports: [Pressable],
+  template: `<pressable testID="level-action" />`,
+})
+export class Level {}
+
+/** Alternatives its host is ruled out of by a :not(): named by the one it matches. */
+@Component({
+  selector: 'header:not(.x-off), header:not(header[x-mute]), header[x-on]',
+  imports: [Pressable],
+  template: `<pressable testID="banner-action" />`,
+})
+export class Banner {}
+
+/** Alternatives of classes alone: named by the one whose class the host has. */
+@Component({
+  selector: '.x-first-badge, .x-second-badge',
+  imports: [Pressable],
+  template: `<pressable testID="badge-action" />`,
+})
+export class Badge {}
+
+/** A pressable inside an iframe, which web-compat keeps a plain view. */
+@Component({
+  selector: 'x-framed-card',
+  imports: [Pressable],
+  template: `<iframe><pressable testID="in-frame" /></iframe>`,
+})
+export class FramedCard {}
+
+/** A note matched by an attribute's value, and not where it is hidden. */
+@Component({
+  selector: 'aside[x-note=warn]:not(.hidden)',
+  imports: [Pressable],
+  template: `<pressable testID="note-action" />`,
+})
+export class Note {}
+
+/** A component on an input, which web-compat makes a plain view while it is a checkbox. */
+@Component({
+  selector: 'input[x-check]',
+  imports: [Pressable],
+  template: `<pressable testID="in-check" />`,
+})
+export class Check {}
+
+/** The framed card, in an app of its own: it is only a known element where web-compat is. */
+@Component({
+  selector: 'x-framed',
+  imports: [Check, FramedCard, Note, View],
+  template: `
+    <view>
+      <x-framed-card />
+      <aside x-note="warn"></aside>
+      <input x-check [type]="checkType()" />
+    </view>
+  `,
+})
+export class FramedFixture {
+  readonly checkType = signal('checkbox');
+}
+
 /** Every kind of touchable, a scroll view and a list, each logging its own presses. */
 @Component({
   selector: 'x-interaction-observer',
   imports: [
+    AttributeCard,
+    Badge,
+    Banner,
+    Level,
     ObservedButton,
     ObservedCard,
+    Panel,
     Pressable,
     ScrollView,
     Text,
+    Tile,
     TopBar,
     TouchableOpacity,
     View,
@@ -99,6 +193,12 @@ export class TopBar {}
       >
       <pressable testID="off" [disabled]="true" (press)="log('off')" />
       <x-observed-card><pressable testID="projected" /></x-observed-card>
+      <section x-attribute-card></section>
+      <article x-tile class="wide"></article>
+      <section x-secondary></section>
+      <aside x-level="warn"></aside>
+      <section class="x-second-badge"></section>
+      <header class="x-off" x-mute x-on></header>
     </scroll-view>
     <x-top-bar />
     <virtual-list testID="rows" [items]="rows" [itemHeight]="20" [style]="{ height: 60 }" />
