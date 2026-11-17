@@ -28,6 +28,8 @@ export interface OsSupportRow {
    * row says `absent`, which `every-service.test.ts` checks call by call.
    */
   readonly inert?: readonly string[];
+  /** The services have no `available()`, such as a view: where absent, the row says only that. */
+  readonly withoutAvailable?: true;
   readonly on: Readonly<Record<SupportOs, string>>;
 }
 
@@ -226,6 +228,89 @@ export const OS_SUPPORT: readonly OsSupportRow[] = [
   expoRow('SplashScreen', 'NgNativeSplashScreen'),
   expoRow('TextRecognition', 'NgNativeTextRecognition', ['yes', 'yes', 'yes', 'absent', 'absent']),
   expoRow('Updates', 'NgNativeUpdates'),
+  expoRow('AddressSearch', 'NgNativeAddressSearch'),
+  expoRow('AppleSignIn', 'NgNativeAppleAuthentication', [
+    'signed with the Sign in with Apple entitlement',
+    'yes',
+    'yes',
+    'absent',
+    'absent',
+  ]),
+  expoRow('Biometrics', 'NgNativeLocalAuthentication'),
+  { ...expoRow('Camera', 'NgNativeCamera'), withoutAvailable: true },
+  {
+    ...expoRow('MapView', 'NgNativeMaps', [
+      'yes',
+      'iPadOS 17 and later, marker taps from 18',
+      'iOS 17 and later, marker taps from 18',
+      'yes',
+      'absent',
+    ]),
+    withoutAvailable: true,
+  },
+  expoRow('LanguageModel', 'NgNativeLocalLlm', [
+    'macOS 26 and later, with Apple Intelligence on',
+    'iPadOS 26 and later, with Apple Intelligence on',
+    'iOS 26 and later, with Apple Intelligence on',
+    'Gemini Nano, on the phones that ship it',
+    'absent',
+  ]),
+  expoRow('ScreenCapture', 'NgNativeScreenCapture', [
+    '`prevent` and `allow`, no screenshot count',
+    'yes',
+    'yes',
+    'yes',
+    'absent',
+  ]),
+  expoRow('StoreReview', 'NgNativeStoreReview', [
+    'yes',
+    'yes',
+    'yes',
+    'with the Play Store',
+    'absent',
+  ]),
+  expoRow('Tracking', 'NgNativeTrackingTransparency'),
+  expoRow('Watch', 'WatchConnectivity', ['absent', 'no watch to pair', 'yes', 'absent', 'absent']),
+  expoRow('Foldable', 'ExpoHinge', [
+    'absent',
+    'when a hinge is reported',
+    'when a hinge is reported',
+    'when a hinge is reported',
+    'absent',
+  ]),
+  row(
+    '`Accelerometer`, `Gyroscope`, `Magnetometer`, `DeviceMotion`, `Barometer`',
+    [],
+    ['absent', 'yes', 'yes', 'yes', 'absent'],
+    {
+      Accelerometer: 'expo-sensors',
+      Gyroscope: 'expo-sensors',
+      Magnetometer: 'expo-sensors',
+      DeviceMotion: 'expo-sensors',
+      Barometer: 'expo-sensors',
+    },
+  ),
+  row('`LightSensor`', [], ['absent', 'absent', 'absent', 'yes', 'absent'], {
+    LightSensor: 'expo-sensors',
+  }),
+  { ...row('`assets()`', [], EXPO_MODULE, { assets: 'NgNativeAsset' }), withoutAvailable: true },
+  {
+    ...row('`database()`', [], ['yes', 'yes', 'yes', 'yes', 'yes'], { database: 'NgNativeSqlite' }),
+    withoutAvailable: true,
+  },
+  {
+    ...row('`videoPlayer()`', [], ['yes', 'yes', 'yes', 'yes', 'yes'], {
+      videoPlayer: 'NgNativeVideo',
+    }),
+    withoutAvailable: true,
+  },
+  {
+    ...row('`audioPlayer()`, `audioRecorder()`', [], ['yes', 'yes', 'yes', 'yes', 'yes'], {
+      audioPlayer: 'NgNativeAudio',
+      audioRecorder: 'NgNativeAudio',
+    }),
+    withoutAvailable: true,
+  },
 ];
 
 /** The row a service's `available()` follows, or undefined where the table has none for it. */
@@ -253,6 +338,12 @@ export function platformsLine(service: string): string | undefined {
     names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
   const parts = [];
   if (present.length) parts.push(`Available on ${list(present)}.`);
-  if (absent.length) parts.push(`Absent on ${list(absent)}, where \`available()\` is false.`);
+  if (absent.length) {
+    parts.push(
+      row.withoutAvailable
+        ? `Absent on ${list(absent)}.`
+        : `Absent on ${list(absent)}, where \`available()\` is false.`,
+    );
+  }
   return `**Platforms.** ${parts.join(' ')}`;
 }
