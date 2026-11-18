@@ -5,20 +5,35 @@
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
 import { createRequire } from 'node:module';
-import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { withAngularNative } = require('@ng-native/metro/config.cjs');
-const { transformAngularWithNgp } = require('@ng-native/metro/angular-transform.cjs') as {
-  transformAngularWithNgp(
-    src: string,
-    filename: string,
-    options: Record<string, unknown>,
-  ): Promise<{ code: string; dependencies: string[] }>;
-};
+const { transformAngularWithNgp, takeResourcesRead } =
+  require('@ng-native/metro/angular-transform.cjs') as {
+    transformAngularWithNgp(
+      src: string,
+      filename: string,
+      options: Record<string, unknown>,
+    ): Promise<{ code: string; dependencies: string[] }>;
+    takeResourcesRead(filename: string): string[];
+  };
 const { closeNgp } = require('@ng-native/metro/ngp-compile.cjs') as { closeNgp(): Promise<void> };
-const { documentOf } = require('@ng-native/metro/tsgo-checker.cjs') as {
+const { documentOf, TsgoChecker } = require('@ng-native/metro/tsgo-checker.cjs') as {
+  TsgoChecker: new (tsconfig: string) => {
+    check(file: string, source: string): Promise<string[]>;
+    exitError?: Error;
+    close(): void;
+  };
   documentOf(
     filePath: string,
     source: string,
@@ -90,6 +105,29 @@ describe("the preset's compilation option", () => {
       assert.notEqual(second, first);
       writeFileSync(path.join(dir, 'tsconfig.json'), '{ "extends": "./base", "files": [] }');
       assert.notEqual(version(), second);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves packages with the conditions of the tsconfig 'ngp' analyzes", () => {
+    const dir = mkdtempSync(path.join(import.meta.dirname, '.ngp-conditions-'));
+    try {
+      writeFileSync(path.join(dir, 'tsconfig.json'), '{}');
+      writeFileSync(
+        path.join(dir, 'tsconfig.app.json'),
+        '{ "compilerOptions": { "customConditions": ["app-source"] } }',
+      );
+      const conditions = (options: object) =>
+        (
+          withAngularNative({ ...base(), projectRoot: dir }, options) as Config & {
+            resolver: { unstable_conditionNames?: string[] };
+          }
+        ).resolver.unstable_conditionNames ?? [];
+      assert.ok(
+        conditions({ compilation: 'ngp', tsconfig: 'tsconfig.app.json' }).includes('app-source'),
+      );
+      assert.ok(!conditions({ tsconfig: 'tsconfig.app.json' }).includes('app-source'));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -176,7 +214,10 @@ describe('the type-check document', () => {
     const document = documentOf('/app/hello.ts', source, tcb);
     assert.equal(document.sourceLineCount, 2);
     assert.ok(document.text.startsWith(source));
-    assert.match(document.text, /import \* as i0 from '\.\/hello';\nfunction _tcb1/);
+    assert.match(
+      document.text,
+      /import \* as __ngni0 from '\.\/hello';\nfunction __ngn_tcb1\(this: __ngni0\.Hello\)/,
+    );
     assert.doesNotMatch(document.text, /unrelated/);
   });
 
@@ -190,12 +231,32 @@ describe('the type-check document', () => {
         "import * as i2 from './missing';\n" +
         'function _tcb1(this: i0.Hello) { /*tcb1*/ }\n';
       const { text } = documentOf(path.join(dir, 'hello.ts'), 'export class Hello {}\n', tcb);
-      assert.match(text, /import \* as i0 from "\.\/hello\.js";/);
-      assert.match(text, /import \* as i1 from '@angular\/core';/);
-      assert.match(text, /import \* as i2 from '\.\/missing';/);
+      assert.match(text, /import \* as __ngni0 from "\.\/hello\.js";/);
+      assert.match(text, /import \* as __ngni1 from '@angular\/core';/);
+      assert.match(text, /import \* as __ngni2 from '\.\/missing';/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('keeps the generated names apart from ones the source declares', () => {
+    const source = "const i0 = 'mine';\nfunction _tcb1() {}\nexport class Hello {}\n";
+    const tcb =
+      "import * as i0 from './hello';\n" + 'function _tcb1(this: i0.Hello) { /*tcb1*/ }\n';
+    const { text } = documentOf('/app/hello.ts', source, tcb);
+    assert.ok(text.startsWith(source));
+    assert.match(text, /function __ngn_tcb1\(this: __ngni0\.Hello\)/);
+    assert.equal(text.match(/function _tcb1\b/g)?.length, 1);
+  });
+
+  it('reads the blocks out of a .tsx file, and never puts the source in twice', () => {
+    const source = 'export const view = <b>hi</b>;\n';
+    const tcb = source + 'function _tcb1(this: unknown) { /*tcb1*/ }\n';
+    const split = documentOf('/app/view.tsx', source, tcb);
+    assert.equal(split.text.match(/<b>hi<\/b>/g)?.length, 1);
+    assert.match(split.text, /function __ngn_tcb1/);
+    const unsplit = documentOf('/app/view.ts', source, tcb);
+    assert.equal(unsplit.text.match(/<b>hi<\/b>/g)?.length, 1);
   });
 
   it('is the source alone for a file with no type-check block', () => {
@@ -271,6 +332,18 @@ describe('a component compiled with NGP', () => {
     const { code } = await compile('hello.ts', true);
     assert.match(code, /ɵɵtextInterpolate1\('goodbye ',/);
     assert.doesNotMatch(code, /ɵɵtextInterpolate1\('hello ',/);
+  });
+
+  it('compiles a template edited with its modification time kept', async () => {
+    const template = path.join(root, 'hello.html');
+    const fixed = new Date('2020-01-01T00:00:00Z');
+    write('hello.html', '<text>aaaa {{ name }}</text>');
+    utimesSync(template, fixed, fixed);
+    await compile('hello.ts', true);
+    write('hello.html', '<text>bbbb {{ name }}</text>');
+    utimesSync(template, fixed, fixed);
+    const { code } = await compile('hello.ts', true);
+    assert.match(code, /ɵɵtextInterpolate1\('bbbb ',/);
   });
 
   it('compiles an edited template again in a release build too', async () => {
@@ -349,7 +422,7 @@ describe('a component compiled with NGP', () => {
         dev,
       });
     await assert.rejects(
-      typed(false),
+      typed(true),
       /typed\.html:2:\d+ - error TS\d+: Property .toFixed. does not exist/,
     );
     write('typed.html', '<view>\n  <text>{{ count.length }}</text>\n</view>\n');
@@ -369,11 +442,25 @@ describe('a component compiled with NGP', () => {
       /plain\.ts:1:14 - error TS2322/,
     );
     const { code } = await transformAngularWithNgp(
-      'export const total: number = 3;\n',
+      'export const total: number = "three";\n',
       'plain.ts',
       { projectRoot: root, platform: 'ios', typeCheck: false },
     );
-    assert.match(code, /total: number = 3/);
+    assert.match(code, /total: number = "three"/);
+  });
+
+  it("marks a type-checked file's relative imports read, so Metro's cache misses when one changes", async () => {
+    write('helper.ts', 'export const one = 1;\n');
+    const src = "import { one } from './helper';\nexport const two: number = one + 1;\n";
+    write('uses-helper.ts', src);
+    await transformAngularWithNgp(src, 'uses-helper.ts', { projectRoot: root, platform: 'ios' });
+    assert.ok(takeResourcesRead('uses-helper.ts').includes(path.join(root, 'helper.ts')));
+    await transformAngularWithNgp(src, 'uses-helper.ts', {
+      projectRoot: root,
+      platform: 'ios',
+      typeCheck: false,
+    });
+    assert.deepEqual(takeResourcesRead('uses-helper.ts'), []);
   });
 
   it("compiles with the tsconfig's angularCompilerOptions, not NGP's defaults", async () => {
@@ -409,5 +496,103 @@ describe('a component compiled with NGP', () => {
   it('fails the build on a template error, naming the file', async () => {
     write('broken.ts', component('broken', "template: '<text>{{ name | missing }}</text>'"));
     await assert.rejects(compile('broken.ts', true), /broken\.ts: .*'missing'/);
+  });
+});
+
+describe('NGP with resources and checkers of its own', () => {
+  const root = mkdtempSync(path.join(import.meta.dirname, '.ngp-own-'));
+  const fake = (name: string, body: string) => {
+    const file = path.join(root, name);
+    writeFileSync(file, `#!/usr/bin/env node\n${body}\n`);
+    chmodSync(file, 0o755);
+    return file;
+  };
+  const env = (name: string, value: string | undefined) => {
+    const before = process.env[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+    return () => {
+      if (before === undefined) delete process.env[name];
+      else process.env[name] = before;
+    };
+  };
+  mkdirSync(path.join(root, 'src'));
+  mkdirSync(path.join(root, 'generated'));
+  writeFileSync(
+    path.join(root, 'tsconfig.json'),
+    JSON.stringify({
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'preserve',
+        moduleResolution: 'bundler',
+        strict: true,
+        skipLibCheck: true,
+        rootDirs: ['src', 'generated'],
+      },
+      include: ['src/*.ts'],
+    }),
+  );
+  writeFileSync(
+    path.join(root, 'src/card.ts'),
+    `import { Component, NO_ERRORS_SCHEMA } from '@angular/core';\n` +
+      `@Component({ selector: 'card', schemas: [NO_ERRORS_SCHEMA], templateUrl: './card.html' })\n` +
+      `export class Card {}\n`,
+  );
+  writeFileSync(path.join(root, 'generated/card.html'), '<text>generated</text>');
+
+  after(async () => {
+    await closeNgp();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reads a template from where NGP resolved it, and imports that file', async () => {
+    const { code, dependencies } = await transformAngularWithNgp(
+      readFileSync(path.join(root, 'src/card.ts'), 'utf8'),
+      'src/card.ts',
+      { projectRoot: root, platform: 'ios', typeCheck: false },
+    );
+    assert.match(code, /ɵɵtext\(\d+,\s*'generated'\)/);
+    assert.deepEqual(dependencies, ['../generated/card.html']);
+    assert.match(code, /import "\.\.\/generated\/card\.html";/);
+  });
+
+  it('fails a check on a checker that sends what is not JSON, and the next check starts afresh', async () => {
+    const restore = env(
+      'TSNATIVE_BINARY_PATH',
+      fake('broken.js', `process.stdout.write('Content-Length: 5\\r\\n\\r\\nnope!');`),
+    );
+    try {
+      await assert.rejects(
+        transformAngularWithNgp('export const a: number = 1;\n', 'src/a.ts', {
+          projectRoot: root,
+          platform: 'ios',
+        }),
+        /type checker sent a message that is not JSON/,
+      );
+    } finally {
+      restore();
+    }
+    const { code } = await transformAngularWithNgp('export const a: number = 1;\n', 'src/a.ts', {
+      projectRoot: root,
+      platform: 'ios',
+    });
+    assert.match(code, /a: number = 1/);
+  });
+
+  it('gives up on a checker that never answers', async () => {
+    const restoreBinary = env('TSNATIVE_BINARY_PATH', fake('silent.js', 'process.stdin.resume();'));
+    const restoreTimeout = env('ANGULAR_NATIVE_TSGO_TIMEOUT_MS', '300');
+    const checker = new TsgoChecker(path.join(root, 'tsconfig.json'));
+    try {
+      await assert.rejects(
+        checker.check(path.join(root, 'src/a.ts'), ''),
+        /did not answer initialize/,
+      );
+      assert.ok(checker.exitError);
+    } finally {
+      checker.close();
+      restoreTimeout();
+      restoreBinary();
+    }
   });
 });

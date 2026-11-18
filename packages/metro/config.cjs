@@ -47,9 +47,9 @@ const POLYFILLS = [
  * `compilerOptions.customConditions` from the project's own `tsconfig.json`, or none. Only that
  * file, not its `extends`: the Nx generator writes the workspace's conditions into it.
  */
-function tsconfigConditions(projectRoot) {
+function tsconfigConditions(projectRoot, tsconfig = 'tsconfig.json') {
   try {
-    const text = readFileSync(path.join(projectRoot ?? process.cwd(), 'tsconfig.json'), 'utf8');
+    const text = readFileSync(path.resolve(projectRoot ?? process.cwd(), tsconfig), 'utf8');
     const conditions = JSON.parse(withoutJsonComments(text)).compilerOptions?.customConditions;
     return Array.isArray(conditions) ? conditions : [];
   } catch {
@@ -854,6 +854,11 @@ function recordCompilation(config, options, projectRoot) {
     .join('-');
 }
 
+function conditionsOf(config, options) {
+  const tsconfig = options.compilation === 'ngp' ? options.tsconfig : undefined;
+  return tsconfigConditions(config.projectRoot, tsconfig).filter((c) => c !== 'react-native');
+}
+
 function withAngularNative(config, options = {}) {
   const { workspaceRoot, projectRoot = config.projectRoot } = options;
 
@@ -944,7 +949,7 @@ function withAngularNative(config, options = {}) {
   // The conditions the app's tsconfig resolves packages with, so Metro takes the same entry tsc
   // does. Nx's TypeScript preset exports a library's source only under one; without it Metro took
   // the `dist` entry, which is never built. `react-native` is Metro's own, per platform, already.
-  const conditions = tsconfigConditions(config.projectRoot).filter((c) => c !== 'react-native');
+  const conditions = conditionsOf(config, options);
   const named = config.resolver.unstable_conditionNames ?? [];
   config.resolver.unstable_conditionNames = [
     ...named,

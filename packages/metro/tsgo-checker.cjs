@@ -2,7 +2,29 @@
  * Type checking for `compilation: 'ngp'`, through TypeScript 7's language server (`tsgo --lsp
  * --stdio`). Each file goes in as an in-memory document: its source with NGP's type-check block
  * appended, so nothing is written to disk. Ported from `@analogjs/vite-plugin-angular`'s
- * `LspTypeChecker` (MIT).
+ * `LspTypeChecker`, under its license:
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2022 Brandon Roberts
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 const { spawn } = require('node:child_process');
 const { existsSync, readFileSync } = require('node:fs');
@@ -16,12 +38,15 @@ const TCB_IMPORT_ALIAS = /^(?:_tcb_)?_?i\d+$/;
 const TCB_LOCAL_NAME = /^(?:_tcb|_ctor|_pipe)\d+$/;
 const SPAN_COMMENT = /^(\d+),(\d+)$/;
 const LSP_ARGS = ['--lsp', '--stdio'];
+let warnedTsconfig = false;
 
-/** @param {string} code */
-function parseTs(code) {
+const PREFIX = '__ngn';
+
+/** @param {string} code @param {boolean} [jsx] */
+function parseTs(code, jsx = false) {
   return parse(code, {
     sourceType: 'module',
-    plugins: ['typescript', 'decorators'],
+    plugins: jsx ? ['typescript', 'decorators', 'jsx'] : ['typescript', 'decorators'],
     errorRecovery: true,
   });
 }
@@ -58,24 +83,27 @@ function isTcbImport(statement) {
   );
 }
 
-/** @param {string} tcb */
-function splitTcb(tcb) {
+/** @param {any} ast @returns {Record<string, any>} */
+function templateSourcesOf(ast) {
+  const footer = (ast.comments ?? []).find((/** @type {any} */ comment) =>
+    comment.value.startsWith(TCB_TEMPLATE_SOURCES_PREFIX),
+  );
+  return footer ? JSON.parse(footer.value.slice(TCB_TEMPLATE_SOURCES_PREFIX.length)) : {};
+}
+
+/** @param {string} tcb @param {boolean} [jsx] */
+function splitTcb(tcb, jsx = false) {
   if (!tcb.includes('/*tcb')) return null;
   let ast;
   try {
-    ast = parseTs(tcb);
+    ast = parseTs(tcb, jsx);
   } catch {
     return null;
   }
   if (ast.errors?.length) return null;
   /** @type {{ imports: any[], blocks: any[], templateSources: Record<string, any> }} */
   const parts = { imports: [], blocks: [], templateSources: {} };
-  const footer = (ast.comments ?? []).find((comment) =>
-    comment.value.startsWith(TCB_TEMPLATE_SOURCES_PREFIX),
-  );
-  if (footer) {
-    parts.templateSources = JSON.parse(footer.value.slice(TCB_TEMPLATE_SOURCES_PREFIX.length));
-  }
+  parts.templateSources = templateSourcesOf(ast);
   for (const statement of ast.program.body) {
     if (TCB_LOCAL_NAME.test(declaredName(statement) ?? '')) parts.blocks.push(statement);
     else if (isTcbImport(statement)) parts.imports.push(statement);
@@ -83,22 +111,39 @@ function splitTcb(tcb) {
   return parts.blocks.length ? parts : null;
 }
 
-/** @param {string} tcb @param {any} node @param {string} directory */
-function withExtension(tcb, node, directory) {
-  const statement = tcb.slice(node.start, node.end);
-  const specifier = node.source.value;
-  if (!/^\.\.?\//.test(specifier) || path.extname(specifier)) return statement;
+/** @param {string} specifier @param {string} directory */
+function withExtension(specifier, directory) {
+  if (!/^\.\.?\//.test(specifier) || path.extname(specifier)) return null;
   const extension = ['.ts', '.tsx', '.mts'].find((candidate) =>
     existsSync(path.resolve(directory, specifier + candidate)),
   );
-  if (!extension) return statement;
-  const js = { '.ts': '.js', '.tsx': '.jsx', '.mts': '.mjs' }[extension];
-  const at = node.source.start - node.start;
-  return (
-    statement.slice(0, at) +
-    JSON.stringify(specifier + js) +
-    statement.slice(node.source.end - node.start)
-  );
+  if (!extension) return null;
+  return specifier + { '.ts': '.js', '.tsx': '.jsx', '.mts': '.mjs' }[extension];
+}
+
+/**
+ * @param {string} tcb
+ * @param {any} node
+ * @param {Set<string>} generated
+ * @param {string} directory
+ */
+function relocated(tcb, node, generated, directory) {
+  /** @type {[number, number, string][]} */
+  const edits = [];
+  walk(node, (child) => {
+    if (child.type === 'Identifier' && generated.has(child.name)) {
+      edits.push([child.start, child.end, PREFIX + child.name]);
+    }
+  });
+  if (node.type === 'ImportDeclaration') {
+    const specifier = withExtension(node.source.value, directory);
+    if (specifier) edits.push([node.source.start, node.source.end, JSON.stringify(specifier)]);
+  }
+  let text = tcb.slice(node.start, node.end);
+  for (const [start, end, replacement] of edits.sort((a, b) => b[0] - a[0])) {
+    text = text.slice(0, start - node.start) + replacement + text.slice(end - node.start);
+  }
+  return text;
 }
 
 /**
@@ -110,13 +155,30 @@ function documentOf(filePath, source, tcb) {
   const lines = source.split('\n');
   const sourceLineCount = lines.length;
   if (!tcb) return { text: source, sourceLineCount, lines, range: null };
-  const parts = splitTcb(tcb);
-  const suffix = parts
-    ? [
-        ...parts.imports.map((node) => withExtension(tcb, node, path.dirname(filePath))),
-        ...parts.blocks.map((node) => tcb.slice(node.start, node.end)),
-      ].join('\n')
-    : tcb;
+  const parts = splitTcb(tcb, filePath.endsWith('.tsx'));
+  if (!parts && tcb.includes(source)) {
+    const whole = tcb.split('\n');
+    const from = tcb.startsWith(source) ? sourceLineCount : 0;
+    return {
+      text: tcb,
+      sourceLineCount: from,
+      lines: whole,
+      range: { startLine: from, endLine: whole.length, filePath, source, templateSources: {} },
+    };
+  }
+  let suffix = tcb;
+  if (parts) {
+    const generated = new Set(
+      [
+        ...parts.blocks.map(declaredName),
+        ...parts.imports.map((node) => node.specifiers[0].local.name),
+      ].filter(Boolean),
+    );
+    const directory = path.dirname(filePath);
+    suffix = [...parts.imports, ...parts.blocks]
+      .map((node) => relocated(tcb, node, generated, directory))
+      .join('\n');
+  }
   lines.push(...suffix.split('\n'));
   return {
     text: lines.join('\n'),
@@ -250,8 +312,16 @@ class TsgoChecker {
   /** @param {string} tsconfig */
   constructor(tsconfig) {
     const cwd = path.dirname(tsconfig);
+    if (path.basename(tsconfig) !== 'tsconfig.json' && !warnedTsconfig) {
+      warnedTsconfig = true;
+      console.warn(
+        `[angular-native] compilation: 'ngp' analyzes ${path.basename(tsconfig)}, but TypeScript ` +
+          "7's language server checks each file against the nearest tsconfig.json. Keep the two " +
+          'in step, or set disableTypeChecking: true.',
+      );
+    }
     this.seq = 1;
-    /** @type {Map<number, { resolve: (value: any) => void, reject: (error: Error) => void }>} */
+    /** @type {Map<number, { resolve: (value: any) => void, reject: (error: Error) => void, timer: NodeJS.Timeout }>} */
     this.pending = new Map();
     /** @type {Map<string, number>} */
     this.versions = new Map();
@@ -260,15 +330,9 @@ class TsgoChecker {
     this.exitError = undefined;
     this.proc = spawn(resolveTsgo(tsconfig), LSP_ARGS, { cwd, stdio: ['pipe', 'pipe', 'ignore'] });
     this.proc.stdout?.on('data', (chunk) => this.onData(chunk));
-    /** @param {Error} error */
-    const fail = (error) => {
-      this.exitError ??= error;
-      for (const { reject } of this.pending.values()) reject(this.exitError);
-      this.pending.clear();
-    };
-    this.proc.on('error', fail);
-    this.proc.stdin?.on('error', fail);
-    this.proc.on('exit', (code) => fail(new Error(`type checker exited with code ${code}`)));
+    this.proc.on('error', (error) => this.fail(error));
+    this.proc.stdin?.on('error', (error) => this.fail(error));
+    this.proc.on('exit', (code) => this.fail(new Error(`type checker exited with code ${code}`)));
     this.proc.unref();
     const rootUri = pathToFileURL(cwd).href;
     this.ready = this.request('initialize', {
@@ -280,6 +344,16 @@ class TsgoChecker {
     this.ready.catch(() => {});
   }
 
+  /** @param {Error} error */
+  fail(error) {
+    this.exitError ??= error;
+    for (const { reject, timer } of this.pending.values()) {
+      clearTimeout(timer);
+      reject(this.exitError);
+    }
+    this.pending.clear();
+  }
+
   /** @param {Buffer} chunk */
   onData(chunk) {
     this.buffer = Buffer.concat([this.buffer, chunk]);
@@ -289,11 +363,20 @@ class TsgoChecker {
       const length = /Content-Length: (\d+)/i.exec(
         this.buffer.subarray(0, headerEnd).toString('utf8'),
       );
-      if (!length) return;
+      if (!length) {
+        this.broken('a message with no Content-Length');
+        return;
+      }
       const bodyStart = headerEnd + 4;
       const bodyEnd = bodyStart + Number(length[1]);
       if (this.buffer.length < bodyEnd) return;
-      const message = JSON.parse(this.buffer.subarray(bodyStart, bodyEnd).toString('utf8'));
+      let message;
+      try {
+        message = JSON.parse(this.buffer.subarray(bodyStart, bodyEnd).toString('utf8'));
+      } catch {
+        this.broken('a message that is not JSON');
+        return;
+      }
       this.buffer = this.buffer.subarray(bodyEnd);
       if (message.id !== undefined && message.method !== undefined) {
         this.send({ jsonrpc: '2.0', id: message.id, result: null });
@@ -302,6 +385,7 @@ class TsgoChecker {
           this.pending.get(message.id)
         );
         this.pending.delete(message.id);
+        clearTimeout(entry.timer);
         if (message.error) entry.reject(new Error(message.error.message));
         else entry.resolve(message.result);
       }
@@ -323,10 +407,26 @@ class TsgoChecker {
   request(method, params) {
     if (this.exitError) return Promise.reject(this.exitError);
     const id = this.seq++;
+    const timeout = Number(process.env['ANGULAR_NATIVE_TSGO_TIMEOUT_MS']) || 300_000;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        const error = new Error(`type checker did not answer ${method} within ${timeout / 1000}s`);
+        reject(error);
+        this.fail(error);
+        this.proc.kill();
+      }, timeout);
+      timer.unref();
+      this.pending.set(id, { resolve, reject, timer });
       this.send({ jsonrpc: '2.0', id, method, params });
     });
+  }
+
+  /** @param {string} what */
+  broken(what) {
+    this.buffer = Buffer.alloc(0);
+    this.fail(new Error(`type checker sent ${what}`));
+    this.proc.kill();
   }
 
   /** @param {string} filePath @param {string} text */

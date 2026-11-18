@@ -53,10 +53,12 @@ async function loadNgp(projectRoot) {
   };
 }
 
-/** @param {string} file */
-function modified(file) {
+/** @param {string} file @param {number} [since] @returns {string | null} */
+function modified(file, since = Infinity) {
   try {
-    return statSync(file).mtimeMs;
+    const { mtimeMs, ctimeMs, size } = statSync(file);
+    if (Math.max(mtimeMs, ctimeMs) >= since) return 'unconfirmed';
+    return `${mtimeMs}:${ctimeMs}:${size}`;
   } catch {
     return null;
   }
@@ -92,12 +94,13 @@ class Session {
     this.analyzer = analyzer;
     this.compiler = compiler;
     this.tsconfig = tsconfig;
-    /** @type {Map<string, { filePath: string, mtime: number | null }>} */
+    /** @type {Map<string, { filePath: string, mtime: string | null }>} */
     this.seen = new Map();
     /** @type {TsgoChecker | undefined} */
     this.checker = undefined;
     /** @type {Promise<unknown>} */
     this.queue = Promise.resolve();
+    this.since = Date.now();
   }
 
   /** @param {any} file */
@@ -116,7 +119,10 @@ class Session {
 
   /** @param {string} filePath */
   see(filePath) {
-    this.seen.set(keyOf(filePath), { filePath, mtime: modified(filePath) });
+    const key = keyOf(filePath);
+    if (!this.seen.has(key)) {
+      this.seen.set(key, { filePath, mtime: modified(filePath, this.since) });
+    }
   }
 
   /** @template T @param {() => Promise<T>} task @returns {Promise<T>} */
@@ -128,25 +134,32 @@ class Session {
 
   /** @param {string} file @param {string} src */
   async sync(file, src) {
+    this.since = Date.now();
     /** @type {{ filePath: string, updateType: 'Created' | 'Deleted' | 'Changed' }[]} */
     const changes = [];
+    /** @type {(() => void)[]} */
+    const commits = [];
     for (const [key, known] of this.seen) {
       const now = modified(known.filePath);
       if (now === known.mtime) continue;
-      if (now === null) this.seen.delete(key);
-      else known.mtime = now;
+      commits.push(() => {
+        if (now === null) this.seen.delete(key);
+        else known.mtime = now;
+      });
       changes.push({
         filePath: known.filePath,
         updateType: now === null ? 'Deleted' : 'Changed',
       });
     }
     if (changes.length) await this.compiler.invalidateFiles(changes);
+    for (const commit of commits) commit();
     if (!this.seen.has(keyOf(file))) {
       this.see(file);
       changes.push({ filePath: file, updateType: 'Created' });
     }
     if (changes.length) this.checker?.filesChanged(changes);
-    if ((await this.analyzer.getFileContent(file)) !== src) {
+    const analyzed = await this.analyzer.getFileContent(file).catch(() => undefined);
+    if (analyzed !== undefined && analyzed !== src) {
       await this.compiler.updateFileContent([{ filePath: file, content: src }]);
     }
   }
@@ -226,8 +239,17 @@ function sessionFor(options) {
 
 /** @param {Session} session @param {string} file @param {string} source @param {string} [tcb] */
 async function checkTypes(session, file, source, tcb) {
-  session.checker ??= new TsgoChecker(session.tsconfig);
-  const errors = await session.checker.check(file, source, tcb);
+  const checker = (session.checker ??= new TsgoChecker(session.tsconfig));
+  let errors;
+  try {
+    errors = await checker.check(file, source, tcb);
+  } catch (error) {
+    if (checker.exitError) {
+      checker.close();
+      if (session.checker === checker) session.checker = undefined;
+    }
+    throw error;
+  }
   if (errors.length) throw new Error(errors.join('\n'));
 }
 
@@ -235,7 +257,7 @@ async function checkTypes(session, file, source, tcb) {
  * @param {string} src
  * @param {string} filename
  * @param {NgpOptions} options
- * @returns {Promise<{ code: string, map: string } | null>}
+ * @returns {Promise<{ code: string, map: string, resources: { url: string, resolvedPath: string }[] } | null>}
  */
 async function compileWithNgp(src, filename, options) {
   const session = await sessionFor(options);
@@ -255,13 +277,26 @@ async function compileWithNgp(src, filename, options) {
       );
     }
     if (options.typeCheck !== false) await checkTypes(session, file, src, result.tcb?.code);
+    const mapOptions = { source: filename, includeContent: true, hires: true };
     return {
       code: result.magicString.toString(),
-      map: result.magicString
-        .generateMap({ source: filename, includeContent: true, hires: true })
-        .toString(),
+      map: (
+        result.generateSourceMap?.(mapOptions) ?? result.magicString.generateMap(mapOptions)
+      ).toString(),
+      resources: resourcesOf(metadata),
     };
   });
+}
+
+/** @param {any} metadata @returns {{ url: string, resolvedPath: string }[]} */
+function resourcesOf(metadata) {
+  return (metadata.classes ?? []).flatMap((/** @type {any} */ { component }) =>
+    component
+      ? [component.templateUrl, ...(component.styleUrls ?? [])].filter(
+          (resource) => resource?.url && resource.resolvedPath,
+        )
+      : [],
+  );
 }
 
 /** @param {string} src @param {string} filename @param {NgpOptions} options */

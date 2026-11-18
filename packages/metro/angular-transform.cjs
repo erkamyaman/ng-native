@@ -112,7 +112,7 @@ function takeResourcesRead(filename) {
   return files;
 }
 
-function readResources(dependencies, filename, root = process.cwd()) {
+function readResources(dependencies, filename, root = process.cwd(), resolvedPaths = {}) {
   // Metro names a file relative to the project root, which is not where Metro was started when
   // the project is named on the command line: `expo export apps/mobile`.
   const directory = path.dirname(path.resolve(root, filename));
@@ -121,7 +121,7 @@ function readResources(dependencies, filename, root = process.cwd()) {
   const read = [];
   resourcesRead.set(filename, read);
   for (const dependency of dependencies) {
-    const resolved = path.resolve(directory, dependency);
+    const resolved = resolvedPaths[dependency] ?? path.resolve(directory, dependency);
     const content = readFileSync(resolved, 'utf8');
     read.push(resolved);
     if (IS_STYLE.test(dependency)) styles[dependency] = [content];
@@ -1650,21 +1650,23 @@ function functionsBlock(src, filename, options) {
 }
 
 /**
- * @param {{ code: string, map?: string }} result
- * @param {string} src
+ * @param {{ code: string, map?: string, resources: { url: string, resolvedPath: string }[] }} result
  * @param {string} filename
  * @param {Record<string, any>} options
  */
-function withResources(result, src, filename, options) {
-  const components = extractComponentMetadataSync(src, filename);
-  const dependencies = [
-    ...new Set(
-      components.flatMap((component) => [component.templateUrl, ...(component.styleUrls ?? [])]),
-    ),
-  ].filter((dependency) => typeof dependency === 'string');
-  const resources = dependencies.length
-    ? readResources(dependencies, filename, options.projectRoot)
+function withResources(result, filename, options) {
+  const resolvedPaths = Object.fromEntries(
+    result.resources.map(({ url, resolvedPath }) => [url, resolvedPath]),
+  );
+  const urls = Object.keys(resolvedPaths);
+  const resources = urls.length
+    ? readResources(urls, filename, options.projectRoot, resolvedPaths)
     : null;
+  const directory = path.dirname(path.resolve(options.projectRoot ?? process.cwd(), filename));
+  const dependencies = urls.map((url) => {
+    const relative = path.relative(directory, resolvedPaths[url]).split(path.sep).join('/');
+    return relative.startsWith('.') ? relative : `./${relative}`;
+  });
   return { result, dependencies, resources };
 }
 
@@ -1678,15 +1680,42 @@ async function transformAngularWithNgp(src, filename, options = {}) {
   const { typeCheck, tsconfig, ...rest } = options;
   const ngp = { projectRoot: options.projectRoot, tsconfig, typeCheck, dev: options.dev === true };
   if (isResource(filename)) return transformAngular(src, filename, rest);
+  let transformed;
   if (IS_SOURCE.test(filename) && HAS_ANGULAR_DECORATOR.test(src)) {
     const result = await compileWithNgp(src, filename, ngp);
-    if (!result) return transformAngular(src, filename, rest);
-    return transformAngular(src, filename, rest, () => withResources(result, src, filename, rest));
+    transformed = result
+      ? transformAngular(src, filename, rest, () => withResources(result, filename, rest))
+      : transformAngular(src, filename, rest);
+  } else {
+    const checked = isAppModule(filename) && !IS_PARTIAL_COMPILED.test(src);
+    if (checked) await typeCheckWithNgp(src, filename, ngp);
+    transformed = transformAngular(src, filename, rest);
+    if (!checked) return transformed;
   }
-  if (isAppModule(filename) && !IS_PARTIAL_COMPILED.test(src)) {
-    await typeCheckWithNgp(src, filename, ngp);
+  if (typeCheck !== false) {
+    const directory = path.dirname(path.resolve(options.projectRoot ?? process.cwd(), filename));
+    for (const imported of relativeImports(src, directory)) noteRead(filename, imported);
   }
-  return transformAngular(src, filename, rest);
+  return transformed;
+}
+
+const RELATIVE_IMPORT = /\b(?:from|import)\s*['"](\.{1,2}\/[^'"]+)['"]/g;
+
+function relativeImports(src, directory) {
+  const files = new Set();
+  for (const [, specifier] of src.matchAll(RELATIVE_IMPORT)) {
+    const base = path.resolve(directory, specifier);
+    const stem = base.replace(/\.[cm]?js$/, '');
+    const found = [
+      base,
+      `${stem}.ts`,
+      `${stem}.tsx`,
+      `${stem}.mts`,
+      path.join(base, 'index.ts'),
+    ].find((candidate) => /\.[cm]?tsx?$/.test(candidate) && existsSync(candidate));
+    if (found) files.add(found);
+  }
+  return files;
 }
 
 module.exports = {
