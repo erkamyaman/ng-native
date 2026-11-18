@@ -18,6 +18,7 @@ const { compileCss } = require('./css/compile.cjs');
 const { nameFaces } = require('./css/font-names.cjs');
 const { componentDeclarations } = require('./component-declarations.cjs');
 const { hotShape } = require('./hot-shape.cjs');
+const { compileWithNgp, typeCheckWithNgp } = require('./ngp-compile.cjs');
 const {
   compileForHmrSync,
   extractComponentMetadataSync,
@@ -1526,9 +1527,17 @@ function reasonOf(message) {
 }
 
 /**
+ * @param {string} src
+ * @param {string} filename
+ * @param {Record<string, any>} [options]
+ * @param {(src: string, filename: string, compilerOptions: Record<string, any>) => {
+ *   result: { code: string, map?: string },
+ *   dependencies: string[],
+ *   resources: any,
+ * }} [compile]
  * @returns {{ code: string, dependencies: string[], map?: string, mapLineOffset?: number }}
  */
-function transformAngular(src, filename, options = {}) {
+function transformAngular(src, filename, options = {}, compile = compileTwice) {
   sourceRoot = options.projectRoot;
   resourcesRead.delete(filename);
   transformRoot = projectRootOf(options);
@@ -1555,7 +1564,7 @@ function transformAngular(src, filename, options = {}) {
       ...rest,
     };
 
-    const { result, dependencies, resources } = compileTwice(src, filename, compilerOptions);
+    const { result, dependencies, resources } = compile(src, filename, compilerOptions);
     assertLowercaseElements(result.code, filename);
     // Not guarded: a failure here used to fall back to "no components", which compiled the file
     // with no stylesheet and no HMR block and said nothing. A dropped sheet is the one failure
@@ -1640,8 +1649,49 @@ function functionsBlock(src, filename, options) {
   return hot ? hmrBlock(src, filename, [], null, options) || COUNTS_ITSELF : '';
 }
 
+/**
+ * @param {{ code: string, map?: string }} result
+ * @param {string} src
+ * @param {string} filename
+ * @param {Record<string, any>} options
+ */
+function withResources(result, src, filename, options) {
+  const components = extractComponentMetadataSync(src, filename);
+  const dependencies = [
+    ...new Set(
+      components.flatMap((component) => [component.templateUrl, ...(component.styleUrls ?? [])]),
+    ),
+  ].filter((dependency) => typeof dependency === 'string');
+  const resources = dependencies.length
+    ? readResources(dependencies, filename, options.projectRoot)
+    : null;
+  return { result, dependencies, resources };
+}
+
+/**
+ * @param {string} src
+ * @param {string} filename
+ * @param {Record<string, any>} [options]
+ * @returns {Promise<ReturnType<typeof transformAngular>>}
+ */
+async function transformAngularWithNgp(src, filename, options = {}) {
+  const { typeCheck, tsconfig, ...rest } = options;
+  const ngp = { projectRoot: options.projectRoot, tsconfig, typeCheck, dev: options.dev === true };
+  if (isResource(filename)) return transformAngular(src, filename, rest);
+  if (IS_SOURCE.test(filename) && HAS_ANGULAR_DECORATOR.test(src)) {
+    const result = await compileWithNgp(src, filename, ngp);
+    if (!result) return transformAngular(src, filename, rest);
+    return transformAngular(src, filename, rest, () => withResources(result, src, filename, rest));
+  }
+  if (isAppModule(filename) && !IS_PARTIAL_COMPILED.test(src)) {
+    await typeCheckWithNgp(src, filename, ngp);
+  }
+  return transformAngular(src, filename, rest);
+}
+
 module.exports = {
   transformAngular,
+  transformAngularWithNgp,
   takeResourcesRead,
   isResource,
 };
