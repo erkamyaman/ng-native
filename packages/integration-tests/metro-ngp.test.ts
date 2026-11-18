@@ -513,6 +513,17 @@ describe('a component compiled with NGP', () => {
     assert.deepEqual(takeResourcesRead('uses-helper.ts'), []);
   });
 
+  it('marks what a relative import imports in turn read as well', async () => {
+    write('deep.ts', 'export const deep = 1;\n');
+    write('middle.ts', "export { deep } from './deep';\n");
+    const src = "import { deep } from './middle';\nexport const top: number = deep;\n";
+    write('top.ts', src);
+    await transformAngularWithNgp(src, 'top.ts', { projectRoot: root, platform: 'ios' });
+    const read = takeResourcesRead('top.ts');
+    assert.ok(read.includes(path.join(root, 'middle.ts')));
+    assert.ok(read.includes(path.join(root, 'deep.ts')));
+  });
+
   it('marks the .cts behind a .cjs import read', async () => {
     write('helper.cts', 'export const three = 3;\n');
     const src = "import { three } from './helper.cjs';\nexport const four: number = three + 1;\n";

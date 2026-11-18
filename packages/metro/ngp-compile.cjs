@@ -182,13 +182,25 @@ class Session {
 /** @type {Map<string, { session: Promise<Session>, signature: string, current?: Session }>} */
 const sessions = new Map();
 
+/** @type {Map<string, { files: string[], signature: string }>} */
+const chains = new Map();
+
+/** @param {string[]} files */
+const signatureOf = (files) => files.map((file) => `${file}:${modified(file)}`).join('|');
+
 /** @param {string} tsconfig */
 function tsconfigSignature(tsconfig) {
+  const known = chains.get(tsconfig);
+  if (known && signatureOf(known.files) === known.signature) return known.signature;
   const { tsconfigChain } = require('./config.cjs');
-  return tsconfigChain(tsconfig)
-    .map((file) => `${file}:${modified(file)}`)
-    .join('|');
+  const files = tsconfigChain(tsconfig);
+  const signature = signatureOf(files);
+  chains.set(tsconfig, { files, signature });
+  return signature;
 }
+
+/** @param {string} tsconfig @param {boolean} dev */
+const sessionKeyOf = (tsconfig, dev) => `${tsconfig}\0${dev}`;
 
 /** @param {NgpOptions} options */
 function tsconfigOf(options) {
@@ -207,7 +219,7 @@ async function angularCompilerOptions(projectRoot, tsconfig) {
 function sessionFor(options) {
   const tsconfig = tsconfigOf(options);
   const dev = options.dev === true;
-  const key = `${tsconfig}\0${dev}`;
+  const key = sessionKeyOf(tsconfig, dev);
   const signature = tsconfigSignature(tsconfig);
   const open = sessions.get(key);
   if (open?.signature === signature && !open.current?.retired) return open.session;

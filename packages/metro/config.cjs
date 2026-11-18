@@ -772,9 +772,10 @@ function typescriptConfig(file) {
     return null;
   }
   const source = ts.readJsonConfigFile(file, ts.sys.readFile);
+  const host = { ...ts.sys, readDirectory: () => [] };
   const parsed = ts.parseJsonSourceFileConfigFileContent(
     source,
-    ts.sys,
+    host,
     path.dirname(file),
     undefined,
     file,
@@ -791,46 +792,7 @@ function isFile(file) {
 }
 
 function tsconfigChain(file) {
-  return typescriptConfig(file)?.files ?? readChain(file);
-}
-
-function readChain(file, chain = []) {
-  if (chain.includes(file)) return chain;
-  let text;
-  try {
-    text = readFileSync(file, 'utf8');
-  } catch {
-    return chain;
-  }
-  chain.push(file);
-  let parsed;
-  try {
-    parsed = JSON.parse(withoutJsonComments(text));
-  } catch {
-    return chain;
-  }
-  for (const base of [parsed?.extends ?? []].flat()) {
-    const resolved = resolveExtends(base, path.dirname(file));
-    if (resolved) readChain(resolved, chain);
-  }
-  return chain;
-}
-
-function resolveExtends(base, directory) {
-  if (typeof base !== 'string') return null;
-  if (/^\.\.?[\\/]/.test(base) || path.isAbsolute(base)) {
-    const at = path.resolve(directory, base);
-    if (isFile(at)) return at;
-    return isFile(`${at}.json`) ? `${at}.json` : null;
-  }
-  for (const id of [base, `${base}/tsconfig.json`, `${base}.json`]) {
-    try {
-      return require.resolve(id, { paths: [directory] });
-    } catch {
-      // The next way a package can name its tsconfig.
-    }
-  }
-  return null;
+  return typescriptConfig(file)?.files ?? (isFile(file) ? [file] : []);
 }
 
 function tsconfigHash(file) {

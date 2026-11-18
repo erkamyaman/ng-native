@@ -1725,7 +1725,7 @@ async function compiledWithNgp(src, filename, ngp, options) {
 const RELATIVE_IMPORT = /\b(?:from|import)\s*['"](\.{1,2}\/[^'"]+)['"]/g;
 const SOURCE_OF = { '.js': ['.ts', '.tsx'], '.jsx': ['.tsx'], '.mjs': ['.mts'], '.cjs': ['.cts'] };
 
-function relativeImports(src, directory) {
+function directImports(src, directory) {
   const files = new Set();
   for (const [, specifier] of src.matchAll(RELATIVE_IMPORT)) {
     const base = path.resolve(directory, specifier);
@@ -1744,7 +1744,35 @@ function relativeImports(src, directory) {
     const found = candidates.find(
       (candidate) => /\.[cm]?tsx?$/.test(candidate) && existsSync(candidate),
     );
-    if (found) files.add(found);
+    if (found && !INSTALLED.test(found)) files.add(found);
+  }
+  return files;
+}
+
+const IMPORTS_OF = new Map();
+
+function importsOf(file) {
+  const stamp = stampOf(file);
+  const known = IMPORTS_OF.get(file);
+  if (known?.stamp === stamp) return known.imports;
+  let imports = new Set();
+  try {
+    imports = directImports(readFileSync(file, 'utf8'), path.dirname(file));
+  } catch {
+    // Gone since it was imported: what imports it is what fails, on its own transform.
+  }
+  IMPORTS_OF.set(file, { stamp, imports });
+  return imports;
+}
+
+function relativeImports(src, directory) {
+  const files = new Set();
+  const queue = [...directImports(src, directory)];
+  while (queue.length && files.size < 5000) {
+    const file = /** @type {string} */ (queue.pop());
+    if (files.has(file)) continue;
+    files.add(file);
+    queue.push(...importsOf(file));
   }
   return files;
 }
