@@ -6,6 +6,7 @@
  * expects. `expo-haptics`'s JavaScript adds none of that, which is why `./haptics.ts` skips it.
  */
 import { DestroyRef, InjectionToken, Service, inject, signal, type Signal } from '@angular/core';
+import { desktopHost } from './desktop-host.ts';
 import { expoModule, presence, present } from './native.ts';
 
 /** The slice of `expo-clipboard` this needs. */
@@ -13,6 +14,26 @@ export interface NativeClipboard {
   getStringAsync(): Promise<string>;
   setStringAsync(text: string): Promise<boolean>;
   addClipboardListener(listener: () => void): { remove(): void };
+}
+
+/** The desktop host's slice of the clipboard: everything but the change listener. */
+type DesktopClipboard = Partial<Omit<NativeClipboard, 'addClipboardListener'>>;
+
+/**
+ * The desktop host's `NgNativeClipboard`, with the change listener on its `ngNativeClipboard`
+ * event: a TurboModule cannot hand back the subscription `addClipboardListener` answers. Null
+ * where the host has no such module.
+ */
+function desktopClipboard(): NativeClipboard | null {
+  const host = desktopHost<DesktopClipboard>('NgNativeClipboard');
+  if (!host) return null;
+  const { module } = host;
+  return {
+    // A host built without a method reads an empty clipboard, and writes nothing.
+    getStringAsync: async () => (await module.getStringAsync?.()) ?? '',
+    setStringAsync: async (text) => (await module.setStringAsync?.(text)) ?? false,
+    addClipboardListener: (listener) => host.listen('ngNativeClipboard', () => listener()),
+  };
 }
 
 /**
@@ -36,6 +57,7 @@ export class Clipboard {
         const expo = expoModule(
           'expo-clipboard',
           () => require('expo-clipboard') as typeof import('expo-clipboard'),
+          { desktop: desktopClipboard },
         );
         if (!expo) return null;
         // Missing from the build: the stand-in, to say so when it is used.

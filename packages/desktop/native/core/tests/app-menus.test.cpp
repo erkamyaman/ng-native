@@ -253,6 +253,11 @@ TEST_CASE("the OS's back and forward inputs become navigate, in the window they 
   CHECK(ngn::navigationFor(NavigationInput::MouseButton5) == NavigationDirection::Forward);
   CHECK(ngn::navigationFor(NavigationInput::SwipeRight) == NavigationDirection::Back);
   CHECK(ngn::navigationFor(NavigationInput::SwipeLeft) == NavigationDirection::Forward);
+  // In a right-to-left layout the swipes turn round, and the mouse buttons do not.
+  CHECK(ngn::navigationFor(NavigationInput::SwipeLeft, true) == NavigationDirection::Back);
+  CHECK(ngn::navigationFor(NavigationInput::SwipeRight, true) == NavigationDirection::Forward);
+  CHECK(ngn::navigationFor(NavigationInput::MouseButton4, true) == NavigationDirection::Back);
+  CHECK(ngn::navigationFor(NavigationInput::MouseButton5, true) == NavigationDirection::Forward);
   // Command-Left stays with text editing.
   CHECK(ngn::navigationFor(KeyChord{.key = "[", .modifiers = ngn::Command}) == NavigationDirection::Back);
   CHECK(ngn::navigationFor(KeyChord{.key = "]", .modifiers = ngn::Command}) == NavigationDirection::Forward);
@@ -320,6 +325,17 @@ TEST_CASE("the chevrons show the window's history, or the stack's back for an ap
   CHECK(ngn::historyButtons(WindowHistory{}, true, false) == HistoryButtons{.fromHistory = true});
   // hideBackButton, or the header's own left items, hide the pair.
   CHECK(ngn::historyButtons(WindowHistory{.back = {"Home"}}, true, true) == HistoryButtons{});
+}
+
+TEST_CASE("back is the leading chevron: the left one, and the right one right to left") {
+  using ngn::NavigationDirection;
+  CHECK(ngn::chevronAt(10, 70, false) == NavigationDirection::Back);
+  CHECK(ngn::chevronAt(60, 70, false) == NavigationDirection::Forward);
+  CHECK(ngn::chevronAt(10, 70, true) == NavigationDirection::Forward);
+  CHECK(ngn::chevronAt(60, 70, true) == NavigationDirection::Back);
+  // The middle counts as the right half, either way.
+  CHECK(ngn::chevronAt(35, 70, false) == NavigationDirection::Forward);
+  CHECK(ngn::chevronAt(35, 70, true) == NavigationDirection::Back);
 }
 
 TEST_CASE("a chevron's menu lists that way's entries nearest first, and a pick navigates that many steps") {

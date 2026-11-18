@@ -371,42 +371,68 @@ describe('a context menu', () => {
   }
 });
 
-for (const os of ['android', 'ios'] as const) {
-  it(`leaves the long press to (longPress) where the menu on ${os} has no items`, async () => {
-    registerPlatformComponents(os);
-    try {
-      const host = fakeHost(false, true);
-      const said: string[] = [];
-      const { ContextMenu, MenuItem, Pressable } = await import('@ng-native/components');
-      await render(
-        `<pressable testID="row" [contextMenu]="menu" (longPress)="said.push('long')"></pressable>
-        <ng-template #menu>
-          @if (false) {
-            <menu-item label="Pin" />
-          }
-        </ng-template>`,
-        {
-          imports: [ContextMenu, MenuItem, Pressable],
-          providers: [
-            { provide: Menus.SOURCE, useValue: host.native },
-            { provide: OS, useValue: os },
-          ],
-          componentProperties: { said },
-        },
-      );
-      await settle();
-      const row = screen.getByTestId('row');
-      assert.equal(host.contextMenus.get(row.props['nativeID'] as string), null);
-      const { fireEvent } = await import('@ng-native/testing');
-      await fireEvent(row, 'touchStart', { touches: [{}], changedTouches: [{}] });
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      await fireEvent(row, 'touchEnd', { touches: [], changedTouches: [{}] });
-      assert.deepEqual(said, ['long']);
-    } finally {
-      registerPlatformComponents('ios');
-    }
-  });
-}
+// Each menu shows no item, from the start or (`dropped`) once its last item goes.
+const itemless = [
+  ['has no items', '@if (pinned()) { <menu-item label="Pin" /> }', false],
+  [
+    'shows only a separator and an empty section',
+    '<menu-separator /><menu-group label="Share" inline>@if (pinned()) { <menu-item label="Pin" /> }</menu-group>',
+    false,
+  ],
+  [
+    'loses the last item of a section that stays',
+    '<menu-group label="Share" inline>@if (pinned()) { <menu-item label="Pin" /> }</menu-group>',
+    true,
+  ],
+] as const;
+
+for (const os of ['android', 'ios'] as const)
+  for (const [what, items, dropped] of itemless) {
+    it(`leaves the long press to (longPress) where the menu on ${os} ${what}`, async () => {
+      registerPlatformComponents(os);
+      try {
+        const host = fakeHost(false, true);
+        const said: string[] = [];
+        const pinned = signal(dropped);
+        const { ContextMenu, MenuGroup, MenuItem, MenuSeparator, Pressable } =
+          await import('@ng-native/components');
+        await render(
+          `<pressable testID="row" [contextMenu]="menu" (longPress)="said.push('long')"></pressable>
+        <ng-template #menu>${items}</ng-template>`,
+          {
+            imports: [ContextMenu, MenuGroup, MenuItem, MenuSeparator, Pressable],
+            providers: [
+              { provide: Menus.SOURCE, useValue: host.native },
+              { provide: OS, useValue: os },
+            ],
+            componentProperties: { said, pinned },
+          },
+        );
+        await settle();
+        const row = screen.getByTestId('row');
+        const sent = () => host.contextMenus.get(row.props['nativeID'] as string);
+        if (dropped) {
+          assert.deepEqual(
+            sent()?.map((entry) =>
+              'items' in entry ? { ...entry, items: byPlace(entry.items) } : entry,
+            ),
+            [{ id: '0', label: 'Share', inline: true, items: [{ id: 'action', label: 'Pin' }] }],
+            'the menu while its item is there',
+          );
+          pinned.set(false);
+          await settle();
+        }
+        assert.equal(sent(), null);
+        const { fireEvent } = await import('@ng-native/testing');
+        await fireEvent(row, 'touchStart', { touches: [{}], changedTouches: [{}] });
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        await fireEvent(row, 'touchEnd', { touches: [], changedTouches: [{}] });
+        assert.deepEqual(said, ['long']);
+      } finally {
+        registerPlatformComponents('ios');
+      }
+    });
+  }
 
 for (const os of ['android', 'ios'] as const) {
   describe(`a context menu on ${os}`, () => {
@@ -544,6 +570,98 @@ for (const os of ['android', 'ios'] as const) {
       shown.set(false);
       await app.detectChanges();
       assert.deepEqual([...host.longPressTakers], [], 'and takes it back as the pressable goes');
+    });
+
+    // The host opens the innermost menu after its own long-press timeout, which can be later than
+    // a pressable around it fires its (longPress): that pressable leaves the hold to the menu.
+    it('leaves a long press on a menu inside a pressable to the menu', async () => {
+      registerPlatformComponents(os);
+      const host = fakeHost(false, true, true);
+      const said: string[] = [];
+      const pinnable = signal(true);
+      const { ContextMenu, MenuItem, Pressable, View } = await import('@ng-native/components');
+      const app = await render(
+        `<pressable testID="card" [delayLongPress]="50" (longPress)="said.push('card')">
+          <view testID="row" [contextMenu]="menu">
+            <pressable testID="off" [disabled]="true" (longPress)="0"></pressable>
+          </view>
+          <view testID="plain"></view>
+        </pressable>
+        <ng-template #menu>
+          @if (pinnable()) {
+            <menu-item label="Pin" />
+          }
+        </ng-template>`,
+        {
+          imports: [View, ContextMenu, MenuItem, Pressable],
+          providers: [
+            { provide: Menus.SOURCE, useValue: host.native },
+            { provide: OS, useValue: os },
+          ],
+          componentProperties: { said, pinnable },
+        },
+      );
+      await settle();
+      const { fireEvent } = await import('@ng-native/testing');
+      const hold = async (testId: string) => {
+        const target = screen.getByTestId(testId);
+        await fireEvent(target, 'touchStart', { touches: [{}], changedTouches: [{}] });
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        await fireEvent(target, 'touchEnd', { touches: [], changedTouches: [{}] });
+      };
+      await hold('row');
+      assert.deepEqual(said, [], 'the menu on the row takes the hold');
+      await hold('plain');
+      assert.deepEqual(said, ['card'], 'outside the menu the pressable keeps it');
+      await hold('off');
+      assert.deepEqual(
+        said,
+        ['card', 'card'],
+        'a view inside the menu that takes the long press opens no menu, as the host decides',
+      );
+      pinnable.set(false);
+      await app.detectChanges();
+      await settle();
+      await hold('row');
+      assert.deepEqual(said, ['card', 'card', 'card'], 'nor does a menu whose items went');
+    });
+
+    it('decides who owns the hold as the press begins, not when a delayed press-in starts', async () => {
+      registerPlatformComponents(os);
+      const host = fakeHost(false, true, true);
+      const said: string[] = [];
+      const pinnable = signal(false);
+      const { ContextMenu, MenuItem, Pressable, View } = await import('@ng-native/components');
+      const app = await render(
+        `<pressable testID="card" [delayPressIn]="80" [delayLongPress]="50" (longPress)="said.push('card')">
+          <view testID="row" [contextMenu]="menu"></view>
+        </pressable>
+        <ng-template #menu>
+          @if (pinnable()) {
+            <menu-item label="Pin" />
+          }
+        </ng-template>`,
+        {
+          imports: [View, ContextMenu, MenuItem, Pressable],
+          providers: [
+            { provide: Menus.SOURCE, useValue: host.native },
+            { provide: OS, useValue: os },
+          ],
+          componentProperties: { said, pinnable },
+        },
+      );
+      await settle();
+      const { fireEvent } = await import('@ng-native/testing');
+      const target = screen.getByTestId('row');
+      await fireEvent(target, 'touchStart', { touches: [{}], changedTouches: [{}] });
+      // The menu arrives while the press-in waits: the host, which decided as the touch began, opens
+      // nothing, so the pressable keeps the long press it had then.
+      pinnable.set(true);
+      await app.detectChanges();
+      await settle();
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await fireEvent(target, 'touchEnd', { touches: [], changedTouches: [{}] });
+      assert.deepEqual(said, ['card']);
     });
 
     it('names nothing for a host that cannot be told, nor where there is no host', async () => {

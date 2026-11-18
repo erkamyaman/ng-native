@@ -1,6 +1,6 @@
 {
   "name": "@ng-native/nx",
-  "version": "0.22.2",
+  "version": "0.24.0",
   "description": "Nx generators for Angular Native: nx add, an Expo app project whose targets run it, and native libraries and components.",
   "keywords": [
     "angular",
@@ -22,6 +22,7 @@
     "packageGroup": [
       "@ng-native/analog",
       "@ng-native/components",
+      "@ng-native/desktop",
       "@ng-native/device",
       "@ng-native/eslint-plugin",
       "@ng-native/expo",
@@ -61,12 +62,13 @@
       "layer:build"
     ],
     "implicitDependencies": [
-      "@ng-native/template"
+      "@ng-native/template",
+      "@ng-native/template-desktop"
     ]
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test \"*.test.ts\" \"{init,application,sync,library,component,migrations,tailwind,nativescript}/*.test.ts\""
+    "test": "node --test \"*.test.ts\" \"{init,application,sync,library,component,migrations,tailwind,nativescript,desktop,mobile}/*.test.ts\""
   },
   "license": "MIT",
   "homepage": "https://ng-native.com/packages/nx",

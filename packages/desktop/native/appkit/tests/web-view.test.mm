@@ -5,6 +5,8 @@
 
 #include <doctest/doctest.h>
 
+#include <unistd.h>
+
 #import <Foundation/Foundation.h>
 
 #include <chrono>
@@ -106,6 +108,28 @@ TEST_CASE("NGNWebViewController loads HTML once the app allows the navigation, a
   CHECK(finished["canGoBack"] == false);
 }
 
+TEST_CASE("NGNWebViewController loads Expo's DOM web view's page without asking the app, and bridges it both ways") {
+  Harness harness;
+  // Nothing answers a held navigation: a page that waited for the app would never load.
+  harness.allow = std::nullopt;
+  auto config = page(
+      "<script>window.__ngNative = { receive: function (m) { window.ReactNativeWebView.postMessage('got:' + m.label); } };"
+      "window.ReactNativeWebView.postMessage(window.ReactNativeWebView.injectedObjectJson());</script>");
+  config.asksApp = false;
+  config.injectedJavaScriptObject = R"({"inputs":{"label":"Draft"}})";
+  [harness.controller apply:config];
+  REQUIRE(harness.waitFor("message"));
+  CHECK(harness.messages()[0] == R"({"inputs":{"label":"Draft"}})");
+  CHECK(harness.count("shouldStartLoadWithRequest") == 0);
+  CHECK(harness.locks->pending() == 0);
+  CHECK(harness.count("loadingStart") == 1);
+  CHECK(harness.last("message")["url"] == "about:blank");
+
+  [harness.controller command:"injectJavaScript" args:folly::dynamic::array("window.__ngNative.receive({label: 'Final'}); true;")];
+  REQUIRE(harness.waitFor("message", 2));
+  CHECK(harness.messages()[1] == "got:Final");
+}
+
 TEST_CASE("NGNWebViewController stops a navigation the app refuses, and refuses what it still holds when invalidated") {
   Harness harness;
   harness.allow = false;
@@ -182,7 +206,7 @@ TEST_CASE("NGNWebViewController hands a page navigation outside originWhitelist 
 }
 
 TEST_CASE("NGNWebViewController loads a local file, and reports one that is not there as a loading error") {
-  auto folder = std::filesystem::temp_directory_path() / ("ngn-web-view-" + std::to_string(rand()));
+  auto folder = std::filesystem::temp_directory_path() / ("ngn-web-view-" + std::to_string(getpid()) + "-" + std::to_string(rand()));
   std::filesystem::create_directories(folder);
   std::ofstream(folder / "page.html") << "<title>File</title>";
   ngn::testing::ViewFileAccess files(ngn::testing::readsEverywhere());
@@ -207,7 +231,7 @@ TEST_CASE("NGNWebViewController loads a local file, and reports one that is not 
 }
 
 TEST_CASE("NGNWebViewController loads no file outside the file boundary, reporting it as a loading error") {
-  auto folder = std::filesystem::temp_directory_path() / ("ngn-web-view-" + std::to_string(rand()));
+  auto folder = std::filesystem::temp_directory_path() / ("ngn-web-view-" + std::to_string(getpid()) + "-" + std::to_string(rand()));
   std::filesystem::create_directories(folder / "app");
   std::filesystem::create_directories(folder / "outside");
   struct Cleanup {

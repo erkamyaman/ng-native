@@ -32,11 +32,12 @@ import {
   ɵINJECTOR_SCOPE as INJECTOR_SCOPE,
   ɵprovideZonelessChangeDetectionInternal as provideZonelessChangeDetectionInternal,
   ɵsetDocument as setDocument,
-  ɵsetLocaleId as setLocaleId,
 } from '@angular/core';
+import * as core from '@angular/core';
 import {
   AppWindows,
   hairlineTokens,
+  hostInputNames,
   SafeArea,
   Screen,
   WINDOW_MOUNTER,
@@ -837,8 +838,6 @@ interface ComponentDefLike {
   id?: string;
   type?: unknown;
   encapsulation?: number;
-  /** The component's inputs, keyed by the name a template writes. */
-  inputs?: object;
   tView?: {
     directiveRegistry?:
       readonly { selectors?: readonly (readonly unknown[])[]; inputs?: object }[] | null;
@@ -880,10 +879,11 @@ export class NativeRendererFactory implements RendererFactory2 {
     // the two are both in hand, and it is what makes `:host` reachable at all.
     //
     // It is also the one sure sign that an element hosts a component, whatever the selector
-    // that put it there, which is what tells an `<x-card>` from a typo.
+    // that put it there, which is what tells an `<x-card>` from a typo. Its definition, kept on
+    // the host, is what names the component in an interaction report.
     if (host && typeof host === 'object') {
       this.engine.setHostSheet(host as EngineNode, sheet);
-      markComponentHost(host as EngineNode);
+      markComponentHost(host as EngineNode, type ?? undefined);
       this.keepInputAttributes(host as EngineNode, type);
     }
     if (type) this.declareElements(type);
@@ -909,7 +909,7 @@ export class NativeRendererFactory implements RendererFactory2 {
    * input's name is the static attribute, and a host binding that writes it later is committed.
    */
   private keepInputAttributes(host: EngineNode, def: ComponentDefLike | null): void {
-    for (const input of Object.keys(def?.inputs ?? {})) this.engine.keepAsAttribute(host, input);
+    for (const input of hostInputNames(def?.type)) this.engine.keepAsAttribute(host, input);
   }
 
   /**
@@ -1776,4 +1776,14 @@ export function mount(
   }
 
   return { componentRef, applicationRef, factory, engine };
+}
+
+/**
+ * Tells Angular's i18n runtime the app's locale, on Angular 22.2 and earlier, which keep it in a
+ * global. 22.3 removed that global and each view reads `LOCALE_ID` from its injector. A named import
+ * of the removed export fails a Vite build and is undefined under Metro; a namespace member read in
+ * place is undefined (Vite warns) and still tree-shakes.
+ */
+function setLocaleId(id: string): void {
+  (core as { ɵsetLocaleId?: (id: string) => void }).ɵsetLocaleId?.(id);
 }

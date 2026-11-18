@@ -18,6 +18,10 @@
  * }
  * ```
  *
+ * `<expo-maps-apple>` and `<expo-maps-google>`, the names `registerExpoViews` gives each platform's
+ * view on its own, are typed by the same component, so an app that writes them gets the same
+ * inputs and colour conversion.
+ *
  * One element rather than one per platform because the two views share everything an app reaches
  * for first: a marker list, a camera position, the same three events and the same two view
  * functions. What differs is inside the option objects, and each platform's native side reads only
@@ -33,7 +37,8 @@
  *
  * `setCameraPosition` and `selectMarker` are the functions `expo-maps` defines on the view. In
  * React they are methods on a ref; underneath, native finds the view by the `nativeTag` it is
- * called with, so they are called here with the tag the engine committed the view under.
+ * called with, so they are called here with the tag the engine committed the view under. On macOS
+ * they are the desktop host's `NgNativeMaps`'s, which take the tag as their first argument.
  *
  * A committed view has a tag before native has mounted anything under it, and a function called
  * in between finds no view to run on. So calls are held until the map says it is there, which both
@@ -52,6 +57,7 @@ import {
 } from '@angular/core';
 import { Engine, type EngineNode, type NativeSyntheticEvent } from '@ng-native/fabric';
 import type { AppleMaps, CameraMoveEvent, Coordinates, GoogleMaps } from 'expo-maps';
+import { desktopHost } from './desktop-host.ts';
 import { expoModule, optional } from './native.ts';
 import { registerExpoView } from './register-expo-view.ts';
 
@@ -82,8 +88,12 @@ export type MapUiSettings = AppleMaps.MapUISettings & GoogleMaps.MapUISettings;
 /** `LIGHT` and `DARK` on both; `AUTOMATIC` is iOS's and `FOLLOW_SYSTEM` Android's. */
 export type MapColorScheme = `${AppleMaps.MapColorScheme}` | `${GoogleMaps.MapColorScheme}`;
 
-/** A colour, as a template writes one: `'#ff5a36'`, `'rgba(0, 0, 0, 0.5)'`, `'green'`. */
-export type MapColor = string;
+/**
+ * A colour, as a template writes one: `'#ff5a36'`, `'rgba(0, 0, 0, 0.5)'`, `'green'`. A number is
+ * one React Native's `processColor` already returned, as `expo-maps`' own types allow, and reaches
+ * native as it is.
+ */
+export type MapColor = string | number;
 
 /**
  * A line through `coordinates`, such as a route. `contourStyle` is Apple's, `geodesic` Google's:
@@ -153,15 +163,16 @@ export interface MapViewFunctions {
 }
 
 /**
- * Make `<expo-map>` commit as the platform's map: `ExpoAppleMaps` on iOS, `ExpoGoogleMaps` on
- * Android. Each is its module's only view, so its default. Call once, before the first map.
+ * Make `<expo-map>` commit as the platform's map: `ExpoAppleMaps` on iOS and macOS, where MapKit
+ * draws it, `ExpoGoogleMaps` on Android. Each is its module's only view, so its default. Call once,
+ * before the first map.
  */
-export function registerExpoMap(platform: 'ios' | 'android'): void {
-  registerExpoView('expo-map', platform === 'ios' ? 'ExpoAppleMaps' : 'ExpoGoogleMaps');
+export function registerExpoMap(platform: 'ios' | 'android' | 'macos'): void {
+  registerExpoView('expo-map', platform === 'android' ? 'ExpoGoogleMaps' : 'ExpoAppleMaps');
 }
 
 @Component({
-  selector: 'expo-map',
+  selector: 'expo-map, expo-maps-apple, expo-maps-google',
   exportAs: 'map',
   template: '',
   host: {
@@ -193,6 +204,7 @@ export class MapView {
         return expoModule(
           'expo-maps',
           () => functions('ExpoAppleMaps') ?? functions('ExpoGoogleMaps'),
+          { desktop: desktopMaps },
         );
       },
     },
@@ -229,7 +241,7 @@ export class MapView {
   readonly circleClick = output<MapCircleClickEvent>();
 
   protected readonly nativePolylines = computed(() =>
-    this.polylines()?.map((line) => ({ ...line, color: this.engine.color(line.color) })),
+    this.polylines()?.map((line) => ({ ...line, color: this.colour(line.color) })),
   );
   protected readonly nativePolygons = computed(() =>
     this.polygons()?.map((shape) => this.filled(shape)),
@@ -283,11 +295,16 @@ export class MapView {
     return true;
   }
 
+  /** A colour as native takes it: a number is one `processColor` already returned. */
+  private colour(colour: MapColor | undefined): unknown {
+    return typeof colour === 'number' ? colour : this.engine.color(colour);
+  }
+
   private filled<T extends MapPolygon | MapCircle>(shape: T) {
     return {
       ...shape,
-      color: this.engine.color(shape.color),
-      lineColor: this.engine.color(shape.lineColor),
+      color: this.colour(shape.color),
+      lineColor: this.colour(shape.lineColor),
     };
   }
 
@@ -303,4 +320,31 @@ export class MapView {
     this.held = [];
     for (const resolve of held) resolve(ready);
   }
+}
+
+/**
+ * What the desktop host's `NgNativeMaps` takes: the map's functions, by the view's tag. A host
+ * built without one skips that command.
+ */
+type MapsHost = Partial<{
+  setCameraPosition(tag: number, position: MapCameraMove | null): Promise<void>;
+  selectMarker(tag: number, id: string | null, options: MapSelectOptions | null): Promise<void>;
+}>;
+
+/**
+ * The map's functions over the desktop host's `NgNativeMaps`, for macOS, where the map is the
+ * host's own view and a TurboModule has no view prototypes: each passes its view's tag, and null
+ * for an argument left out, which a TurboModule would drop.
+ */
+function desktopMaps(): MapViewFunctions | null {
+  const host = desktopHost<MapsHost>('NgNativeMaps')?.module;
+  if (!host) return null;
+  return {
+    async setCameraPosition(position) {
+      await host.setCameraPosition?.(this.nativeTag, position ?? null);
+    },
+    async selectMarker(id, options) {
+      await host.selectMarker?.(this.nativeTag, id ?? null, options ?? null);
+    },
+  };
 }

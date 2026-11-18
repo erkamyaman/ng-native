@@ -34,6 +34,7 @@ const {
   updateNxJson,
   NX_VERSION,
 } = require('@nx/devkit');
+const { minimatch } = require('minimatch');
 const semver = require('semver');
 const native = require('../native-app.cjs');
 const { usesWorkspaces } = require('../application/workspaces.cjs');
@@ -77,6 +78,94 @@ function registerExpoPlugin(tree) {
   );
   if (registered) return;
   updateNxJson(tree, { ...nxJson, plugins: [...plugins, EXPO_PLUGIN] });
+}
+
+/**
+ * Applies `update` to each registration of `@nx/expo`'s plugin in `nx.json`, given as an object
+ * whether it is written as one or as the plugin's name. A registration `update` returns unchanged
+ * keeps its form, and one left with nothing but the plugin's name is written as the name again.
+ */
+function updateExpoRegistrations(tree, update) {
+  const nxJson = readNxJson(tree);
+  if (!nxJson?.plugins) return;
+  let changed = false;
+  const plugins = nxJson.plugins.map((entry) => {
+    const object = typeof entry === 'string' ? { plugin: entry } : entry;
+    if (object.plugin !== EXPO_PLUGIN.plugin) return entry;
+    const updated = update(object);
+    if (updated === object) return entry;
+    changed = true;
+    return Object.keys(updated).length === 1 ? updated.plugin : updated;
+  });
+  if (changed) updateNxJson(tree, { ...nxJson, plugins });
+}
+
+/** The glob that matches an app's Expo config, which is what `@nx/expo`'s plugin infers from. */
+const appGlob = (root) => `${root}/**`;
+
+/**
+ * Keeps `@nx/expo`'s plugin off the app at `root`, through each registration's `exclude`, the way
+ * Nx documents leaving a project out of a plugin. The plugin infers `run-ios` and `run-android`
+ * from any Expo app, whatever its `expo.platforms`, and a desktop-only app runs on neither.
+ */
+function excludeFromExpoPlugin(tree, root) {
+  const glob = appGlob(root);
+  const config = appConfig(root);
+  updateExpoRegistrations(tree, (entry) => {
+    if (matchesInOrder(entry.exclude, config, false)) return entry;
+    // Last, so no later negation lets the app back in, and once.
+    const others = (entry.exclude ?? []).filter((pattern) => pattern !== glob);
+    return { ...entry, exclude: [...others, glob] };
+  });
+}
+
+/** The Expo config the plugin infers an app's targets from. */
+const appConfig = (root) => `${root}/app.json`;
+
+/**
+ * Whether `file` matches `patterns` the way Nx reads a plugin's `include` and `exclude`: in order,
+ * a later pattern overriding an earlier one, `!` negating, and a list that starts with a negation
+ * starting from a match. `empty` is the answer for no patterns.
+ */
+function matchesInOrder(patterns, file, empty) {
+  if (!patterns?.length) return empty;
+  if (!patterns.some((pattern) => pattern.startsWith('!'))) {
+    return patterns.some((pattern) => minimatch(file, pattern, { dot: true }));
+  }
+  let matched = patterns[0].startsWith('!');
+  for (const pattern of patterns) {
+    const negated = pattern.startsWith('!');
+    if (minimatch(file, negated ? pattern.slice(1) : pattern, { dot: true })) matched = !negated;
+  }
+  return matched;
+}
+
+/** Whether any registration of `@nx/expo`'s plugin infers the Expo targets of the app at `root`. */
+function expoPluginInfers(tree, root) {
+  const config = appConfig(root);
+  return (readNxJson(tree)?.plugins ?? []).some((entry) => {
+    const object = typeof entry === 'string' ? { plugin: entry } : entry;
+    const named = object.options ?? {};
+    return (
+      object.plugin === EXPO_PLUGIN.plugin &&
+      // A registration that renames them infers the app's run targets under other names.
+      (named.runIosTargetName ?? 'run-ios') === 'run-ios' &&
+      (named.runAndroidTargetName ?? 'run-android') === 'run-android' &&
+      matchesInOrder(object.include, config, true) &&
+      !matchesInOrder(object.exclude, config, false)
+    );
+  });
+}
+
+/** Undoes `excludeFromExpoPlugin`: the plugin infers the app's Expo targets again. */
+function includeInExpoPlugin(tree, root) {
+  const glob = appGlob(root);
+  updateExpoRegistrations(tree, (entry) => {
+    if (!entry.exclude?.includes(glob)) return entry;
+    const { exclude, ...rest } = entry;
+    const kept = exclude.filter((pattern) => pattern !== glob);
+    return kept.length ? { ...rest, exclude: kept } : rest;
+  });
 }
 
 /**
@@ -178,11 +267,27 @@ function declineBuilds(tree) {
 }
 
 /**
+ * With `desktopOnly`, makes it the default of the `application` generator in `nx.json`, so every
+ * app generated here starts from the desktop template: macOS alone, with no phone settings.
+ */
+function defaultToDesktopOnly(tree) {
+  const nxJson = readNxJson(tree) ?? {};
+  const key = '@ng-native/nx:application';
+  const current = nxJson.generators?.[key] ?? {};
+  if (current.desktopOnly === true) return;
+  updateNxJson(tree, {
+    ...nxJson,
+    generators: { ...nxJson.generators, [key]: { ...current, desktopOnly: true } },
+  });
+}
+
+/**
  * @param {import('@nx/devkit').Tree} tree
- * @param {{ skipInstall?: boolean, skipFormat?: boolean }} options
+ * @param {{ skipInstall?: boolean, skipFormat?: boolean, desktopOnly?: boolean }} options
  */
 async function init(tree, options = {}) {
   registerExpoPlugin(tree);
+  if (options.desktopOnly) defaultToDesktopOnly(tree);
   declineBuilds(tree);
   const { dependencies, devDependencies } = readJson(tree, 'package.json');
   const existing = Object.keys({ ...dependencies, ...devDependencies });
@@ -198,4 +303,11 @@ async function init(tree, options = {}) {
   return options.skipInstall ? () => {} : install;
 }
 
-module.exports = { init, workspaceNxVersion, EXPO_PLUGIN };
+module.exports = {
+  init,
+  workspaceNxVersion,
+  excludeFromExpoPlugin,
+  includeInExpoPlugin,
+  expoPluginInfers,
+  EXPO_PLUGIN,
+};

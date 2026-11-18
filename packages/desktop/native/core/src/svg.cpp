@@ -648,6 +648,79 @@ bool listed(const std::vector<std::string> &list, const char *name) {
   return std::find(list.begin(), list.end(), name) != list.end();
 }
 
+// A path as lines, for text set along it, measured from its start.
+struct TextTrack {
+  struct Line {
+    double x0, y0, x1, y1, length;
+  };
+  std::vector<Line> lines;
+  double length{0};
+
+  // The point `distance` along the track and its direction there in radians, the next line's at a
+  // corner; nothing off the track, whose very end is off it, as Chrome places glyphs.
+  std::optional<std::array<double, 3>> at(double distance) const {
+    if (distance < 0) {
+      return std::nullopt;
+    }
+    double from = 0;
+    for (const auto &l : lines) {
+      if (distance < from + l.length) {
+        double t = (distance - from) / l.length;
+        return std::array<double, 3>{l.x0 + (l.x1 - l.x0) * t, l.y0 + (l.y1 - l.y0) * t, std::atan2(l.y1 - l.y0, l.x1 - l.x0)};
+      }
+      from += l.length;
+    }
+    return std::nullopt;
+  }
+};
+
+// `path` as lines, each curve as 128, in order or reversed. A move between subpaths adds no length.
+TextTrack textTrack(const SvgPath &path, bool reversed) {
+  TextTrack track;
+  double x = 0, y = 0, startX = 0, startY = 0;
+  auto line = [&](double toX, double toY) {
+    track.lines.push_back({x, y, toX, toY, std::hypot(toX - x, toY - y)});
+    x = toX;
+    y = toY;
+  };
+  for (const auto &s : path.segments) {
+    const double *p = s.points;
+    switch (s.op) {
+      case SvgPath::Op::Move:
+        x = startX = p[0];
+        y = startY = p[1];
+        break;
+      case SvgPath::Op::Line:
+        line(p[0], p[1]);
+        break;
+      case SvgPath::Op::Cubic: {
+        double x0 = x, y0 = y;
+        constexpr int steps = 128;
+        for (int i = 1; i <= steps; ++i) {
+          double t = static_cast<double>(i) / steps, u = 1 - t;
+          double a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+          line(a * x0 + b * p[0] + c * p[2] + d * p[4], a * y0 + b * p[1] + c * p[3] + d * p[5]);
+        }
+        break;
+      }
+      case SvgPath::Op::Close:
+        line(startX, startY);
+        break;
+    }
+  }
+  if (reversed) {
+    std::reverse(track.lines.begin(), track.lines.end());
+    for (auto &l : track.lines) {
+      std::swap(l.x0, l.x1);
+      std::swap(l.y0, l.y1);
+    }
+  }
+  for (const auto &l : track.lines) {
+    track.length += l.length;
+  }
+  return track;
+}
+
 // The presentation an element draws with, after inheritance.
 struct Style {
   SvgBrush fill{.type = SvgBrush::Type::Color, .argb = 0xff000000};
@@ -665,6 +738,7 @@ struct Style {
   double fontSize{12};
   std::string fontFamily;
   std::string fontWeight;
+  std::string textAnchor{"start"};
   // The attributes set somewhere above or on the element, which its children inherit.
   std::unordered_set<std::string> list;
 };
@@ -757,6 +831,7 @@ class Renderer {
     s.fontSize = parent.fontSize;
     s.fontFamily = e.fontFamily.empty() ? parent.fontFamily : e.fontFamily;
     s.fontWeight = e.fontWeight.empty() ? parent.fontWeight : e.fontWeight;
+    s.textAnchor = e.textAnchor.empty() ? parent.textAnchor : e.textAnchor;
     if (e.fontSize.set) {
       s.fontSize = resolveIn(e.fontSize, parent.fontSize, parent.fontSize);
     }
@@ -838,11 +913,20 @@ class Renderer {
     }
   }
 
+  // A foreignObject's box: all of the viewport where it says nothing, as react-native-svg's
+  // ForeignObject defaults to 0%, 0%, 100% and 100%.
+  SvgRect foreignBox(const SvgElement &e) const {
+    return {length(e, "x", Axis::X), length(e, "y", Axis::Y), length(e, "width", Axis::X, vw_), length(e, "height", Axis::Y, vh_)};
+  }
+
   // What `node` covers in its own user space (before its own transform), for a gradient's or a
   // mask's objectBoundingBox.
   std::optional<SvgRect> bounds(const SvgNode &node) const {
     if (auto p = shape(node.element)) {
       return p->bounds();
+    }
+    if (node.element.kind == SvgKind::ForeignObject) {
+      return foreignBox(node.element);
     }
     if (node.element.kind != SvgKind::Group) {
       return std::nullopt;
@@ -1111,12 +1195,23 @@ class Renderer {
         }
         break;
       }
-      case SvgKind::Text:
-      case SvgKind::TSpan: {
-        double x = 0, y = 0;
-        drawText(node, style, x, y);
+      case SvgKind::ForeignObject: {
+        // Its views, at their frames from its corner, cut to its box, as react-native-svg on iOS
+        // draws them.
+        SvgRect box = foreignBox(e);
+        if (e.view != -1 && box.width > 0 && box.height > 0) {
+          canvas_->save();
+          canvas_->concat(SvgMatrix::translate(box.x, box.y));
+          canvas_->clip(rectPath(0, 0, box.width, box.height), false);
+          canvas_->views(e.view);
+          canvas_->restore();
+        }
         break;
       }
+      case SvgKind::Text:
+      case SvgKind::TSpan:
+        drawText(node, style);
+        break;
       default:
         break;
     }
@@ -1410,32 +1505,205 @@ class Renderer {
     }
   }
 
-  // A text or a span: its own position, if it sets one, then its characters, then its spans, each
-  // starting where the last one ended.
-  void drawText(const SvgNode &node, const Style &style, double &x, double &y) {
+  // Text is laid out before it is drawn: runs of characters in chunks, as SVG has them, each chunk
+  // set back by its anchor once its advance is known.
+  struct TextRun {
+    std::string text;
+    double x{0}, y{0}, advance{0};
+    double fontSize{12};
+    std::string fontFamily, fontWeight;
+    std::optional<SvgPaint> fill;
+    // The spans and textPath it is in with an opacity below 1, outermost first, which draw through
+    // no drawNode of their own: each a group, numbered in its layout, and its opacity.
+    std::vector<std::pair<int, double>> groups;
+  };
+  struct TextChunk {
+    std::string anchor;
+    std::vector<TextRun> runs;
+    // On a path: the path, and how far along it a run's x of 0 is; a run's y is then off the path.
+    std::shared_ptr<const TextTrack> track;
+    double startOffset{0};
+  };
+  struct TextLayout {
+    std::vector<TextChunk> chunks;
+    double x{0}, y{0};
+    // The next characters start a chunk: an absolute position or a path came before them.
+    bool chunkStarts{true};
+    std::shared_ptr<const TextTrack> track;
+    double startOffset{0};
+    std::vector<std::pair<int, double>> groups;
+    int nextGroup{0};
+    // The x, y, dx and dy for the next character, from the innermost element that sets one and
+    // holds it, and how many characters have been laid out.
+    std::optional<double> pendingX, pendingY, pendingDx, pendingDy;
+    size_t characters{0};
+  };
+
+  static double anchorShift(const TextChunk &chunk) {
+    double advance = chunk.runs.back().x + chunk.runs.back().advance - chunk.runs.front().x;
+    return chunk.anchor == "middle" ? -advance / 2 : chunk.anchor == "end" ? -advance : 0;
+  }
+
+  // Runs are drawn in the order they were laid out, so what a group holds is drawn together: each
+  // group is one layer around its runs, its opacity applied once, as drawNode composites an element.
+  void drawText(const SvgNode &node, const Style &style) {
+    TextLayout layout;
+    layoutText(node, style, layout);
+    std::vector<int> open;
+    for (const auto &chunk : layout.chunks) {
+      double shift = anchorShift(chunk);
+      for (const auto &run : chunk.runs) {
+        bool hidden = std::any_of(run.groups.begin(), run.groups.end(), [](const auto &g) { return g.second <= 0; });
+        if (!run.fill || hidden) {
+          continue;
+        }
+        size_t shared = 0;
+        while (shared < open.size() && shared < run.groups.size() && open[shared] == run.groups[shared].first) {
+          ++shared;
+        }
+        for (; open.size() > shared; open.pop_back()) {
+          canvas_->endLayer();
+        }
+        for (size_t i = shared; i < run.groups.size(); ++i) {
+          canvas_->beginLayer(run.groups[i].second);
+          open.push_back(run.groups[i].first);
+        }
+        drawRun(chunk, run, shift);
+      }
+    }
+    for (; !open.empty(); open.pop_back()) {
+      canvas_->endLayer();
+    }
+  }
+
+  void layoutChildren(const SvgNode &node, const Style &style, TextLayout &out) {
+    for (const auto &child : node.children) {
+      auto kind = child.element.kind;
+      if (!child.element.hidden && (kind == SvgKind::TSpan || kind == SvgKind::Text || kind == SvgKind::TextPath)) {
+        bool group = child.element.opacity < 1;
+        if (group) {
+          out.groups.emplace_back(out.nextGroup++, std::max(0.0, child.element.opacity));
+        }
+        layoutText(child, merge(style, child.element), out);
+        if (group) {
+          out.groups.pop_back();
+        }
+      }
+    }
+  }
+
+  // A text or a span: its own position, if it sets one, then its characters, then what it holds,
+  // each starting where the last ended. An x or a y starts a chunk. On a path, as Chrome sets it,
+  // x and dx are along the path from startOffset, dy is off it, and y places nothing.
+  void layoutText(const SvgNode &node, const Style &style, TextLayout &out) {
     const auto &e = node.element;
+    if (e.kind == SvgKind::TextPath) {
+      layoutTextPath(node, style, out);
+      return;
+    }
+    // An element's positions are its first character's, wherever among what it holds that is, and
+    // one inside it sets them for the same character instead; one with no characters places nothing.
+    auto saved = std::tuple{out.pendingX, out.pendingY, out.pendingDx, out.pendingDy};
+    size_t before = out.characters;
     if (!e.xs.empty()) {
-      x = resolve(e.xs[0], Axis::X, style.fontSize);
+      out.pendingX = resolve(e.xs[0], Axis::X, style.fontSize);
     }
     if (!e.ys.empty()) {
-      y = resolve(e.ys[0], Axis::Y, style.fontSize);
+      out.pendingY = resolve(e.ys[0], Axis::Y, style.fontSize);
     }
     if (!e.dxs.empty()) {
-      x += resolve(e.dxs[0], Axis::X, style.fontSize);
+      out.pendingDx = resolve(e.dxs[0], Axis::X, style.fontSize);
     }
     if (!e.dys.empty()) {
-      y += resolve(e.dys[0], Axis::Y, style.fontSize);
+      out.pendingDy = resolve(e.dys[0], Axis::Y, style.fontSize);
     }
     if (!e.content.empty()) {
-      auto fill = paint(style.fill, style.fillOpacity, style, std::nullopt);
-      x += canvas_->text(e.content, x, y, style.fontSize, style.fontFamily, style.fontWeight, fill ? &*fill : nullptr);
+      placeNextCharacter(out);
+      if (out.chunkStarts) {
+        out.chunks.push_back({.anchor = style.textAnchor, .track = out.track, .startOffset = out.startOffset});
+        out.chunkStarts = false;
+      }
+      double advance = canvas_->measureText(e.content, style.fontSize, style.fontFamily, style.fontWeight);
+      out.chunks.back().runs.push_back(
+          {.text = e.content,
+           .x = out.x,
+           .y = out.y,
+           .advance = advance,
+           .fontSize = style.fontSize,
+           .fontFamily = style.fontFamily,
+           .fontWeight = style.fontWeight,
+           .fill = paint(style.fill, style.fillOpacity, style, std::nullopt),
+           .groups = out.groups});
+      out.x += advance;
+      ++out.characters;
     }
-    for (const auto &child : node.children) {
-      if (child.element.hidden || (child.element.kind != SvgKind::TSpan && child.element.kind != SvgKind::Text)) {
+    layoutChildren(node, style, out);
+    if (out.characters == before) {
+      std::tie(out.pendingX, out.pendingY, out.pendingDx, out.pendingDy) = saved;
+    }
+  }
+
+  // The pending positions applied to the next character: an x or a y starts a chunk; on a path x
+  // and dx are along it from startOffset, dy is off it, and y places nothing.
+  static void placeNextCharacter(TextLayout &out) {
+    if (out.pendingX) {
+      out.x = *out.pendingX;
+      out.chunkStarts = true;
+    }
+    if (out.pendingY && !out.track) {
+      out.y = *out.pendingY;
+      out.chunkStarts = true;
+    }
+    out.x += out.pendingDx.value_or(0);
+    out.y += out.pendingDy.value_or(0);
+    out.pendingX = out.pendingY = out.pendingDx = out.pendingDy = std::nullopt;
+  }
+
+  // A textPath: what it holds along the shape it names, from startOffset, as a chunk of its own;
+  // what follows carries on from the path's end, as Chrome places it. One that names no shape, or
+  // is on a path already, draws nothing.
+  void layoutTextPath(const SvgNode &node, const Style &style, TextLayout &out) {
+    const auto &e = node.element;
+    const SvgNode *target = out.track ? nullptr : named(e.href);
+    auto shapePath = target ? shape(target->element) : std::nullopt;
+    if (!shapePath) {
+      return;
+    }
+    SvgPath path;
+    path.append(*shapePath, target->element.matrix.value_or(SvgMatrix{}));
+    auto track = std::make_shared<const TextTrack>(textTrack(path, e.side == "right"));
+    if (track->length <= 0) {
+      return;
+    }
+    auto offset = e.lengths.find("startOffset");
+    out.track = track;
+    out.startOffset = offset == e.lengths.end() ? 0 : resolveIn(offset->second, track->length, style.fontSize);
+    out.x = out.y = 0;
+    out.chunkStarts = true;
+    layoutChildren(node, style, out);
+    out.track.reset();
+    out.x = track->lines.back().x1;
+    out.y = track->lines.back().y1;
+    out.chunkStarts = true;
+  }
+
+  void drawRun(const TextChunk &chunk, const TextRun &run, double shift) {
+    if (!chunk.track) {
+      canvas_->text(run.text, run.x + shift, run.y, run.fontSize, run.fontFamily, run.fontWeight, *run.fill);
+      return;
+    }
+    // Each glyph at the point its middle reaches along the path, turned with the path there, from
+    // where the shaped run has it and as it shaped it, so kerning and joined forms are kept.
+    for (const auto &glyph : canvas_->glyphClusters(run.text, run.fontSize, run.fontFamily, run.fontWeight)) {
+      auto at = chunk.track->at(chunk.startOffset + shift + run.x + glyph.x + glyph.advance / 2);
+      if (!at) {
         continue;
       }
-      Style inner = merge(style, child.element);
-      drawText(child, inner, x, y);
+      double cos = std::cos((*at)[2]), sin = std::sin((*at)[2]);
+      canvas_->save();
+      canvas_->concat({cos, sin, -sin, cos, (*at)[0], (*at)[1]});
+      canvas_->glyphCluster(glyph, -glyph.advance / 2, run.y, *run.fill);
+      canvas_->restore();
     }
   }
 
@@ -1826,6 +2094,20 @@ std::optional<SvgElement> SvgDrawings::element(const ViewTree &tree, Tag tag) co
 }
 
 void SvgDrawings::changed(const ViewTree &tree, Tag tag) {
+  if (auto e = element(tree, tag); e && e->kind == SvgKind::ForeignObject) {
+    foreign_.insert(tag);
+  }
+  mark(tree, tag, false);
+  repaintAbove(tree, tag);
+}
+
+void SvgDrawings::relaidOut(const ViewTree &tree, Tag tag) {
+  repaintAbove(tree, tag);
+}
+
+// Marks the svg `tag` is an element of, if any, to be drawn again: when its document changed, or
+// always with `repaint`.
+void SvgDrawings::mark(const ViewTree &tree, Tag tag, bool repaint) {
   for (Tag at = tag; at != -1;) {
     auto e = element(tree, at);
     if (!e) {
@@ -1833,6 +2115,9 @@ void SvgDrawings::changed(const ViewTree &tree, Tag tag) {
     }
     if (e->kind == SvgKind::Svg) {
       dirty_.insert(at);
+      if (repaint) {
+        repaint_.insert(at);
+      }
       return;
     }
     const auto *found = tree.find(at);
@@ -1840,9 +2125,23 @@ void SvgDrawings::changed(const ViewTree &tree, Tag tag) {
   }
 }
 
+// A view in a foreignObject, or the foreignObject itself, changed: each svg that draws it draws
+// again, though its document is the same.
+void SvgDrawings::repaintAbove(const ViewTree &tree, Tag tag) {
+  if (foreign_.empty()) {
+    return;
+  }
+  for (const auto *found = tree.find(tag); found != nullptr; found = tree.find(found->parent)) {
+    if (foreign_.contains(found->view.tag)) {
+      mark(tree, found->view.tag, true);
+    }
+  }
+}
+
 void SvgDrawings::deleted(Tag tag) {
   dirty_.erase(tag);
   drawn_.erase(tag);
+  foreign_.erase(tag);
 }
 
 std::optional<SvgNode> SvgDrawings::node(const ViewTree &tree, Tag tag) const {
@@ -1851,6 +2150,9 @@ std::optional<SvgNode> SvgDrawings::node(const ViewTree &tree, Tag tag) const {
     return std::nullopt;
   }
   SvgNode out{.element = std::move(*e)};
+  if (out.element.kind == SvgKind::ForeignObject) {
+    out.element.view = tag;
+  }
   for (Tag child : tree.find(tag)->children) {
     if (auto c = node(tree, child); c && c->element.kind != SvgKind::Svg) {
       out.children.push_back(std::move(*c));
@@ -1862,6 +2164,8 @@ std::optional<SvgNode> SvgDrawings::node(const ViewTree &tree, Tag tag) const {
 std::vector<SvgDrawings::Drawing> SvgDrawings::settle(const ViewTree &tree) {
   std::vector<Tag> dirty(dirty_.begin(), dirty_.end());
   dirty_.clear();
+  auto repaint = std::move(repaint_);
+  repaint_.clear();
   std::sort(dirty.begin(), dirty.end());
   std::vector<Drawing> out;
   for (Tag tag : dirty) {
@@ -1872,6 +2176,9 @@ std::vector<SvgDrawings::Drawing> SvgDrawings::settle(const ViewTree &tree) {
     auto document = std::make_shared<const SvgDocument>(SvgDocument{.root = std::move(*root)});
     auto known = drawn_.find(tag);
     if (known != drawn_.end() && *known->second == *document) {
+      if (repaint.contains(tag)) {
+        out.push_back({.svg = tag, .document = known->second});
+      }
       continue;
     }
     drawn_[tag] = document;

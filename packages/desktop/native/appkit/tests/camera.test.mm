@@ -2,7 +2,11 @@
 // no NSCameraUsageDescription, so asking answers at once, and a session never starts unallowed.
 #include "../camera.h"
 
+#import <ImageIO/ImageIO.h>
+
 #include <doctest/doctest.h>
+
+#include <unistd.h>
 
 #include <atomic>
 #include <optional>
@@ -42,6 +46,17 @@ bool spinUntil(Done done) {
     CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
   }
   return done();
+}
+
+// A recording's answer, set on the main thread the test polls it from: the capture answers on its
+// session queue.
+std::function<void(const std::string &)> answerOnMain(std::shared_ptr<std::optional<std::string>> answer) {
+  return [answer](const std::string &error) {
+    std::string message = error;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      *answer = message;
+    });
+  };
 }
 
 } // namespace
@@ -160,7 +175,7 @@ TEST_CASE("A recording keeps its own copy of the request, which the caller may l
     capture->stop();
     return;
   }
-  NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:@"ngn-camera-test-copy.mov"];
+  NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ngn-camera-test-copy-%d.mov", getpid()]];
   [NSFileManager.defaultManager removeItemAtPath:path error:nil];
   // Shared, so a late answer has somewhere to go.
   auto answer = std::make_shared<std::optional<std::string>>();
@@ -168,7 +183,7 @@ TEST_CASE("A recording keeps its own copy of the request, which the caller may l
     // Gone, and its memory written over, before the session's queue reads it.
     auto request = std::make_unique<ngn::CameraRecordingRequest>(
         ngn::CameraRecordingRequest{.path = path.UTF8String, .maxDuration = 0.5, .sound = false});
-    capture->startRecording(*request, [answer](const std::string &e) { *answer = e; });
+    capture->startRecording(*request, answerOnMain(answer));
     request->path.assign(4096, 'x');
     request.reset();
   }
@@ -183,6 +198,288 @@ TEST_CASE("A recording keeps its own copy of the request, which the caller may l
   capture->stop();
   spinUntil([&] { return !capture->recording(); });
   [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+}
+
+// A session that keeps each preset it is set to, refuses one as a camera without it would, and
+// notes whether a movie's video was mirrored as its output comes off.
+@interface NGNPresetSession : AVCaptureSession
+@property(atomic, copy) NSArray<NSString *> *presets;
+@property(atomic, copy) NSString *refused;
+@property(atomic) int moviesMirrored;
+@property(atomic) int moviesNotMirrored;
+@end
+
+@implementation NGNPresetSession
+- (void)setSessionPreset:(AVCaptureSessionPreset)preset {
+  [super setSessionPreset:preset];
+  self.presets = [(self.presets != nil ? self.presets : @[]) arrayByAddingObject:preset];
+}
+- (BOOL)canSetSessionPreset:(AVCaptureSessionPreset)preset {
+  return ![preset isEqualToString:self.refused] && [super canSetSessionPreset:preset];
+}
+- (void)removeOutput:(AVCaptureOutput *)output {
+  AVCaptureConnection *video = [output connectionWithMediaType:AVMediaTypeVideo];
+  if ([output isKindOfClass:AVCaptureMovieFileOutput.class] && video.isVideoMirroringSupported) {
+    if (video.videoMirrored) {
+      self.moviesMirrored++;
+    } else {
+      self.moviesNotMirrored++;
+    }
+  }
+  [super removeOutput:output];
+}
+@end
+
+TEST_CASE("A recording is made at the preset its request names, or High for another or one the camera lacks, and is not mirrored") {
+  // A screen input stands in for a camera: it gives the session video with no camera permission.
+  AVCaptureScreenInput *screen = [[AVCaptureScreenInput alloc] initWithDisplayID:CGMainDisplayID()];
+  struct Case {
+    const char *preset;
+    AVCaptureSessionPreset expected;
+    AVCaptureSessionPreset refused{nil};
+  };
+  for (auto [preset, expected, refused] :
+       {Case{"640x480", AVCaptureSessionPreset640x480}, Case{"Medium", AVCaptureSessionPresetMedium}, Case{"Low", AVCaptureSessionPresetLow},
+        Case{"iFrame960x540", AVCaptureSessionPresetiFrame960x540}, Case{"iFrame1280x720", AVCaptureSessionPresetiFrame1280x720},
+        Case{"", AVCaptureSessionPresetHigh}, Case{"Bogus", AVCaptureSessionPresetHigh},
+        Case{"Medium", AVCaptureSessionPresetHigh, AVCaptureSessionPresetMedium}}) {
+    CAPTURE(preset);
+    NGNPresetSession *session = [NGNPresetSession new];
+    if (screen == nil || ![session canAddInput:screen]) {
+      MESSAGE("no screen input here; skipped");
+      return;
+    }
+    [session addInput:screen];
+    session.sessionPreset = AVCaptureSessionPresetPhoto;
+    session.presets = @[];
+    session.refused = refused;
+    if (![session canSetSessionPreset:expected]) {
+      MESSAGE("the screen input has no such preset; skipped");
+      [session removeInput:screen];
+      continue;
+    }
+    auto capture = ngn::appkit::sessionCapture(session, [AVCapturePhotoOutput new]);
+    bool running = false;
+    capture->start([&] { running = true; });
+    REQUIRE(spinUntil([&] { return running; }));
+    if (!session.running) {
+      MESSAGE("the screen input does not run here; skipped");
+      capture->stop();
+      return;
+    }
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ngn-camera-test-preset-%d.mov", getpid()]];
+    auto answer = std::make_shared<std::optional<std::string>>();
+    capture->startRecording({.path = path.UTF8String, .maxDuration = 0.3, .sound = false, .preset = preset},
+                            answerOnMain(answer));
+    for (int i = 0; i < 3 && !answer->has_value(); i++) {
+      spinUntil([&] { return answer->has_value(); });
+    }
+    REQUIRE(answer->has_value());
+    CHECK(answer->value() == "");
+    // Set for the recording, then back to the photo preset after it.
+    REQUIRE(session.presets.count >= 2);
+    CHECK([session.presets[0] isEqualToString:expected]);
+    CHECK([session.presets.lastObject isEqualToString:AVCaptureSessionPresetPhoto]);
+    auto clip = ngn::appkit::movieClip(path.UTF8String);
+    CHECK(clip);
+    // Whatever the connection would do by itself, the movie is not mirrored.
+    CHECK(session.moviesMirrored == 0);
+    if (session.moviesNotMirrored == 0) {
+      MESSAGE("the screen input cannot mirror; mirroring unchecked");
+    }
+    capture->stop();
+    spinUntil([&] { return !capture->recording(); });
+    [session removeInput:screen];
+    [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+  }
+}
+
+TEST_CASE("A recording set up ahead starts on that setup, and a setup taken down leaves the session as it was") {
+  AVCaptureScreenInput *screen = [[AVCaptureScreenInput alloc] initWithDisplayID:CGMainDisplayID()];
+  NGNPresetSession *session = [NGNPresetSession new];
+  if (screen == nil || ![session canAddInput:screen] || ![session canSetSessionPreset:AVCaptureSessionPreset640x480]) {
+    MESSAGE("no screen input here; skipped");
+    return;
+  }
+  [session addInput:screen];
+  session.sessionPreset = AVCaptureSessionPresetPhoto;
+  session.presets = @[];
+  auto capture = ngn::appkit::sessionCapture(session, [AVCapturePhotoOutput new]);
+  NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"ngn-camera-test-prepared-%d.mov", getpid()]];
+  ngn::CameraRecordingRequest request{.path = path.UTF8String, .maxDuration = 0.3, .sound = false, .preset = "640x480"};
+
+  capture->prepareRecording(request);
+  REQUIRE(spinUntil([&] { return session.outputs.count == 1; }));
+  CHECK([session.sessionPreset isEqualToString:AVCaptureSessionPreset640x480]);
+  // Asked again for the same, nothing changes.
+  capture->prepareRecording(request);
+  capture->unprepareRecording();
+  // The whole take-down: the output off, then the photo preset back, which comes after it.
+  CHECK(spinUntil([&] {
+    return session.outputs.count == 0 && session.presets.count == 2 && [session.sessionPreset isEqualToString:AVCaptureSessionPresetPhoto];
+  }));
+
+  capture->prepareRecording(request);
+  bool running = false;
+  capture->start([&] { running = true; });
+  REQUIRE(spinUntil([&] { return running; }));
+  if (!session.running) {
+    MESSAGE("the screen input does not run here; skipped");
+    capture->stop();
+    return;
+  }
+  REQUIRE(session.presets.count == 3);
+  auto answer = std::make_shared<std::optional<std::string>>();
+  capture->startRecording(request, answerOnMain(answer));
+  for (int i = 0; i < 3 && !answer->has_value(); i++) {
+    spinUntil([&] { return answer->has_value(); });
+  }
+  REQUIRE(answer->has_value());
+  CHECK(answer->value() == "");
+  CHECK(ngn::appkit::movieClip(path.UTF8String));
+  // Asked for with no sound, as with the microphone refused: a movie with no audio track.
+  AVURLAsset *movie = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
+  CHECK([movie tracksWithMediaType:AVMediaTypeVideo].count == 1);
+  CHECK([movie tracksWithMediaType:AVMediaTypeAudio].count == 0);
+  // The recording used the setup made ahead, set no preset of its own, and took it down after.
+  CHECK(session.presets.count == 4);
+  CHECK([session.presets.lastObject isEqualToString:AVCaptureSessionPresetPhoto]);
+  CHECK(session.outputs.count == 0);
+
+  // Taking the setup down while a recording runs leaves the recording to finish whole.
+  auto second = std::make_shared<std::optional<std::string>>();
+  request.maxDuration = 1;
+  capture->startRecording(request, answerOnMain(second));
+  REQUIRE(spinUntil([&] { return session.outputs.count == 1; }));
+  CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.3, false);
+  capture->unprepareRecording();
+  for (int i = 0; i < 3 && !second->has_value(); i++) {
+    spinUntil([&] { return second->has_value(); });
+  }
+  REQUIRE(second->has_value());
+  CHECK(second->value() == "");
+  auto whole = ngn::appkit::movieClip(path.UTF8String);
+  REQUIRE(whole);
+  CHECK(whole->duration > 900);
+  capture->stop();
+  [session removeInput:screen];
+  [NSFileManager.defaultManager removeItemAtPath:path error:nil];
+}
+
+// A photo output that notes, instead of taking a still, what the session's preset was as it was
+// asked, and whether on the main thread.
+@interface NGNOrderedPhotoOutput : AVCapturePhotoOutput
+@property(atomic, weak) NGNPresetSession *session;
+@property(atomic) NSInteger presetsWhenAsked;
+@property(atomic) BOOL askedOnMain;
+@property(atomic) BOOL asked;
+@end
+
+@implementation NGNOrderedPhotoOutput
+- (void)capturePhotoWithSettings:(AVCapturePhotoSettings *)settings delegate:(id<AVCapturePhotoCaptureDelegate>)delegate {
+  self.presetsWhenAsked = static_cast<NSInteger>(self.session.presets.count);
+  self.askedOnMain = NSThread.isMainThread;
+  self.asked = YES;
+}
+@end
+
+TEST_CASE("A photo asked for just after the camera's setup changes is taken once the change is made, off the main thread") {
+  // As the sheet's switch back to photos does: the recording setup comes down on the session's
+  // queue, and a still taken before it has come down finds the session mid-change.
+  AVCaptureScreenInput *screen = [[AVCaptureScreenInput alloc] initWithDisplayID:CGMainDisplayID()];
+  NGNPresetSession *session = [NGNPresetSession new];
+  if (screen == nil || ![session canAddInput:screen] || ![session canSetSessionPreset:AVCaptureSessionPreset640x480]) {
+    MESSAGE("no screen input here; skipped");
+    return;
+  }
+  [session addInput:screen];
+  session.sessionPreset = AVCaptureSessionPresetPhoto;
+  session.presets = @[];
+  NGNOrderedPhotoOutput *output = [NGNOrderedPhotoOutput new];
+  output.session = session;
+  auto capture = ngn::appkit::sessionCapture(session, output);
+  bool running = false;
+  capture->start([&] { running = true; });
+  REQUIRE(spinUntil([&] { return running; }));
+  if (!session.running) {
+    MESSAGE("the screen input does not run here; skipped");
+    capture->stop();
+    return;
+  }
+  capture->prepareRecording({.path = "/tmp/ngn-camera-test-never-written.mov", .sound = false, .preset = "640x480"});
+  capture->unprepareRecording();
+  capture->capturePhoto([](CGImageRef, NSDictionary *, const std::string &) {});
+  REQUIRE(spinUntil([&] { return output.asked; }));
+  // Set for video, then back for photos, both before the still.
+  CHECK(output.presetsWhenAsked == 2);
+  CHECK_FALSE(output.askedOnMain);
+  capture->stop();
+  REQUIRE(spinUntil([&] { return !session.running; }));
+
+  // An output with no video to take a still from refuses by an exception: answered as an error.
+  NGNPresetSession *other = [NGNPresetSession new];
+  [session removeInput:screen];
+  [other addInput:screen];
+  auto unconnected = ngn::appkit::sessionCapture(other, [AVCapturePhotoOutput new]);
+  bool started = false;
+  unconnected->start([&] { started = true; });
+  REQUIRE(spinUntil([&] { return started; }));
+  auto refused = std::make_shared<std::optional<std::string>>();
+  unconnected->capturePhoto([refused](CGImageRef image, NSDictionary *, const std::string &error) {
+    std::string message = image == nullptr ? error : "a picture";
+    dispatch_async(dispatch_get_main_queue(), ^{
+      *refused = message;
+    });
+  });
+  REQUIRE(spinUntil([&] { return refused->has_value(); }));
+  CHECK_FALSE(refused->value().empty());
+  CHECK(refused->value() != "a picture");
+  MESSAGE("refused with: " << refused->value());
+  unconnected->stop();
+  spinUntil([&] { return !other.running; });
+  [other removeInput:screen];
+}
+
+TEST_CASE("A picture is written as the PNG or the JPEG its request asks for, a JPEG at its quality") {
+  // A noisy picture, which a JPEG's quality changes the size of.
+  CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+  CGContextRef context = CGBitmapContextCreate(nullptr, 64, 48, 8, 0, space, kCGImageAlphaPremultipliedLast);
+  CGColorSpaceRelease(space);
+  auto *pixels = static_cast<uint8_t *>(CGBitmapContextGetData(context));
+  for (size_t i = 0; i < CGBitmapContextGetBytesPerRow(context) * 48; i++) {
+    pixels[i] = static_cast<uint8_t>((i * 7919) % 251);
+  }
+  CGImageRef image = CGBitmapContextCreateImage(context);
+  CGContextRelease(context);
+  NSString *folder = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSUUID UUID].UUIDString];
+  [NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
+  auto written = [&](const std::string &name, const std::string &format, double quality) {
+    ngn::CameraPictureRequest request{.path = std::string(folder.UTF8String) + "/" + name, .quality = quality, .format = format};
+    REQUIRE(ngn::appkit::writePicture(image, request));
+    NSURL *url = [NSURL fileURLWithPath:@(request.path.c_str())];
+    CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)url, nullptr);
+    REQUIRE(source != nullptr);
+    NSString *type = (__bridge NSString *)CGImageSourceGetType(source);
+    NSDictionary *properties = CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source, 0, nullptr));
+    CFRelease(source);
+    CHECK([properties[(__bridge NSString *)kCGImagePropertyPixelWidth] intValue] == 64);
+    CHECK([properties[(__bridge NSString *)kCGImagePropertyPixelHeight] intValue] == 48);
+    NSNumber *size = [NSFileManager.defaultManager attributesOfItemAtPath:@(request.path.c_str()) error:nil][NSFileSize];
+    return std::make_pair(std::string(type.UTF8String), size.longLongValue);
+  };
+  auto png = written("a.png", "png", 0.1);
+  CHECK(png.first == "public.png");
+  // Lossless: the quality changes nothing.
+  CHECK(written("b.png", "png", 1).second == png.second);
+  auto low = written("a.jpg", "jpg", 0.1);
+  auto high = written("b.jpg", "jpg", 1);
+  CHECK(low.first == "public.jpeg");
+  CHECK(high.first == "public.jpeg");
+  CHECK(low.second < high.second);
+  // A folder that is not there: nothing is written, and it says so.
+  CHECK_FALSE(ngn::appkit::writePicture(image, {.path = "/nonexistent-ngn-folder/a.png", .format = "png"}));
+  CGImageRelease(image);
+  [NSFileManager.defaultManager removeItemAtPath:folder error:nil];
 }
 
 TEST_CASE("The microphone counts for a recording's sound only when allowed, which is never asked") {

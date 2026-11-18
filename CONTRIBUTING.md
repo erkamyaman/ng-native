@@ -81,10 +81,16 @@ pnpm --filter documentation dev  # the documentation site, on http://localhost:5
 - `packages/testing` has tests of its own, for the fake Fabric and the Testing Library layer it
   ships to everyone else.
 - `packages/components/ios/tests` unit-tests the iOS code that runs without React Native (the view
-  binder, menu building, the responder hooks' helpers, undo steps and dropped items) under XCTest
-  on a simulator: `pnpm --filter @ng-native/components test:ios` with one simulator booted, or the
-  one `NGN_IOS_TEST_SIMULATOR` names. It needs Xcode, so neither `pnpm test` nor CI runs it: run it
-  by hand after a change to that code.
+  binder, menu building, the responder hooks' helpers, undo steps, dropped items and which scene a
+  window opens in) under XCTest on a simulator: `pnpm --filter @ng-native/components test:ios` with
+  one simulator booted, or the one `NGN_IOS_TEST_SIMULATOR` names. It needs Xcode, so neither
+  `pnpm test` nor CI runs it: run it by hand after a change to that code.
+- `packages/components/android/src/test` unit-tests the Android code's decisions that need no
+  device (shortcut matching, which view's menu a press opens, the window callback's wrapping and
+  the menu host's reload handling) on the JVM: `pnpm --filter @ng-native/components test:android`
+  runs them with Gradle through the canary's Android project, prebuilding it first if it is not
+  there. It needs JDK 17 and the Android SDK. CI runs them in the native builds' Android job
+  whenever it builds the canary's APK.
 
 `packages/nx` and `packages/schematics` carry `*.test.ts` files next to the source they test, and
 `packages/web-compat` does too, with the Web Platform Tests below. Every package not named here has
@@ -226,6 +232,9 @@ See [RELEASING.md](./docs/RELEASING.md) for how an actual release goes out.
 - Commit messages here are sentence-case summaries of the change, often followed by a body
   explaining why (see `git log --oneline -20` for the style); there is no conventional-commits
   prefix convention (`feat:`, `fix:`, and so on) in use.
+- Every package is built from a ready pull request and published to
+  [pkg.pr.new](https://pkg.pr.new) (`.github/workflows/preview.yml`); a comment on the pull request
+  gives the install commands for trying the change in another project.
 
 ### Checking a change against main
 

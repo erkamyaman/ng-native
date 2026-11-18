@@ -4,6 +4,7 @@
 #include "ngn/svg.h"
 
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <sstream>
 #include <string>
@@ -138,24 +139,55 @@ struct Recorder : ngn::SvgCanvas {
   void image(const std::string &uri, const ngn::SvgRect &r, const std::string &align, int meetOrSlice, double opacity) override {
     calls.push_back("image " + uri + " " + n(r.x) + "," + n(r.y) + " " + n(r.width) + "x" + n(r.height));
   }
-  double text(
+  // Ten points a byte, so a test reads an advance from a string's length, less three for each "AV"
+  // kerned together, so a run's advance is not the sum of its glyphs'.
+  double measureText(const std::string &text, double fontSize, const std::string &family, const std::string &weight) override {
+    double kerned = 0;
+    for (size_t at = text.find("AV"); at != std::string::npos; at = text.find("AV", at + 1)) {
+      kerned += 3;
+    }
+    return static_cast<double>(text.size()) * 10 - kerned;
+  }
+  // A crude stand-in for grapheme clusters: an ASCII byte and the bytes of any characters that are
+  // not ASCII after it, each placed where it ends in the run less its own advance.
+  std::vector<ngn::SvgGlyphCluster> glyphClusters(
+      const std::string &text, double fontSize, const std::string &family, const std::string &weight) override {
+    std::vector<ngn::SvgGlyphCluster> out;
+    for (size_t i = 0; i < text.size(); ++i) {
+      if (out.empty() || static_cast<uint8_t>(text[i]) < 0x80) {
+        out.push_back({});
+      }
+      out.back().text += text[i];
+      if (i + 1 == text.size() || static_cast<uint8_t>(text[i + 1]) < 0x80) {
+        auto &c = out.back();
+        c.advance = measureText(c.text, fontSize, family, weight);
+        c.x = measureText(text.substr(0, i + 1), fontSize, family, weight) - c.advance;
+      }
+    }
+    return out;
+  }
+  void glyphCluster(const ngn::SvgGlyphCluster &cluster, double x, double y, const ngn::SvgPaint &fill) override {
+    calls.push_back("glyphs '" + cluster.text + "' " + n(x) + "," + n(y) + " " + paint(fill));
+  }
+  void text(
       const std::string &text,
       double x,
       double y,
       double fontSize,
       const std::string &family,
       const std::string &weight,
-      const ngn::SvgPaint *fill) override {
-    calls.push_back("text '" + text + "' " + n(x) + "," + n(y) + " " + n(fontSize) + (fill ? " " + paint(*fill) : ""));
-    return static_cast<double>(text.size()) * 10;
+      const ngn::SvgPaint &fill) override {
+    calls.push_back("text '" + text + "' " + n(x) + "," + n(y) + " " + n(fontSize) + " " + paint(fill));
   }
+  void views(facebook::react::Tag view) override { calls.push_back("views " + std::to_string(view)); }
 
   // The calls that draw, without the state around them.
   std::vector<std::string> drawn() const {
     std::vector<std::string> out;
     for (const auto &c : calls) {
-      if (c.rfind("fill", 0) == 0 || c.rfind("stroke", 0) == 0 || c.rfind("text", 0) == 0 || c.rfind("image", 0) == 0 ||
-          c.rfind("clip", 0) == 0) {
+      if (c.rfind("fill", 0) == 0 || c.rfind("stroke", 0) == 0 || c.rfind("text", 0) == 0 || c.rfind("glyphs", 0) == 0 ||
+          c.rfind("image", 0) == 0 || c.rfind("clip", 0) == 0 ||
+          c.rfind("views", 0) == 0) {
         out.push_back(c);
       }
     }

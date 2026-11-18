@@ -20,6 +20,8 @@
  */
 import { InjectionToken, Service, inject, type Signal } from '@angular/core';
 import type { NativeFile, PickedDirectory } from './file-system.ts';
+import { base64Of } from './base64.ts';
+import { desktopFolder } from './desktop-file-system.ts';
 import { expoModule, presence, present } from './native.ts';
 
 type Expo = typeof import('expo-document-picker');
@@ -77,6 +79,7 @@ export class DocumentPicker {
         );
         // Missing from the build, or not on this platform: as it is, to say so or to be inert.
         if (!present(expo)) return expo;
+        const desktop = expo as Partial<DesktopDialogs>;
         return {
           getDocumentAsync: (options) => expo!.getDocumentAsync(options),
           // Loaded when a folder is first asked for, so picking files never evaluates it.
@@ -84,6 +87,20 @@ export class DocumentPicker {
             const folders = fileSystem()?.Directory?.pickDirectoryAsync;
             return folders ? folders() : null;
           },
+          // The desktop host's own dialogs, which an `expo-*` package has none of on a desktop OS.
+          ...(desktop.pickDirectoryAsync && {
+            pickDirectoryAsync: () => desktopFolder(desktop.pickDirectoryAsync!()),
+          }),
+          ...(desktop.saveDocumentAsync && {
+            saveDocumentAsync: (options: NativeSaveOptions) =>
+              desktop.saveDocumentAsync!({
+                ...options,
+                contents:
+                  typeof options.contents === 'string'
+                    ? options.contents
+                    : { base64: base64Of(options.contents) },
+              }),
+          }),
         };
       },
     },
@@ -160,6 +177,17 @@ function fileSystem(): typeof import('expo-file-system') | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The desktop host's `NgNativeDocumentPicker`, beside Expo's `getDocumentAsync`: a folder as
+ * `{ uri }` or null when dismissed, and a save panel taking bytes as `{ base64 }`.
+ */
+interface DesktopDialogs {
+  pickDirectoryAsync(): Promise<{ uri: string } | null>;
+  saveDocumentAsync(
+    options: Omit<NativeSaveOptions, 'contents'> & { contents: string | { base64: string } },
+  ): Promise<string | null>;
 }
 
 /** Android codes a dismissed picker ERR_PICKER_CANCELLED, iOS ERR_FILE_PICKING_CANCELLED. */

@@ -63,7 +63,7 @@ import {
   SCREEN_SHOWN,
   StatusBar,
 } from '@ng-native/device';
-import { bindRouteInputs } from './bind-route-inputs.ts';
+import { ROUTE_INPUT_BINDER, bindRouteInputs } from './bind-route-inputs.ts';
 import { NativeBack, isShowing, restoreSnapshot } from './native-back.ts';
 import { navigationIntent, type NativeIntent } from './native-navigation.ts';
 import { NativePlatformLocation } from './native-platform-location.ts';
@@ -223,6 +223,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * `RouterOutletContract` directly, which is how its own tests drive it.
    */
   private readonly router = inject(Router, { optional: true });
+  private readonly inputBinder = inject(ROUTE_INPUT_BINDER);
   private readonly routerConfig = inject(ROUTER_CONFIGURATION, { optional: true });
   /** For a refused back to reach the screen as native's own report would. */
   private readonly engine = inject(HostEngine, { optional: true });
@@ -782,7 +783,9 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * per screen rather than once, for a test that stands the router in.
    */
   private bindInputs(ref: ComponentRef<unknown>, route: ActivatedRoute): () => void {
-    return this.router?.componentInputBindingEnabled ? bindRouteInputs(ref, route) : () => {};
+    return this.router?.componentInputBindingEnabled
+      ? bindRouteInputs(ref, route, this.inputBinder)
+      : () => {};
   }
 
   /**

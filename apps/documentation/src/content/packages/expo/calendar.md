@@ -33,10 +33,12 @@ The module's object API needs a development build: Expo Go does not have it.
 ```ts
 import { Component, inject, signal } from '@angular/core';
 import type { ExpoCalendarEvent } from 'expo-calendar';
+import { Text } from '@ng-native/components';
 import { Calendar } from '@ng-native/expo/calendar';
 
 @Component({
   selector: 'app-this-week',
+  imports: [Text],
   template: `
     @for (event of events(); track $index) {
       <text>{{ event.title }}</text>
@@ -126,6 +128,16 @@ has text for. `writePermission` needs `writeOnlyAccess: true`, and `permission` 
 ```json
 { "plugins": [["expo-calendar", { "writeOnlyAccess": true }]] }
 ```
+
+On macOS the desktop host's EventKit answers: the permissions, reading calendars and events,
+`createCalendar()` (`title`, `color`, `entityType` and `sourceId`), and, on the handles,
+`createEvent()`, `createReminder()`, `listEvents()`, `listReminders()` and `delete()` on a calendar
+and `update()` and `delete()` on an event or a reminder. Adding an event needs `writePermission` or
+`permission`; changing or deleting one, and creating or deleting a calendar of events, needs
+`permission`; every reminder call, a list of reminders included, needs `remindersPermission`.
+Without the access asked for, a write rejects with a message naming the permission. A new calendar
+goes in the account given as `sourceId`, or the one the default calendar of its kind is in. An
+event's attendees and a calendar's own `update()` are not available there.
 
 ## Without the module
 

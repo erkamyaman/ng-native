@@ -182,15 +182,25 @@ branch a stacked PR depends on) show only the fix, its tests and the version pla
 
 ## 11. Open the PR
 
+In this step `<base>` is `origin/main`, or for a stacked PR the remote branch it depends on
+(`origin/<parent>`).
+
 - Turn step 5's WIP commit and what followed into the PR's commits (`git commit --amend`, or
-  `git reset --soft <base>` and commit again), each with a sentence-case summary: no `feat:`/`fix:`
-  prefix, no co-author trailer.
-- When the branch conflicts with main, or both it and main have changed `pnpm-lock.yaml` since its
-  base, rebase onto main and run the affected tests again. Otherwise it needs no rebase, however far
-  main has moved.
-- Before pushing, check that no release is running. A merge while a release runs breaks its push.
-  `gh api 'repos/ng-native/ng-native/actions/workflows/release.yml/runs?per_page=1' --jq '.workflow_runs[0].status'`
-  must print `completed`.
+  `git reset --soft $(git merge-base HEAD <base>)` and commit again), each with a sentence-case
+  summary: no `feat:`/`fix:` prefix, no co-author trailer. Reset to the commit the branch grew from,
+  never to `<base>` itself: once it has moved, that commits the old checkout's files on top of the newer
+  base and silently reverts everything merged in between (#1479 undid #1451 this way).
+- `git fetch origin` first. When the branch conflicts with `<base>`, or both it and main have changed
+  `pnpm-lock.yaml` since its base, rebase onto it (`git rebase <base>`) and run the affected tests again. Otherwise it needs no
+  rebase, however far main has moved.
+- Before every push, `git fetch origin` and read `git diff <base>...HEAD`: only the files this change
+  meant to touch, and in them only its own hunks. Any other file or hunk, above all one deleted or
+  reverted, means the history is wrong: rebuild the branch on `<base>` before pushing.
+- Before pushing, check that no release of main is running. A merge while one runs breaks its push,
+  and a push starts CI that competes with it for macOS runners. A dry run on another branch doesn't
+  count.
+  `gh api --paginate 'repos/ng-native/ng-native/actions/workflows/release.yml/runs?branch=main&per_page=100' --jq '.workflow_runs[]|select(.status!="completed")|.id'`
+  must succeed and print nothing; a failed request means wait and check again.
 - Push, then open the PR. `gh pr create` uses GraphQL. When that limit is spent, use REST:
   `gh api repos/ng-native/ng-native/pulls -f title=... -f head=... -f base=<main, or the branch a stacked PR depends on> -f body=...`.
 - The body has these sections, and says `Closes #<n>`. No AI attribution anywhere.

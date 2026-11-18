@@ -86,14 +86,22 @@ CTFontRef makeFont(const TextAttributes &a) {
   return (CTFontRef)CFBridgingRetain(font);
 }
 
-CTTextAlignment ctAlignment(std::optional<TextAlignment> alignment) {
+// A fragment's alignment as React Native iOS resolves it (RCTResolveTextAlignment): in a
+// right-to-left layout, natural and start go right, end goes left, and left and right swap. Text
+// with no alignment follows the layout's direction too, not its own script, as TextKit's natural
+// alignment follows the app's direction on iOS: a Hebrew paragraph in a left-to-right layout is on
+// the left.
+CTTextAlignment ctAlignment(std::optional<TextAlignment> alignment, std::optional<LayoutDirection> layoutDirection) {
+  bool rightToLeft = layoutDirection == LayoutDirection::RightToLeft;
+  CTTextAlignment start = rightToLeft ? kCTTextAlignmentRight : kCTTextAlignmentLeft;
+  CTTextAlignment end = rightToLeft ? kCTTextAlignmentLeft : kCTTextAlignmentRight;
   switch (alignment.value_or(TextAlignment::Natural)) {
-    case TextAlignment::Left: return kCTTextAlignmentLeft;
     case TextAlignment::Center: return kCTTextAlignmentCenter;
-    case TextAlignment::Right: return kCTTextAlignmentRight;
     case TextAlignment::Justified: return kCTTextAlignmentJustified;
-    case TextAlignment::End: return kCTTextAlignmentRight;
-    default: return kCTTextAlignmentNatural;
+    case TextAlignment::Left: return start;
+    case TextAlignment::Right:
+    case TextAlignment::End: return end;
+    default: return start;
   }
 }
 
@@ -312,7 +320,7 @@ CFAttributedStringRef makeAttributedString(const AttributedString &attributedStr
 
     // Paragraph style: alignment, and lineHeight as a fixed line box (as React Native iOS does),
     // with the glyphs centred in it through a baseline offset applied at draw time.
-    CTTextAlignment alignment = ctAlignment(a.alignment);
+    CTTextAlignment alignment = ctAlignment(a.alignment, a.layoutDirection);
     CTWritingDirection direction = ctWritingDirection(a.baseWritingDirection);
     CGFloat lineHeight = 0;
     if (!std::isnan(a.lineHeight) && a.lineHeight > 0) {
@@ -454,8 +462,8 @@ void drawText(const TextLayout &layout, CGContextRef context, CGPoint origin, CG
       x = (boxWidth - l.width) / 2;
     } else if (alignment == kCTTextAlignmentRight) {
       x = boxWidth - l.width;
-    } else if ((alignment == kCTTextAlignmentNatural || alignment == kCTTextAlignmentJustified) && l.rightToLeft) {
-      // Natural follows the paragraph's direction, as does a justified paragraph's last line.
+    } else if (alignment == kCTTextAlignmentJustified && l.rightToLeft) {
+      // A justified paragraph's last line follows the paragraph's direction.
       x = boxWidth - l.width;
     }
     CGContextSetTextPosition(context, origin.x + x, origin.y + l.origin.y);
