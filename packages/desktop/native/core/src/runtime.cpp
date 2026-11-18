@@ -62,10 +62,6 @@ class DevUI final : public IDevUIDelegate {
   std::function<void()> &resumed_;
 };
 
-LayoutConstraints constraints(const SurfaceMetrics &metrics) {
-  return {.minimumSize = metrics.size, .maximumSize = metrics.size};
-}
-
 LayoutContext context(const SurfaceMetrics &metrics) {
   LayoutContext context;
   context.pointScaleFactor = metrics.pointScale;
@@ -239,6 +235,7 @@ bool Runtime::loadBundle() {
   }
   // With dev mode on, ReactHost downloads the source path through the dev server helper, which
   // takes the bundle URL as it is.
+  direction_.instanceStarted();
   return devServer_ ? host_->loadScript("", bundle_) : host_->loadScript(bundle_, bundle_);
 }
 
@@ -249,7 +246,7 @@ void Runtime::startSurface(SurfaceId surfaceId, const std::string &moduleName, c
   }
   std::lock_guard lock(mutex_);
   if (host_) {
-    host_->startSurface(surfaceId, moduleName, folly::dynamic::object(), constraints(metrics), context(metrics));
+    host_->startSurface(surfaceId, moduleName, folly::dynamic::object(), surfaceConstraints(metrics, direction_.rightToLeft()), context(metrics));
   }
 }
 
@@ -272,7 +269,7 @@ void Runtime::updateSurface(SurfaceId surfaceId, const SurfaceMetrics &metrics) 
   }
   std::lock_guard lock(mutex_);
   if (host_) {
-    host_->setSurfaceConstraints(surfaceId, constraints(metrics), context(metrics));
+    host_->setSurfaceConstraints(surfaceId, surfaceConstraints(metrics, direction_.rightToLeft()), context(metrics));
   }
 }
 
@@ -340,6 +337,7 @@ void Runtime::reload(std::function<void(bool)> done) {
         workletHost().runOnScheduler.set(nullptr);
         host_.reset();
         createHost();
+        direction_.instanceStarted();
         *loaded = devServer_ ? host_->loadScript("", bundle_) : host_->loadScript(bundle_, bundle_);
         restarted = true;
       }
@@ -366,12 +364,12 @@ void Runtime::reload(std::function<void(bool)> done) {
       std::lock_guard lock(mutex_);
       for (const auto &[surfaceId, surface] : step->start) {
         host_->startSurface(
-            surfaceId, surface.moduleName, folly::dynamic::object(), constraints(surface.metrics), context(surface.metrics));
+            surfaceId, surface.moduleName, folly::dynamic::object(), surfaceConstraints(surface.metrics, direction_.rightToLeft()), context(surface.metrics));
         started.insert(surfaceId);
       }
       // A surface resized after the reload started it takes its size now.
       for (const auto &[surfaceId, surface] : step->update) {
-        host_->setSurfaceConstraints(surfaceId, constraints(surface.metrics), context(surface.metrics));
+        host_->setSurfaceConstraints(surfaceId, surfaceConstraints(surface.metrics, direction_.rightToLeft()), context(surface.metrics));
       }
       for (auto surfaceId : step->stop) {
         host_->stopSurface(surfaceId);

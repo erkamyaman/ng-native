@@ -147,9 +147,11 @@ error. `expo-ui-components.ts` has thin typed components for the views an app re
   [Time between updates](/packages/expo/live-activity#time-between-updates).
 - **`UiDatePicker`** - SwiftUI's `DatePicker` on iOS, Compose's on Android, and a Signal Forms
   field: its `value` model is a `Date` or null, whichever way each platform takes and reports one.
-  A pick is when it emits `touch`. SwiftUI's picker always shows a date, today when the field is
-  empty, and the report it makes as it appears is not taken as the user's choice, so an optional
-  date is best asked for behind a button that shows the picker. Without a form, `selection` still
+  A pick is when it emits `touch`. A report of the date it already holds, such as the one Compose
+  makes as the picker is first drawn, is not a pick: the field is neither written nor touched.
+  SwiftUI's picker always shows a date, today when the field is empty, and the report it makes as
+  it appears is not taken as the user's choice, so an optional date is best asked for behind a
+  button that shows the picker. Without a form, `selection` still
   takes ISO text on iOS. `displayedComponents` is a list of `'date'` and `'hourAndMinute'`; an
   empty list shows nothing on iOS, and the date and time on Android, which has no way to show
   nothing. `range`, an optional `start` and an optional `end` as ISO text, limits the dates that
@@ -591,6 +593,60 @@ hears nothing from the sheet.
 the name the component's template uses for it, since `ui-bottom-sheet` there would be the
 component again. A template that does not import `UiBottomSheet` still gets the native view from
 `<ui-bottom-sheet>`, with each platform's own props.
+
+## On macOS
+
+The desktop host draws `@expo/ui` itself, in SwiftUI inside an NSHostingView, under the same names
+and props as iOS: `registerExpoUiViews(Platform.OS)` registers the iOS names on macOS, and a
+template written for iOS draws there. `<ui-host>` sizes itself by its content's fitting size on
+the axes `matchContents` names, and each control sends iOS's events with iOS's payloads.
+
+Every view whose SwiftUI type exists on macOS is drawn. `EXPO_UI_MACOS` in `@ng-native/expo` lists
+each iOS view with the SwiftUI view it is on macOS, or the reason it is absent. Three are absent,
+and stay plain views:
+
+| View                             | Why                                                                                                                        |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `ui-accessory-widget-background` | WidgetKit's `AccessoryWidgetBackground` is for the iOS Lock Screen and watchOS only.                                       |
+| `ui-sync-toggle`                 | It reads and writes its state through `react-native-worklets`, which has no native part on macOS. Use `ui-toggle`.         |
+| `ui-toolbar`                     | A SwiftUI toolbar on macOS belongs to the window's toolbar, which the desktop host builds from the screen's native header. |
+
+Where macOS differs:
+
+- **Styles.** A modifier with no macOS meaning is skipped: the `wheel` picker and date picker
+  styles, and presentation detents. `pickerStyle('palette')` is a segmented control, and
+  `toggleStyle('checkbox')` and `pickerStyle('radioGroup')` are macOS's own.
+- **Text fields.** `nativeState()` returns null on macOS, so a `ui-text-field` keeps its own text
+  and reports each change through `textChange`. A `text` given as a plain string is shown instead.
+- **A bottom sheet** is a sheet on the window, without detents.
+- **`ui-view-host`** puts the app's own views in the SwiftUI content at their laid-out size. A
+  pointer event on one of them is not delivered.
+- **Modifiers** take the common set: layout (`padding`, `frame`, `fixedSize`), colour and type
+  (`foregroundStyle`, `background`, `tint`, `font`), shape and effect (`clipShape`, `opacity`,
+  `shadow`), the control styles, and accessibility. Any other is skipped.
+
+### In the desktop host
+
+`@expo/ui`'s views are the host's own: each is a Fabric component under the name
+`registerExpoUiViews` commits on iOS (`ViewManagerAdapter_ExpoUI_PickerView` and the rest), with
+iOS's props, drawn in SwiftUI (`expo-ui.h`, `appkit/expo-ui.swift`). The core keeps the views under
+each `HostView` as one tree and hands it to the HostView's view, an NSHostingController's view that
+draws it as expo/ui draws the same names on iOS: slots, children and modifiers included. The other
+views draw nothing of their own. A control keeps what the user set until its prop changes, and
+sends expo/ui's iOS event with its payload (`selectionChange`, `dateChange`, `isOnChange`,
+`valueChanged` and the rest). A HostView with `matchContents` takes its content's fitting size
+on the axes it matches, reported as its state, as `setViewSize` does on iOS. An `RNHostView`
+holds the app's own views in the SwiftUI content at their Yoga size, fitted to them rather than
+stretched across its container with `matchContents`, as iOS measures it (`layoutRoot`, which takes
+SwiftUI's size into Yoga on iOS, is not taken). A sheet opens at its smallest
+`presentationDetents` height in the window (`medium` half of it, `large` nine tenths), as a macOS
+sheet has no detents.
+
+Every view whose SwiftUI type exists on macOS is drawn; `EXPO_UI_MACOS` in `@ng-native/expo`
+names each iOS view's SwiftUI view or the reason it is absent (`AccessoryWidgetBackgroundView`,
+`SyncToggleView` and `ToolbarView`), and a test holds the core's list to it. A modifier with no
+macOS meaning, or one the renderer does not take, is skipped. A pointer event on the app's own
+views inside an `RNHostView` is not delivered.
 
 ## Without the module
 

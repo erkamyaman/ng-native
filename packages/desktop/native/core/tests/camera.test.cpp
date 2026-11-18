@@ -3,6 +3,9 @@
 #include "ngn/file-system.h"
 
 #include <doctest/doctest.h>
+#include <react/renderer/core/PropsParserContext.h>
+
+#include <unistd.h>
 
 #include <filesystem>
 #include <fstream>
@@ -39,12 +42,14 @@ struct FakeHardware final : ngn::CameraHardware {
 
 struct FakeCapture final : ngn::CameraCapture {
   std::string error;
-  void takePicture(double quality, const std::string &path, std::function<void(int, int, const std::string &)> done) override {
+  std::string format;
+  void takePicture(const ngn::CameraPictureRequest &request, std::function<void(int, int, const std::string &)> done) override {
     if (!error.empty()) {
       done(0, 0, error);
       return;
     }
-    std::ofstream(path, std::ios::binary) << "JPEG@" << quality;
+    format = request.format;
+    std::ofstream(request.path, std::ios::binary) << (request.format == "png" ? "PNG" : "JPEG@") << request.quality;
     done(1280, 720, "");
   }
   // The recording in progress, finished by stopRecording.
@@ -68,7 +73,12 @@ struct FakeCapture final : ngn::CameraCapture {
       done("");
     }
   }
+  // Run as record() asks whether a recording runs: between its lookup of the view and the start.
+  std::function<void()> whileChecked;
   bool recording() const override {
+    if (whileChecked) {
+      whileChecked();
+    }
     return finish != nullptr;
   }
 };
@@ -85,7 +95,7 @@ Answer call(const ngn::NativeModule &module, const std::string &method, dynamic 
 }
 
 struct Folder {
-  std::filesystem::path path = std::filesystem::temp_directory_path() / ("ngn-camera-" + std::to_string(rand()));
+  std::filesystem::path path = std::filesystem::temp_directory_path() / ("ngn-camera-" + std::to_string(getpid()) + "-" + std::to_string(rand()));
   ~Folder() {
     std::filesystem::remove_all(path);
   }
@@ -158,6 +168,8 @@ TEST_CASE("NgNativeCamera takes a picture from a running view by its tag, into t
   CHECK((*picture.value)["width"] == 1280);
   CHECK((*picture.value)["height"] == 720);
   CHECK((*picture.value)["format"] == "jpg");
+  CHECK(uri.ends_with(".jpg"));
+  CHECK(capture->format == "jpg");
   CHECK((*picture.value)["base64"] == ngn::base64Encode("JPEG@0.5"));
 
   CHECK(call(*module, "takePicture", dynamic::array(8, dynamic::object())).error == "Camera is not ready yet. Wait for 'onCameraReady' callback");
@@ -166,6 +178,38 @@ TEST_CASE("NgNativeCamera takes a picture from a running view by its tag, into t
   views->attach(7, capture);
   capture->error = "the session stopped";
   CHECK(call(*module, "takePicture", dynamic::array(7, dynamic::object())).error == "Camera.takePicture: the session stopped");
+}
+
+TEST_CASE("NgNativeCamera takes a picture as a PNG or a JPEG, as expo-camera's imageType asks, and refuses another") {
+  Folder folder;
+  auto hardware = std::make_shared<FakeHardware>();
+  hardware->state = Access::Granted;
+  auto views = std::make_shared<ngn::CameraViews>();
+  auto module = ngn::makeCameraModule(hardware, views, folder.path.string(), false);
+  auto capture = std::make_shared<FakeCapture>();
+  views->attach(7, capture);
+
+  auto png = call(*module, "takePicture", dynamic::array(7, dynamic::object("imageType", "png")("quality", 0.3)));
+  REQUIRE(png.value);
+  CHECK((*png.value)["format"] == "png");
+  CHECK((*png.value)["uri"].asString().ends_with(".png"));
+  CHECK(capture->format == "png");
+  CHECK(std::filesystem::exists(ngn::pathOfUri((*png.value)["uri"].asString()).value()));
+
+  auto jpg = call(*module, "takePicture", dynamic::array(7, dynamic::object("imageType", "jpg")));
+  REQUIRE(jpg.value);
+  CHECK((*jpg.value)["format"] == "jpg");
+  CHECK((*jpg.value)["uri"].asString().ends_with(".jpg"));
+  CHECK(capture->format == "jpg");
+
+  // expo-camera's PictureFormat has jpg and png only: iOS refuses any other value as it converts it.
+  capture->format.clear();
+  for (auto other : {"heic", "jpeg", "PNG"}) {
+    CHECK(call(*module, "takePicture", dynamic::array(7, dynamic::object("imageType", other))).error ==
+          "Camera.takePicture: imageType must be 'jpg' or 'png'");
+  }
+  CHECK(call(*module, "takePicture", dynamic::array(7, dynamic::object("imageType", 3))).error);
+  CHECK(capture->format.empty());
 }
 
 TEST_CASE("NgNativeCamera records a movie from a running view until it is stopped, into the same folder") {
@@ -203,7 +247,7 @@ TEST_CASE("NgNativeCamera records a movie from a running view until it is stoppe
   CHECK(call(*module, "stopRecording", dynamic::array(9)).value == dynamic(nullptr));
 }
 
-TEST_CASE("NgNativeCamera records without sound when muted or without the microphone, and never asks for it") {
+TEST_CASE("NgNativeCamera records without sound when the view has mute or without the microphone, and never asks for it") {
   Folder folder;
   auto hardware = std::make_shared<FakeHardware>();
   hardware->state = Access::Granted;
@@ -211,15 +255,94 @@ TEST_CASE("NgNativeCamera records without sound when muted or without the microp
   auto module = ngn::makeCameraModule(hardware, views, folder.path.string(), false);
   auto capture = std::make_shared<FakeCapture>();
   views->attach(7, capture);
-  module->callWithPromise("record", dynamic::array(7, dynamic::object("mute", true)), {.resolve = [](dynamic) {}, .reject = [](const std::string &) {}});
+  auto start = [&](dynamic options) {
+    capture->asked.reset();
+    module->callWithPromise("record", dynamic::array(7, options), {.resolve = [](dynamic) {}, .reject = [](const std::string &) {}});
+    REQUIRE(capture->asked);
+    return capture->asked->sound;
+  };
+  auto record = [&](dynamic options) {
+    bool sound = start(options);
+    capture->stopRecording();
+    return sound;
+  };
+  // The view's mute, set before the recording.
+  views->mute(7, true);
+  CHECK_FALSE(record(dynamic::object()));
+  // As on iOS, the view's mute is the only one: record() takes none of its own, either way.
+  CHECK_FALSE(record(dynamic::object("mute", false)));
+  // The prop taken off, the next recording has sound.
+  views->mute(7, false);
+  CHECK(record(dynamic::object()));
+  CHECK(record(dynamic::object("mute", true)));
+  // Another view's mute is its own.
+  views->mute(8, true);
+  CHECK(record(dynamic::object()));
+  // A view muted while it records: that recording keeps the sound it started with, the next has none.
+  CHECK(start(dynamic::object()));
+  views->mute(7, true);
+  capture->stopRecording();
+  CHECK_FALSE(record(dynamic::object()));
+  views->mute(7, false);
+  hardware->microphone = false;
+  CHECK_FALSE(record(dynamic::object()));
+  CHECK(hardware->asked == 0);
+}
+
+TEST_CASE("NgNativeCamera keeps the mute of the view it found, when the view detaches while it starts the recording") {
+  // The view detaches on the main thread while record() runs on the JS thread: a mute read after
+  // the lookup would find it forgotten, and record a muted view with sound.
+  Folder folder;
+  auto hardware = std::make_shared<FakeHardware>();
+  hardware->state = Access::Granted;
+  auto views = std::make_shared<ngn::CameraViews>();
+  auto module = ngn::makeCameraModule(hardware, views, folder.path.string(), false);
+  auto capture = std::make_shared<FakeCapture>();
+  views->attach(7, capture);
+  views->mute(7, true);
+  capture->whileChecked = [&] { views->detach(7); };
+  module->callWithPromise("record", dynamic::array(7, dynamic::object()), {.resolve = [](dynamic) {}, .reject = [](const std::string &) {}});
   REQUIRE(capture->asked);
   CHECK_FALSE(capture->asked->sound);
+  capture->whileChecked = nullptr;
   capture->stopRecording();
-  hardware->microphone = false;
-  module->callWithPromise("record", dynamic::array(7, dynamic::object()), {.resolve = [](dynamic) {}, .reject = [](const std::string &) {}});
-  CHECK_FALSE(capture->asked->sound);
-  capture->stopRecording();
-  CHECK(hardware->asked == 0);
+}
+
+TEST_CASE("The camera views forget a view's mute as it detaches") {
+  ngn::CameraViews views;
+  CHECK_FALSE(views.muted(7));
+  views.mute(7, true);
+  CHECK(views.muted(7));
+  CHECK_FALSE(views.muted(8));
+  views.attach(7, std::make_shared<FakeCapture>());
+  views.detach(7);
+  CHECK_FALSE(views.muted(7));
+  CHECK_FALSE(views.find(7));
+  views.mute(7, true);
+  views.mute(7, false);
+  CHECK_FALSE(views.muted(7));
+}
+
+namespace {
+
+std::shared_ptr<const ngn::CameraProps> cameraProps(const facebook::react::Props::Shared &source, dynamic raw) {
+  static auto context = std::make_shared<const facebook::react::ContextContainer>();
+  static ngn::CameraComponentDescriptor descriptor({{}, context, nullptr});
+  facebook::react::PropsParserContext parserContext{1, *context};
+  return std::static_pointer_cast<const ngn::CameraProps>(
+      descriptor.cloneProps(parserContext, source, facebook::react::RawProps(std::move(raw))));
+}
+
+} // namespace
+
+TEST_CASE("The camera view reads expo-camera's mute, off by default and once removed") {
+  CHECK_FALSE(cameraProps(nullptr, dynamic::object())->mute);
+  auto muted = cameraProps(nullptr, dynamic::object("mute", true));
+  CHECK(muted->mute);
+  // A later commit that leaves mute out keeps it; null or false takes it off.
+  CHECK(cameraProps(muted, dynamic::object("facing", "front"))->mute);
+  CHECK_FALSE(cameraProps(muted, dynamic::object("mute", nullptr))->mute);
+  CHECK_FALSE(cameraProps(muted, dynamic::object("mute", false))->mute);
 }
 
 TEST_CASE("NgNativeCamera refuses a recording without the camera, from a view not running, and passes a failure on") {

@@ -661,6 +661,8 @@ const ENGINE_PROPS = new Set<string>([
   'disabled',
   'intrinsicSize',
   'styleOverride',
+  // A component's name in interaction reports: see `INTERACTION_NAME`.
+  'interactionName',
   // A text field's latest event count, committed as `mostRecentEventCount`: see `echoedEventCount`.
   'latestEventCount',
   ...Object.values(EVENT_OPT_IN_PROPS),
@@ -929,11 +931,13 @@ export interface EngineNode extends HostNode {
    */
   claimed?: true;
   /**
-   * Set by the platform adapter when Angular mounts a component on this element. What makes an
-   * `<x-card>` host legitimate where a `<veiw>` typo is not, since both are names no view table
-   * knows. See `markComponentHost`.
+   * Set by the platform adapter when Angular mounts a component on this element, to the
+   * component's definition, which names it in an interaction report. `true` where a package keeps
+   * the element a plain view without a component. Either is what makes an `<x-card>` host
+   * legitimate where a `<veiw>` typo is not, since both are names no view table knows. See
+   * `markComponentHost`.
    */
-  componentHost?: true;
+  componentHost?: true | object;
   /** See `keepNativeView`. */
   nativeView?: true;
   /** Props kept for selectors to match and left out of what is committed. See `keepAsAttribute`. */
@@ -1213,10 +1217,20 @@ const someProps = (props: Record<string, unknown>): Record<string, unknown> | nu
 /**
  * Mark an element as the host of a component. The platform adapter calls this from
  * `RendererFactory2.createRenderer`, which Angular calls once for every component it mounts,
- * with the host element in hand, whatever the component's selector.
+ * with the host element and the component's definition in hand, whatever the component's
+ * selector. A package that keeps an element a plain view marks it with no definition, which
+ * leaves a component's mark as it is.
  */
-export function markComponentHost(node: HostNode): void {
-  (node as EngineNode).componentHost = true;
+export function markComponentHost(node: HostNode, definition?: object): void {
+  const host = node as EngineNode;
+  if (definition) host.componentHost = definition;
+  else host.componentHost ??= true;
+}
+
+/** Take back the mark `markComponentHost` gave an element with no definition. */
+export function unmarkPlainView(node: HostNode): void {
+  const host = node as EngineNode;
+  if (host.componentHost === true) host.componentHost = undefined;
 }
 
 /**
@@ -5799,7 +5813,7 @@ export interface ViewNameNode {
   readonly tag: string;
   readonly parent: ViewNameNode | null;
   /** Whether a component is mounted on it, and whether that component is the native view. */
-  readonly componentHost?: boolean;
+  readonly componentHost?: unknown;
   readonly nativeView?: boolean;
   /** What it holds, which decides whether one of HTML's text elements is text or a view. */
   readonly childList?: readonly ViewNameNode[];
@@ -7223,8 +7237,20 @@ const FIELD_SIZE = 'size';
  */
 const STYLE_OVERRIDE = 'styleOverride';
 
+/**
+ * The name a component's host gives it in interaction reports, or `''` to be left out of them:
+ * `host: { interactionName: 'Card' }`, or the attribute where the component is used. Read only
+ * when a report is made, and it never reaches native.
+ */
+export const INTERACTION_NAME = 'interactionName';
+
 /** The props that are the engine's to read, and no prop of any native view. */
-const ENGINES_OWN: ReadonlySet<string> = new Set(['style', INTRINSIC_SIZE, STYLE_OVERRIDE]);
+const ENGINES_OWN: ReadonlySet<string> = new Set([
+  'style',
+  INTRINSIC_SIZE,
+  STYLE_OVERRIDE,
+  INTERACTION_NAME,
+]);
 
 interface IntrinsicSize {
   readonly width: number;

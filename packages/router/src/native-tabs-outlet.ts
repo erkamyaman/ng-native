@@ -50,7 +50,14 @@ import {
   type Signal,
   type WritableSignal,
 } from '@angular/core';
-import { SCREEN_IN_FRONT, SCREEN_SHOWN, SafeArea } from '@ng-native/device';
+import {
+  SCREEN_IN_FRONT,
+  SCREEN_SHOWN,
+  SafeArea,
+  describeElement,
+  interactionObservers,
+  notifyInteraction,
+} from '@ng-native/device';
 import {
   HostEngine,
   nativePlatform,
@@ -68,7 +75,7 @@ import {
   type Route,
   type RouterOutletContract,
 } from '@angular/router';
-import { bindRouteInputs } from './bind-route-inputs.ts';
+import { ROUTE_INPUT_BINDER, bindRouteInputs } from './bind-route-inputs.ts';
 import { NATIVE_TAB_DEFAULTS } from './native-bar-defaults.ts';
 import { NativeBack, isShowing } from './native-back.ts';
 import { optionalBoolean } from './transforms.ts';
@@ -189,6 +196,7 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
   private readonly route = inject(ActivatedRoute);
   /** Optional so the outlet can be driven through `RouterOutletContract` directly, as tests do. */
   private readonly router = inject(Router, { optional: true });
+  private readonly inputBinder = inject(ROUTE_INPUT_BINDER);
   private readonly errors = inject(ErrorHandler);
   /** What activation has reported already, so the failed navigation it causes is not reported again. */
   private readonly reported = new WeakSet<object>();
@@ -478,7 +486,9 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
 
   /** Route params onto inputs only under `withComponentInputBinding()`, as in the stack outlet. */
   private bindInputs(ref: ComponentRef<unknown>, route: ActivatedRoute): () => void {
-    return this.router?.componentInputBindingEnabled ? bindRouteInputs(ref, route) : () => {};
+    return this.router?.componentInputBindingEnabled
+      ? bindRouteInputs(ref, route, this.inputBinder)
+      : () => {};
   }
 
   /**
@@ -812,6 +822,7 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
     const entry = this.readTabs().find(
       (tab) => screenKeyOf(tab.key) === selection.selectedScreenKey,
     );
+    if (entry && selection.actionOrigin === 'user') this.reportTap(entry.tab);
     if (!entry || (entry === this.selected && !this.tappedBack(selection))) return;
 
     // Returning to a tab returns to the url it was last on, which is the whole point of keeping
@@ -827,6 +838,24 @@ export class NativeTabsOutlet implements RouterOutletContract, AfterContentInit 
         this.revertUnless(false);
       },
     );
+  }
+
+  /**
+   * Tell the app's interaction observers, if it has any, that the user tapped a tab, the one in
+   * front or one a guard refuses included, as a `click` with the tab's title. The navigation that
+   * follows is not an interaction, and is not reported.
+   */
+  private reportTap(tab: NativeTab): void {
+    const observers = interactionObservers(this.injector);
+    if (!observers) return;
+    const label = tab.title() ?? tab.accessibilityLabel();
+    notifyInteraction(observers, {
+      type: 'click',
+      ...describeElement(tab.screen.engine ?? this.injector.get(HostEngine), tab.screen),
+      ...(label !== undefined && { label }),
+      source: 'click',
+      timestamp: Date.now(),
+    });
   }
 
   /**

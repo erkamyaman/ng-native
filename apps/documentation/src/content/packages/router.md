@@ -61,10 +61,13 @@ The routes can come from files instead of an array: `fileRoutes(pages)` routes e
 [File routes](/packages/router/file-routes).
 
 `withComponentInputBinding()` is opt-in here exactly as it is on the web: with it, a `:id` param,
-a query param or resolved data arrives as the page's `id` input; without it, both outlets leave a
-page's inputs alone, as Angular's `RouterOutlet` does, and the page reads `ActivatedRoute` instead.
-The feature's options are not read, though: query params always bind, and an input with no
-matching key is set to `undefined`, which are its defaults.
+a query param, resolved data or a route resource arrives as the page's `id` input; without it, both
+outlets leave a page's inputs alone, as Angular's `RouterOutlet` does, and the page reads
+`ActivatedRoute` instead. Route resources need `withRouterResources()` as well, as on the web: a
+blocking resource arrives as its value, and one marked `nonBlocking()` as the resource itself.
+The feature's options hold too: `queryParams: false` leaves query params off the inputs, and
+`unmatchedInputBehavior: 'undefinedIfStale'` keeps an input's default until its key has been in
+the route.
 
 Every other router feature is passed through unchanged, preloading included. A lazy route's code
 is otherwise loaded on the first navigation to it, which on the dev server is a request to Metro

@@ -35,6 +35,7 @@ export default tseslint.config(
       // by being used: `scripts/verify-publish.mjs` publishes to a local registry, generates an
       // app from each and bundles it, which is a stronger check than linting them in place.
       'template/**',
+      'template-desktop/**',
       // The generators' copies of the template's files, for the same reason. They are an app's
       // source, and a test in each package fails if they stop matching the template's.
       'packages/schematics/files/**',
@@ -193,6 +194,7 @@ export default tseslint.config(
       'packages/integration-tests/worklet-style.test.ts',
       'packages/integration-tests/gesture.test.ts',
       'packages/integration-tests/gesture-dispatch.test.ts',
+      'packages/integration-tests/gesture-interaction.test.ts',
       'packages/integration-tests/worklet-scroll.test.ts',
       'packages/integration-tests/css-index.test.ts',
       'packages/integration-tests/height-index.test.ts',
@@ -213,6 +215,7 @@ export default tseslint.config(
       'packages/integration-tests/dialogs.test.ts',
       'packages/integration-tests/engine-commit.test.ts',
       'packages/integration-tests/expo.test.ts',
+      'packages/integration-tests/expo-ui-macos.test.ts',
       'packages/integration-tests/markdown-files.test.ts',
       'packages/integration-tests/markdown.test.ts',
       'packages/integration-tests/fabric-facade.test.ts',

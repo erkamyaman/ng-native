@@ -41,6 +41,8 @@ import { SecureStorage } from '@ng-native/expo/secure-store';
 import { Storage } from '@ng-native/expo/async-storage';
 import { Updates } from '@ng-native/expo/updates';
 import { Brightness, type NativeBrightness } from '@ng-native/expo/brightness';
+import { cameraPermission, microphonePermission } from '@ng-native/expo/camera';
+import { recordingPermission } from '@ng-native/expo/audio';
 import { nativePlatform, registerPlatformComponents } from '@ng-native/fabric';
 import type { InjectionToken } from '@angular/core';
 import { inAppWith } from './injected.ts';
@@ -674,6 +676,55 @@ describe('the calendar source', () => {
   });
 });
 
+describe('the camera and recording permissions', () => {
+  const ios = { Platform: { OS: 'ios' } };
+  const answer = (status: string) => async () => ({
+    status,
+    granted: status === 'granted',
+    canAskAgain: true,
+  });
+
+  it("are expo-camera's own functions on its native module, and expo-audio's", async () => {
+    const expoCamera = {
+      getCameraPermissionsAsync: answer('granted'),
+      requestCameraPermissionsAsync: answer('granted'),
+      getMicrophonePermissionsAsync: answer('undetermined'),
+      requestMicrophonePermissionsAsync: answer('denied'),
+    };
+    const core = {
+      requireOptionalNativeModule: (name: string) => (name === 'ExpoCamera' ? expoCamera : {}),
+    };
+    const expoAudio = {
+      getRecordingPermissionsAsync: answer('denied'),
+      requestRecordingPermissionsAsync: answer('granted'),
+    };
+    const [camera, microphone, recording] = withModules(
+      { 'react-native': ios, 'expo-modules-core': core, 'expo-audio': expoAudio },
+      () => [cameraPermission(), microphonePermission(), recordingPermission()],
+    );
+    assert.equal(await camera.check(), true);
+    assert.equal(await microphone.check(), false);
+    assert.equal(microphone.status(), 'undetermined');
+    assert.equal(await microphone.request(), false);
+    assert.equal(microphone.status(), 'denied');
+    assert.equal(await recording.check(), false);
+    assert.equal(await recording.request(), true);
+  });
+
+  it('answer denied, never to be asked again, with neither module and no platform', async () => {
+    const [camera, microphone, recording] = withModules({}, () => [
+      cameraPermission(),
+      microphonePermission(),
+      recordingPermission(),
+    ]);
+    for (const permission of [camera, microphone, recording]) {
+      assert.equal(await permission.ensure(), false);
+      assert.equal(permission.status(), 'denied');
+      assert.equal(permission.blocked(), true);
+    }
+  });
+});
+
 describe('the media library source', () => {
   it('is expo-media-library itself, whose functions the service calls by their own names', () => {
     const expoMediaLibrary = { getPermissionsAsync: async () => ({ granted: true }) };
@@ -738,35 +789,60 @@ describe('the file system source', () => {
     return files.pickDirectoryAsync!().then((picked) => assert.equal(picked, document));
   });
 
-  it("lists, describes and watches through expo-file-system's Directory, File and Paths", async () => {
-    class Entry {
-      readonly uri: string;
-      readonly name: string;
-      constructor(uri: string) {
-        this.uri = uri;
-        this.name = uri.split('/').filter(Boolean).at(-1)!;
-      }
-    }
+  /**
+   * expo-file-system as it behaves on a device: a folder's uri ends in a slash, `list()` answers in
+   * the OS's order, Android's `list()` answers nothing for a folder or file that is not one, a folder's
+   * `info().size` adds up what is in it, and Android's `Paths.info` throws on a space in a uri.
+   */
+  function deviceFiles(tree: Record<string, 'file' | 'folder'>) {
+    const key = (uri: string) => uri.replace(/\/$/, '');
+    const kind = (uri: string) => tree[key(uri)];
+    const asked: string[] = [];
+    const made: string[] = [];
     const watched: string[] = [];
     let removed = 0;
-    class FakeDirectory extends Entry {
-      list = () => [new FakeDirectory('file:///docs/notes/'), new FakeFile('file:///docs/a.txt')];
-      info = () => ({ exists: true, size: 10, modificationTime: 5 });
+    let emit: (event: unknown) => void = () => {};
+    class Entry {
+      readonly uri: string;
+      constructor(uri: string) {
+        this.uri = uri;
+        made.push(uri);
+      }
+      get name() {
+        return decodeURIComponent(key(this.uri).split('/').at(-1)!);
+      }
       watch = (listener: (event: unknown) => void) => {
         watched.push(this.uri);
-        listener({ type: 'created', target: new FakeFile('file:///docs/b.txt') });
+        emit = listener;
         return { remove: () => removed++ };
       };
+    }
+    class FakeDirectory extends Entry {
+      constructor(uri: string) {
+        super(uri.endsWith('/') ? uri : `${uri}/`);
+      }
+      list = () =>
+        Object.keys(tree)
+          .filter((uri) => uri.slice(0, uri.lastIndexOf('/')) === key(this.uri))
+          .map((uri) => (tree[uri] === 'folder' ? new FakeDirectory(uri) : new FakeFile(uri)));
+      info = () =>
+        kind(this.uri) === 'folder'
+          ? { exists: true, size: 10, modificationTime: 5 }
+          : { exists: false };
     }
     class FakeFile extends Entry {
       info = () => ({ exists: true, size: 3, modificationTime: 7, creationTime: 6 });
     }
-    const exists = new Set(['file:///docs/', 'file:///docs/a.txt']);
     const expoFileSystem = {
       Paths: {
         cache: { uri: 'file:///cache/' },
         document: { uri: 'file:///docs/' },
-        info: (uri: string) => ({ exists: exists.has(uri), isDirectory: uri.endsWith('/') }),
+        info: (uri: string) => {
+          if (uri.includes(' ')) throw new Error(`Illegal character in path: ${uri}`);
+          asked.push(uri);
+          const found = kind(uri);
+          return { exists: found !== undefined, isDirectory: found ? found === 'folder' : null };
+        },
       },
       File: FakeFile,
       Directory: FakeDirectory,
@@ -774,29 +850,102 @@ describe('the file system source', () => {
     const files = withModules({ 'expo-file-system': expoFileSystem }, () =>
       defaultSource(FileSystem.SOURCE),
     )!;
-    assert.deepEqual(await files.readdir!('file:///docs/'), [
-      { name: 'notes', uri: 'file:///docs/notes/', directory: true },
-      { name: 'a.txt', uri: 'file:///docs/a.txt', directory: false },
+    return {
+      files,
+      asked,
+      made,
+      watched,
+      removed: () => removed,
+      emit: (event: unknown) => emit(event),
+      entry: (uri: string) => (kind(uri) === 'folder' ? new FakeDirectory(uri) : new FakeFile(uri)),
+    };
+  }
+
+  const tree = {
+    'file:///docs': 'folder',
+    'file:///docs/b.txt': 'file',
+    'file:///docs/a%20b.txt': 'file',
+    'file:///docs/Zed': 'folder',
+    'file:///docs/Zed/inner.txt': 'file',
+  } as const;
+
+  it("lists a folder by name, as the desktop host does, with a folder's uri unslashed", async () => {
+    const { files } = deviceFiles(tree);
+    const listing = [
+      { name: 'Zed', uri: 'file:///docs/Zed', directory: true },
+      { name: 'a b.txt', uri: 'file:///docs/a%20b.txt', directory: false },
+      { name: 'b.txt', uri: 'file:///docs/b.txt', directory: false },
+    ];
+    assert.deepEqual(await files.readdir!('file:///docs/'), listing);
+    assert.deepEqual(await files.readdir!('file:///docs'), listing);
+    assert.deepEqual(await files.readdir!('file:///docs/Zed'), [
+      { name: 'inner.txt', uri: 'file:///docs/Zed/inner.txt', directory: false },
     ]);
-    assert.deepEqual(await files.stat!('file:///docs/a.txt'), {
-      uri: 'file:///docs/a.txt',
+  });
+
+  it('lists an empty folder, and rejects one that is not there or a file, as iOS and the desktop host do', async () => {
+    const { files } = deviceFiles({ ...tree, 'file:///empty': 'folder' });
+    assert.deepEqual(await files.readdir!('file:///empty/'), []);
+    await assert.rejects(
+      async () => files.readdir!('file:///docs/gone/'),
+      /^Error: Not a folder: file:\/\/\/docs\/gone\/$/,
+    );
+    await assert.rejects(async () => files.readdir!('file:///docs/b.txt'), /Not a folder/);
+  });
+
+  it('describes a file, and a folder with no size of its own, as the desktop host does', async () => {
+    const { files } = deviceFiles(tree);
+    assert.deepEqual(await files.stat!('file:///docs/b.txt'), {
+      uri: 'file:///docs/b.txt',
       directory: false,
       size: 3,
       modified: 7,
       created: 6,
     });
-    assert.deepEqual(await files.stat!('file:///docs/'), {
-      uri: 'file:///docs/',
+    assert.deepEqual(await files.stat!('file:///docs/Zed/'), {
+      uri: 'file:///docs/Zed/',
       directory: true,
-      size: 10,
+      size: 0,
       modified: 5,
       created: null,
     });
     assert.equal(await files.stat!('file:///docs/gone.txt'), null);
+  });
+
+  it('reaches a path written with a space, which Android will not parse, and answers it as given', async () => {
+    const { files, asked } = deviceFiles(tree);
+    assert.equal((await files.stat!('file:///docs/a b.txt'))?.uri, 'file:///docs/a b.txt');
+    assert.equal((await files.stat!('file:///docs/a%20b.txt'))?.size, 3);
+    assert.deepEqual(asked, ['file:///docs/a%20b.txt', 'file:///docs/a%20b.txt']);
+  });
+
+  it('makes the entry it describes or watches from the escaped uri, keeping a trailing space', async () => {
+    const { files, made, watched } = deviceFiles({ ...tree, 'file:///docs/note%20': 'file' });
+    assert.equal((await files.stat!('file:///docs/note '))?.uri, 'file:///docs/note ');
+    files.watch!('file:///docs/note ', () => {});
+    assert.deepEqual(made, ['file:///docs/note%20', 'file:///docs/note%20']);
+    assert.deepEqual(watched, ['file:///docs/note%20']);
+  });
+
+  it("watches through expo-file-system, a folder's uri unslashed in what it reports", () => {
+    const fake = deviceFiles(tree);
     const changes: unknown[] = [];
-    files.watch!('file:///docs/', (change) => changes.push(change))();
-    assert.deepEqual(changes, [{ type: 'created', uri: 'file:///docs/b.txt' }]);
-    assert.deepEqual([watched, removed], [['file:///docs/'], 1]);
+    const stop = fake.files.watch!('file:///docs', (change) => changes.push(change));
+    fake.emit({ type: 'created', target: fake.entry('file:///docs/b.txt') });
+    fake.emit({ type: 'modified', target: fake.entry('file:///docs/Zed') });
+    fake.emit({
+      type: 'renamed',
+      target: fake.entry('file:///docs/Zed'),
+      newTarget: fake.entry('file:///docs/Zed'),
+    });
+    stop();
+    assert.deepEqual(changes, [
+      { type: 'created', uri: 'file:///docs/b.txt' },
+      { type: 'modified', uri: 'file:///docs/Zed' },
+      { type: 'renamed', uri: 'file:///docs/Zed', newUri: 'file:///docs/Zed' },
+    ]);
+    assert.deepEqual([fake.watched, fake.removed()], [['file:///docs/'], 1]);
+    assert.doesNotThrow(() => fake.files.watch!('file:///docs/gone', () => {})());
   });
 
   it('is inert with no expo-file-system installed', () => {
@@ -910,6 +1059,57 @@ describe('the updates source', () => {
     assert.deepEqual(await native.fetch(), { isNew: true });
     await native.reload();
     assert.deepEqual(reloads, [1]);
+  });
+
+  describe('the store page, as the whole-app updater on iOS and Android', () => {
+    function onPhone(os: string, storeUrl: string | null, withStoreReview = true) {
+      const opened: string[] = [];
+      const modules: Record<string, unknown> = {
+        'react-native': {
+          Platform: { OS: os },
+          Linking: { openURL: async (url: string) => void opened.push(url) },
+        },
+        'expo-updates': {
+          isEnabled: true,
+          checkForUpdateAsync: async () => ({ isAvailable: false }),
+          fetchUpdateAsync: async () => ({ isNew: false }),
+          reloadAsync: async () => {},
+        },
+      };
+      if (withStoreReview) modules['expo-store-review'] = { storeUrl: () => storeUrl };
+      // Left installed for the check, which runs after the source is made; afterEach removes it.
+      (globalThis as Record<string, unknown>)['require'] = (id: string) => {
+        if (id in modules) return modules[id];
+        throw new Error(`Cannot find module '${id}'`);
+      };
+      const native = defaultSource(Updates.SOURCE)!;
+      return { native, opened };
+    }
+
+    for (const os of ['ios', 'android']) {
+      it(`opens the app's store page on ${os} and resolves true`, async () => {
+        const { native, opened } = onPhone(os, 'https://store.example/app');
+        assert.equal(await native.appUpdater?.check(), true);
+        assert.deepEqual(opened, ['https://store.example/app']);
+      });
+    }
+
+    it('resolves false and opens nothing with no store URL in the app config', async () => {
+      const { native, opened } = onPhone('ios', null);
+      assert.equal(await native.appUpdater?.check(), false);
+      assert.deepEqual(opened, []);
+    });
+
+    it('resolves false with no expo-store-review installed', async () => {
+      const { native, opened } = onPhone('android', null, false);
+      assert.equal(await native.appUpdater?.check(), false);
+      assert.deepEqual(opened, []);
+    });
+
+    it('never claims a newer version it cannot know of', () => {
+      const { native } = onPhone('ios', 'https://store.example/app');
+      assert.equal(native.appUpdater?.available(), false);
+    });
   });
 
   it('is inert with no expo-updates installed', () => {

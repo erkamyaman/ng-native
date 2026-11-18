@@ -83,8 +83,8 @@ by the module's config plugin.
 ## An address and a point
 
 `geocode(address)` answers the places an address could be, best match first, from the platform's
-own geocoder, and `reverseGeocode(coordinates)` the addresses at a point. On iOS they ask for no
-permission, since Apple's geocoder does not need one. On Android they ask for the foreground
+own geocoder, and `reverseGeocode(coordinates)` the addresses at a point. On iOS and macOS they ask
+for no permission, since Apple's geocoder does not need one. On Android they ask for the foreground
 permission as `current()` does, and answer an empty list without it, because `expo-location`
 refuses to geocode there without it. Both answer an empty list for an address the geocoder does
 not know, and off a device. In an app built without `expo-location` they throw
@@ -94,6 +94,16 @@ not know, and off a device. In an app built without `expo-location` they throw
 const [place] = await this.location.geocode('10 Downing Street, London');
 if (place) this.marker.set(place); // { latitude, longitude }
 ```
+
+## On macOS
+
+`NgNativeLocation` answers `Location`'s permission, `current()` and `start()` over
+CLLocationManager. It asks for the permission only when the app's `Info.plist` explains why
+(`NSLocationUsageDescription` or `NSLocationWhenInUseUsageDescription`), since macOS shows no prompt
+without one, and with `NGN_NO_PROMPTS=1` never. Without the permission it reads nothing, and
+`current()` answers null. `geocode()` and `reverseGeocode()` ask CLGeocoder, which needs no
+permission and answers in `expo-location`'s iOS shapes: an address no place matches is an empty
+list, and a geocoder out of reach (offline or rate limited) rejects.
 
 ## Without the module
 

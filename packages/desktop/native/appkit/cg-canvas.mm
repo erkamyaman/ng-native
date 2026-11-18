@@ -2,6 +2,7 @@
 
 #include "ngn/file-system.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -46,6 +47,32 @@ CGPathRef createPathImpl(const ngn::SvgPath &path) {
 }
 
 // Images an svg draws, by URI, loaded once for every svg.
+// The glyphs a cluster drew as in its shaped run: per font, each glyph and where it sits from the
+// cluster's start.
+struct ShapedGlyphs {
+  struct Piece {
+    CTFontRef font{nullptr};
+    std::vector<CGGlyph> glyphs;
+    std::vector<CGPoint> positions;
+  };
+  std::vector<Piece> pieces;
+  ShapedGlyphs() = default;
+  ShapedGlyphs(const ShapedGlyphs &) = delete;
+  ShapedGlyphs &operator=(const ShapedGlyphs &) = delete;
+  ~ShapedGlyphs() {
+    for (auto &p : pieces) {
+      CFRelease(p.font);
+    }
+  }
+  void add(CTFontRef font, CGGlyph glyph, CGPoint position) {
+    if (pieces.empty() || pieces.back().font != font) {
+      pieces.push_back({.font = static_cast<CTFontRef>(CFRetain(font))});
+    }
+    pieces.back().glyphs.push_back(glyph);
+    pieces.back().positions.push_back(position);
+  }
+};
+
 NSCache<NSString *, NSImage *> *imageCache() {
   static NSCache<NSString *, NSImage *> *cache = [NSCache new];
   return cache;
@@ -56,8 +83,8 @@ NSCache<NSString *, NSImage *> *imageCache() {
 // starts where the drawing is.
 class CGCanvas final : public ngn::SvgCanvas {
  public:
-  CGCanvas(CGContextRef context, CGSize size, CGFloat scale, void (^imageLoaded)(void))
-      : context_(context), size_(size), scale_(scale), imageLoaded_(imageLoaded) {}
+  CGCanvas(CGContextRef context, CGSize size, CGFloat scale, void (^imageLoaded)(void), NSView * (^viewFor)(ngn::Tag))
+      : context_(context), size_(size), scale_(scale), imageLoaded_(imageLoaded), viewFor_(viewFor) {}
 
   void save() override {
     CGContextSaveGState(context_);
@@ -266,7 +293,7 @@ class CGCanvas final : public ngn::SvgCanvas {
     CGContextTranslateCTM(bitmap, 0, height);
     CGContextScaleCTM(bitmap, width / tile.tile.width, -(height / tile.tile.height));
     {
-      CGCanvas inner(bitmap, CGSizeMake(tile.tile.width, tile.tile.height), density, imageLoaded_);
+      CGCanvas inner(bitmap, CGSizeMake(tile.tile.width, tile.tile.height), density, imageLoaded_, viewFor_);
       drawTile(inner);
     }
     CGImageRef image = CGBitmapContextCreateImage(bitmap);
@@ -366,14 +393,139 @@ class CGCanvas final : public ngn::SvgCanvas {
     CGContextRestoreGState(context_);
   }
 
-  double text(
+  double measureText(const std::string &text, double fontSize, const std::string &fontFamily, const std::string &fontWeight) override {
+    CTLineRef line = createLine(text, fontSize, fontFamily, fontWeight, nullptr);
+    double width = CTLineGetTypographicBounds(line, nullptr, nullptr, nullptr);
+    CFRelease(line);
+    return width;
+  }
+
+  // The composed character sequences of `text` (Foundation's grapheme clusters), each with the
+  // glyphs Core Text's shaped line has for it, where it has them. A cluster with no glyph of its
+  // own, the tail of a ligature, joins the one before it.
+  std::vector<ngn::SvgGlyphCluster> glyphClusters(
+      const std::string &text, double fontSize, const std::string &fontFamily, const std::string &fontWeight) override {
+    NSString *string = @(text.c_str());
+    if (string == nil) {
+      string = @"";
+    }
+    std::vector<NSRange> ranges;
+    std::vector<size_t> clusterOf(string.length);
+    for (NSUInteger i = 0; i < string.length;) {
+      NSRange range = [string rangeOfComposedCharacterSequenceAtIndex:i];
+      std::fill(clusterOf.begin() + static_cast<long>(range.location), clusterOf.begin() + static_cast<long>(NSMaxRange(range)), ranges.size());
+      ranges.push_back(range);
+      i = NSMaxRange(range);
+    }
+    std::vector<double> left(ranges.size(), INFINITY), right(ranges.size(), -INFINITY);
+    struct Glyph {
+      CTFontRef font;
+      CGGlyph glyph;
+      CGPoint position;
+    };
+    std::vector<std::vector<Glyph>> glyphs(ranges.size());
+    CTLineRef line = createLine(text, fontSize, fontFamily, fontWeight, nullptr);
+    for (id item in (__bridge NSArray *)CTLineGetGlyphRuns(line)) {
+      auto run = (__bridge CTRunRef)item;
+      auto font = (CTFontRef)CFDictionaryGetValue(CTRunGetAttributes(run), kCTFontAttributeName);
+      CFIndex count = CTRunGetGlyphCount(run);
+      std::vector<CGGlyph> ids(static_cast<size_t>(count));
+      std::vector<CGPoint> positions(static_cast<size_t>(count));
+      std::vector<CGSize> advances(static_cast<size_t>(count));
+      std::vector<CFIndex> indices(static_cast<size_t>(count));
+      CTRunGetGlyphs(run, CFRangeMake(0, 0), ids.data());
+      CTRunGetPositions(run, CFRangeMake(0, 0), positions.data());
+      CTRunGetAdvances(run, CFRangeMake(0, 0), advances.data());
+      CTRunGetStringIndices(run, CFRangeMake(0, 0), indices.data());
+      for (size_t g = 0; g < positions.size(); ++g) {
+        if (font == nullptr || indices[g] < 0 || static_cast<size_t>(indices[g]) >= clusterOf.size()) {
+          continue;
+        }
+        size_t c = clusterOf[static_cast<size_t>(indices[g])];
+        left[c] = std::min(left[c], static_cast<double>(positions[g].x));
+        right[c] = std::max(right[c], static_cast<double>(positions[g].x + advances[g].width));
+        glyphs[c].push_back({font, ids[g], positions[g]});
+      }
+    }
+    std::vector<ngn::SvgGlyphCluster> out;
+    for (size_t c = 0; c < ranges.size(); ++c) {
+      std::string part = [string substringWithRange:ranges[c]].UTF8String;
+      if (glyphs[c].empty() && !out.empty()) {
+        out.back().text += part;
+        continue;
+      }
+      auto shaped = std::make_shared<ShapedGlyphs>();
+      for (const auto &g : glyphs[c]) {
+        shaped->add(g.font, g.glyph, CGPointMake(g.position.x - left[c], g.position.y));
+      }
+      bool placed = !glyphs[c].empty();
+      out.push_back({.text = std::move(part), .x = placed ? left[c] : 0, .advance = placed ? right[c] - left[c] : 0, .glyphs = shaped});
+    }
+    CFRelease(line);
+    return out;
+  }
+
+  void glyphCluster(const ngn::SvgGlyphCluster &cluster, double x, double y, const ngn::SvgPaint &fill) override {
+    auto shaped = std::static_pointer_cast<const ShapedGlyphs>(cluster.glyphs);
+    if (!shaped) {
+      return;
+    }
+    uint32_t argb = fill.gradient && !fill.gradient->stops.empty() ? fill.gradient->stops[0].second : fill.argb;
+    CGColorRef color = createColorImpl(argb, fill.opacity);
+    CGContextSaveGState(context_);
+    CGContextTranslateCTM(context_, x, y);
+    CGContextScaleCTM(context_, 1, -1);
+    CGContextSetTextMatrix(context_, CGAffineTransformIdentity);
+    CGContextSetFillColorWithColor(context_, color);
+    for (const auto &p : shaped->pieces) {
+      CTFontDrawGlyphs(p.font, p.glyphs.data(), p.positions.data(), p.glyphs.size(), context_);
+    }
+    CGContextRestoreGState(context_);
+    CGColorRelease(color);
+  }
+
+  void text(
       const std::string &text,
       double x,
       double y,
       double fontSize,
       const std::string &fontFamily,
       const std::string &fontWeight,
-      const ngn::SvgPaint *fill) override {
+      const ngn::SvgPaint &fill) override {
+    CTLineRef line = createLine(text, fontSize, fontFamily, fontWeight, &fill);
+    CGContextSaveGState(context_);
+    CGContextTranslateCTM(context_, x, y);
+    CGContextScaleCTM(context_, 1, -1);
+    CGContextSetTextMatrix(context_, CGAffineTransformIdentity);
+    CGContextSetTextPosition(context_, 0, 0);
+    CTLineDraw(line, context_);
+    CGContextRestoreGState(context_);
+    CFRelease(line);
+  }
+
+  // Each child of the view as its layer draws it, as react-native-svg's ForeignObject draws them on
+  // iOS: its frame's corner, its transform (which rendering a layer leaves out), then its layer and
+  // those under it. A layer renders though an ancestor view is hidden, so the views stay hidden and
+  // take no clicks; a hidden one's layer renders nothing.
+  void views(ngn::Tag view) override {
+    NSView *object = viewFor_ != nil ? viewFor_(view) : nil;
+    for (NSView *child in object.subviews) {
+      CGContextSaveGState(context_);
+      CGContextTranslateCTM(context_, child.frame.origin.x, child.frame.origin.y);
+      CGContextConcatCTM(context_, CATransform3DGetAffineTransform(child.layer.transform));
+      [child.layer renderInContext:context_];
+      CGContextRestoreGState(context_);
+    }
+  }
+
+ private:
+  // A +1 line of `text` in the font, in `fill`'s colour (a gradient's first stop) when given.
+  static CTLineRef createLine(
+      const std::string &text,
+      double fontSize,
+      const std::string &fontFamily,
+      const std::string &fontWeight,
+      const ngn::SvgPaint *fill) {
     NSFont *font = fontFamily.empty() ? nil : [NSFont fontWithName:@(fontFamily.c_str()) size:fontSize];
     if (font == nil) {
       int weight = fontWeight == "bold" ? 700 : std::atoi(fontWeight.c_str());
@@ -385,22 +537,9 @@ class CGCanvas final : public ngn::SvgCanvas {
         initWithString:@(text.c_str())
             attributes:@{NSFontAttributeName : font, (__bridge id)kCTForegroundColorAttributeName : (__bridge id)color}];
     CGColorRelease(color);
-    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)string);
-    double width = CTLineGetTypographicBounds(line, nullptr, nullptr, nullptr);
-    if (fill != nullptr) {
-      CGContextSaveGState(context_);
-      CGContextTranslateCTM(context_, x, y);
-      CGContextScaleCTM(context_, 1, -1);
-      CGContextSetTextMatrix(context_, CGAffineTransformIdentity);
-      CGContextSetTextPosition(context_, 0, 0);
-      CTLineDraw(line, context_);
-      CGContextRestoreGState(context_);
-    }
-    CFRelease(line);
-    return width;
+    return CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)string);
   }
 
- private:
   struct Mask {
     CGContextRef parent;
     CGContextRef mask;
@@ -497,6 +636,7 @@ class CGCanvas final : public ngn::SvgCanvas {
   CGSize size_;
   CGFloat scale_;
   void (^imageLoaded_)(void);
+  NSView * (^viewFor_)(ngn::Tag);
   ngn::SvgMatrix matrix_;
   std::vector<ngn::SvgMatrix> saved_;
   std::vector<Mask> masks_;
@@ -513,6 +653,11 @@ CGPathRef NGNCreatePath(const ngn::SvgPath &path) {
   return createPathImpl(path);
 }
 
-std::unique_ptr<ngn::SvgCanvas> NGNMakeCGCanvas(CGContextRef context, CGSize size, CGFloat scale, void (^imageLoaded)(void)) {
-  return std::make_unique<CGCanvas>(context, size, scale, imageLoaded);
+std::unique_ptr<ngn::SvgCanvas> NGNMakeCGCanvas(
+    CGContextRef context,
+    CGSize size,
+    CGFloat scale,
+    void (^imageLoaded)(void),
+    NSView * (^viewFor)(ngn::Tag)) {
+  return std::make_unique<CGCanvas>(context, size, scale, imageLoaded, viewFor);
 }

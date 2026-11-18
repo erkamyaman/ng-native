@@ -44,9 +44,10 @@ KeyChord parseChord(const folly::dynamic &chord);
 enum class NavigationDirection { Back, Forward };
 enum class NavigationInput { MouseButton4, MouseButton5, SwipeLeft, SwipeRight };
 
-// The OS's back and forward inputs: mouse buttons 4 and 5, a swipe (right goes back, as a page
-// follows the fingers), and Cmd-[ and Cmd-]. Cmd-Left stays with text editing.
-std::optional<NavigationDirection> navigationFor(NavigationInput input);
+// The OS's back and forward inputs: mouse buttons 4 and 5, a swipe (right goes back in a
+// left-to-right layout and left in a right-to-left one, as a page follows the fingers and as Safari
+// swaps them), and Cmd-[ and Cmd-]. Cmd-Left stays with text editing.
+std::optional<NavigationDirection> navigationFor(NavigationInput input, bool rightToLeft = false);
 std::optional<NavigationDirection> navigationFor(const KeyChord &chord);
 
 // A window's back and forward history, as the app's router reports it (`setHistory`): the titles
@@ -81,6 +82,10 @@ struct HistoryMenuItem {
   bool operator==(const HistoryMenuItem &) const = default;
 };
 std::vector<HistoryMenuItem> historyMenu(const WindowHistory &history, NavigationDirection direction);
+
+// Which chevron a point `x` across the pair (`width` wide) is on: back leads, so it is the left
+// one, and the right one in a right-to-left layout.
+NavigationDirection chevronAt(double x, double width, bool rightToLeft);
 
 class MenuBackend {
  public:

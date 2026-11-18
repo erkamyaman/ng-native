@@ -48,6 +48,7 @@
 #import "image-manipulator.h"
 #import "printing.h"
 #import "expo-image-view.h"
+#import "camera-sheet.h"
 #import "camera-view.h"
 #import "camera.h"
 #import "map-view.h"
@@ -68,6 +69,7 @@
 #import "test-launch.h"
 #import "updates.h"
 #import "surface-view.h"
+#import "tab-walk.h"
 #include "text-layout.h"
 
 #include "ngn/app-menus.h"
@@ -211,71 +213,13 @@ void logFirstFrame(NSWindow *window) {
   }
 }
 
-// The container the focus is in, and the view holding it, in `window`. An in-window cover (a modal)
-// is the container while it is up, wherever the first responder is: Tab stays inside it.
-struct FocusContext {
-  NGNSurfaceView *container = nil;
-  NGNView *focused = nil;
-};
-
-FocusContext focusContext(NSWindow *window) {
-  FocusContext context;
-  NSResponder *first = window.firstResponder;
-  // A field editor stands in for its text field, inside the field's view.
-  for (NSView *v = [first isKindOfClass:NSView.class] ? (NSView *)first : nil; v != nil; v = v.superview) {
-    if (context.focused == nil && [v isKindOfClass:NGNView.class]) {
-      context.focused = (NGNView *)v;
-    }
-    if ([v isKindOfClass:NGNSurfaceView.class]) {
-      context.container = (NGNSurfaceView *)v;
-      break;
-    }
-  }
-  if (context.container == nil) {
-    context.container =
-        [window.contentView isKindOfClass:NGNSurfaceView.class] ? (NGNSurfaceView *)window.contentView : nil;
-  }
-  NSView *cover = [NGNModalHostView frontCoverIn:window];
-  if (cover != nil && ![context.container isDescendantOf:cover]) {
-    context.container = (NGNSurfaceView *)cover;
-    context.focused = nil;
-  }
-  return context;
-}
-
-// Tab and Shift-Tab, walked in the core (focus-order.h) over the container the focus is in, in
-// place of AppKit's key-view loop. True when the key is used: the focus moved, or it is inside a
-// sheet, cover or popover, which Tab never leaves.
+// Tab and Shift-Tab (tab-walk.h). True when the key is used.
 bool moveFocus(NSEvent *event) {
-  NSWindow *window = event.window;
-  auto [container, focused] = focusContext(window);
-  if (container == nil) {
-    return false;
-  }
-  bool contained = [NGNModalHostView isPresentationContainer:container];
   // Option-Tab reaches every focusable view, whatever the keyboard navigation setting.
   bool everything = NSApp.isFullKeyboardAccessEnabled || (event.modifierFlags & NSEventModifierFlagOption) != 0;
   auto reach = everything ? ngn::TabReach::All : ngn::TabReach::TextInputs;
   bool backwards = (event.modifierFlags & NSEventModifierFlagShift) != 0;
-  const auto &tree = gHost.mounting->tree();
-  std::optional<Tag> from;
-  if (focused != nil) {
-    from = static_cast<Tag>(focused.reactTag);
-  }
-  auto count = ngn::tabOrder(tree, container.rootTag, reach, from).size();
-  // A control AppKit will not focus (a button, with keyboard navigation off) passes Tab on.
-  for (size_t tries = 0; tries < count; tries++) {
-    auto next = ngn::nextInTabOrder(tree, container.rootTag, from, backwards, reach);
-    if (!next) {
-      return contained;
-    }
-    NGNView *view = gHost.backend->view(*next);
-    if (view != nil && [window makeFirstResponder:view.keyboardResponder]) {
-      return true;
-    }
-    from = next;
-  }
-  return contained;
+  return ngn::appkit::moveFocus(event.window, gHost.mounting->tree(), *gHost.backend, backwards, reach);
 }
 
 // Arrow keys, Home and End inside a composite widget (a tablist, radiogroup, menu, menubar, listbox
@@ -291,7 +235,7 @@ bool moveInComposite(NSEvent *event) {
     return false;
   }
   NSWindow *window = event.window;
-  auto [container, focused] = focusContext(window);
+  auto [container, focused] = ngn::appkit::focusContext(window);
   if (container == nil || focused == nil || window.firstResponder != focused) {
     return false;
   }
@@ -394,6 +338,8 @@ struct Swipe {
   NGNView *below;
   NSWindow *window;
   SurfaceId surface = 0;
+  // The direction the swipe began in, which its later moves keep though a reload changes the app's.
+  bool rightToLeft = false;
   // The momentum scrolls after a swipe's fingers lift are the swipe's, not the content's.
   bool swallowMomentum = false;
   // Bumped as a swipe starts or ends, so a late animation step or timeout of an old one stops.
@@ -457,6 +403,11 @@ double fingersMovedRight(NSEvent *event) {
   return event.isDirectionInvertedFromDevice ? event.scrollingDeltaX : -event.scrollingDeltaX;
 }
 
+// Whether the app lays out right to left, which turns the swipes round: left goes back.
+bool swipesRightToLeft() {
+  return gHost.runtime && gHost.runtime->laysOutRightToLeft();
+}
+
 // The fingers lifted from a tracking swipe: it goes back, or slides home.
 void liftSwipe(NSEvent *event) {
   bool back = gSwipe.swipe.lifted(event.phase == NSEventPhaseCancelled);
@@ -506,7 +457,7 @@ NSEvent *swipeScroll(NSEvent *event, NSWindow *window) {
     if (window != gSwipe.window) {
       return event;
     }
-    double dx = fingersMovedRight(event);
+    double dx = ngn::towardsBack(fingersMovedRight(event), gSwipe.rightToLeft);
     if (dx != 0) {
       drawSwipe(gSwipe.swipe.moved(dx));
     }
@@ -530,23 +481,25 @@ NSEvent *swipeScroll(NSEvent *event, NSWindow *window) {
   auto history = gHost.menus->history(*surface);
   bool canGoBack = !history || !history->back.empty();
   bool canGoForward = !history || !history->forward.empty();
-  double dx = fingersMovedRight(event);
+  bool rightToLeft = swipesRightToLeft();
+  double dx = ngn::towardsBack(fingersMovedRight(event), rightToLeft);
   if (dx > 0 && canGoBack && gSwipe.swipe.phase() == ngn::BackSwipe::Phase::Idle) {
     auto target = gHost.mounting->backSwipeTarget(*surface);
     NGNView *top = target ? gHost.backend->view(target->top) : nil;
     NGNView *below = target ? gHost.backend->view(target->below) : nil;
-    if (top != nil && below != nil && gSwipe.swipe.begin(target, NSWidth(top.bounds))) {
+    if (top != nil && below != nil && gSwipe.swipe.begin(target, NSWidth(top.bounds), rightToLeft)) {
       endSwipe();
       gSwipe.top = top;
       gSwipe.below = below;
       gSwipe.window = window;
       gSwipe.surface = *surface;
+      gSwipe.rightToLeft = rightToLeft;
       gSwipe.swallowMomentum = true;
       drawSwipe(gSwipe.swipe.moved(dx));
       return nil;
     }
   }
-  auto bounds = ngn::swipeBounds(canGoBack, canGoForward);
+  auto bounds = ngn::swipeBounds(canGoBack, canGoForward, rightToLeft);
   if (bounds == ngn::SwipeBounds{}) {
     return event;
   }
@@ -556,7 +509,8 @@ NSEvent *swipeScroll(NSEvent *event, NSWindow *window) {
                        usingHandler:^(CGFloat amount, NSEventPhase phase, BOOL complete, BOOL *stop) {
                          if (phase == NSEventPhaseEnded && amount != 0) {
                            navigate(*ngn::navigationFor(
-                                        amount > 0 ? ngn::NavigationInput::SwipeRight : ngn::NavigationInput::SwipeLeft),
+                                        amount > 0 ? ngn::NavigationInput::SwipeRight : ngn::NavigationInput::SwipeLeft,
+                                        rightToLeft),
                                     window);
                          }
                        }];
@@ -1258,7 +1212,11 @@ int main(int argc, const char *argv[]) {
       ngn::addModule(*modules, "NgNativeSplashScreen", [] { return ngn::makeSplashScreenModule(gSplash); });
       static auto photos = ngn::appkit::makePhotoLibrary(caches);
       ngn::addModule(*modules, "NgNativeMediaLibrary", [] { return ngn::makeMediaLibraryModule(photos, noPrompts, fileAccess); });
-      ngn::addModule(*modules, "NgNativeImagePicker", [] { return ngn::makeImagePickerModule(photos, noPrompts); });
+      static auto cameraHardware = ngn::appkit::makeCameraHardware();
+      static auto cameraSheet = ngn::appkit::makeCameraSheet();
+      ngn::addModule(*modules, "NgNativeImagePicker", [] {
+        return ngn::makeImagePickerModule(photos, noPrompts, ngn::PickerCamera{.hardware = cameraHardware, .microphone = audioInput, .sheet = cameraSheet, .folder = caches + "/ImagePicker"});
+      });
       static auto tracking = ngn::appkit::makeTrackingAuthority();
       ngn::addModule(*modules, "NgNativeTrackingTransparency", [] { return ngn::makeTrackingModule(tracking, noPrompts); });
       static auto imageHttp = network.http;
@@ -1275,7 +1233,6 @@ int main(int argc, const char *argv[]) {
       });
       // <expo-image>'s bytes: 64 MB of them in memory, the rest on disk in the caches.
       [NGNExpoImageView useHttp:imageHttp cache:std::make_shared<ngn::ImageCache>(caches + "/ExpoImage", 64 << 20)];
-      static auto cameraHardware = ngn::appkit::makeCameraHardware();
       static auto cameraViews = std::make_shared<ngn::CameraViews>();
       [NGNCameraView useHardware:cameraHardware views:cameraViews noPrompts:noPrompts];
       ngn::addModule(*modules, "NgNativeCamera", [] { return ngn::makeCameraModule(cameraHardware, cameraViews, caches + "/Camera", noPrompts); });
@@ -1291,8 +1248,9 @@ int main(int argc, const char *argv[]) {
       ngn::addModule(*modules, "NgNativePrint", [] { return ngn::makePrintModule(printSystem, imageHttp, caches + "/Print", fileAccess, noPrompts); });
       // react-native-webview's navigation answers; harmless in a host built without the library.
       ngn::addModule(*modules, "RNCWebViewModule", [] { return ngn::makeWebViewModule(ngn::sharedNavigationLocks()); });
-      // A rating prompt only in a Mac App Store build, the one sandboxed.
-      static auto reviewPrompt = ngn::appkit::makeReviewPrompt(processes.sandboxed);
+      // A rating prompt only in a Mac App Store build: one sandboxed but shipped another way has none.
+      static auto packaged = ngn::appkit::packagedApp();
+      static auto reviewPrompt = ngn::appkit::makeReviewPrompt(packaged && packaged->distribution == "mas");
       ngn::addModule(*modules, "NgNativeStoreReview", [] { return ngn::makeStoreReviewModule(reviewPrompt, noPrompts); });
       static auto crypto = ngn::appkit::makeCryptoSource();
       ngn::addModule(*modules, "NgNativeCrypto", [] { return ngn::makeCryptoModule(crypto); });
@@ -1348,6 +1306,9 @@ int main(int argc, const char *argv[]) {
         ngn::DebuggerIdentity{
             .appId = appId,
             .deviceName = NSHost.currentHost.localizedName ? NSHost.currentHost.localizedName.UTF8String : "Mac"});
+    // Each surface lays out the way I18nManager.isRTL says for the instance running, read again
+    // as a reload starts the next.
+    gHost.runtime->rightToLeft = [system] { return ngn::appRightToLeft(*system); };
     // The first launch owes its first frame from the instance the runtime just began.
     gHost.launchFrame.loaded(gHost.updates->launchGeneration(), gHost.mounting->instance());
 
@@ -1496,7 +1457,7 @@ int main(int argc, const char *argv[]) {
                                             }
                                             auto input = event.deltaX > 0 ? ngn::NavigationInput::SwipeRight
                                                                           : ngn::NavigationInput::SwipeLeft;
-                                            navigate(*ngn::navigationFor(input), event.window);
+                                            navigate(*ngn::navigationFor(input, swipesRightToLeft()), event.window);
                                             return nil;
                                           }];
     // "Swipe between pages" with two fingers (swipeScroll), for real scrolls and replayed ones.
