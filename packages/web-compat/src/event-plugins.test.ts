@@ -129,6 +129,26 @@ describe("Angular's event-manager plugins in an app that asked for them", () => 
     assert.equal(fixture.instance.outer, 0);
   });
 
+  it('asks the plugin provided last first, as Angular does, where two claim a name', async () => {
+    /** A second `.stop` plugin, which says when it is the one that attached the listener. */
+    class LaterStopPlugin extends StopPlugin {
+      override addEventListener(element: unknown, name: string, handler: Listener): () => void {
+        heard.push('later');
+        return super.addEventListener(element, name, handler);
+      }
+    }
+    const fixture = await render(Page, {
+      providers: [
+        provideWebCompat(),
+        provideEventPlugins(),
+        ...plugins(StopPlugin, LaterStopPlugin),
+      ],
+    });
+    assert.deepEqual(heard, ['later']);
+    tabOf(fixture).dispatchEvent(new CustomEvent('activate', { bubbles: true }));
+    assert.deepEqual(heard.sort(), ['later', 'plain', 'stopped']);
+  });
+
   it('gives each plugin its manager before asking what it supports', async () => {
     const fixture = await render(Page, {
       providers: [provideWebCompat(), provideEventPlugins(), ...plugins(ManagedPlugin)],
