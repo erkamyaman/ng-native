@@ -179,7 +179,9 @@ async function angularCompilerOptions(projectRoot, tsconfig) {
 /** @param {NgpOptions} options @returns {Promise<Session>} */
 function sessionFor(options) {
   const tsconfig = tsconfigOf(options);
-  let session = sessions.get(tsconfig);
+  const dev = options.dev === true;
+  const key = `${tsconfig}\0${dev}`;
+  let session = sessions.get(key);
   if (!session) {
     session = (async () => {
       const projectRoot = options.projectRoot ?? process.cwd();
@@ -190,6 +192,8 @@ function sessionFor(options) {
         ...angular,
         optimize: true,
         enableHmr: false,
+        supportTestBed: dev,
+        supportJitMode: dev,
         tsconfigPath: tsconfig,
         tcbConfig: api.buildTypeCheckingConfig(angular),
       });
@@ -199,8 +203,8 @@ function sessionFor(options) {
       }
       return created;
     })();
-    session.catch(() => sessions.delete(tsconfig));
-    sessions.set(tsconfig, session);
+    session.catch(() => sessions.delete(key));
+    sessions.set(key, session);
   }
   return session;
 }

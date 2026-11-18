@@ -226,6 +226,13 @@ describe('a component compiled with NGP', () => {
     assert.doesNotMatch(code, /@Component\(/);
   });
 
+  it('leaves the class metadata TestBed reads out of a release build, as oxc does', async () => {
+    const release = await compile('inline.ts');
+    assert.doesNotMatch(release.code, /ɵsetClassMetadata/);
+    const dev = await compile('inline.ts', true);
+    assert.match(dev.code, /ɵsetClassMetadata/);
+  });
+
   it('reads an external template and makes it an edge Metro watches', async () => {
     const { code, dependencies } = await compile('hello.ts');
     assert.deepEqual(dependencies, ['./hello.html']);
