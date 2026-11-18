@@ -762,6 +762,52 @@ function ngpBuild(projectRoot) {
   }
 }
 
+/** The tsconfig and every file it extends, in the order tsc reads them. */
+function tsconfigChain(file, chain = []) {
+  if (chain.includes(file)) return chain;
+  let text;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return chain;
+  }
+  chain.push(file);
+  let parsed;
+  try {
+    parsed = JSON.parse(withoutJsonComments(text));
+  } catch {
+    return chain;
+  }
+  for (const base of [parsed?.extends ?? []].flat()) {
+    const resolved = resolveExtends(base, path.dirname(file));
+    if (resolved) tsconfigChain(resolved, chain);
+  }
+  return chain;
+}
+
+function resolveExtends(base, directory) {
+  if (typeof base !== 'string') return null;
+  if (/^\.\.?[\\/]/.test(base) || path.isAbsolute(base)) {
+    const at = path.resolve(directory, base);
+    if (existsSync(at)) return at;
+    return existsSync(`${at}.json`) ? `${at}.json` : null;
+  }
+  for (const id of [base, `${base}/tsconfig.json`, `${base}.json`]) {
+    try {
+      return require.resolve(id, { paths: [directory] });
+    } catch {
+      // The next way a package can name its tsconfig.
+    }
+  }
+  return null;
+}
+
+function tsconfigHash(file) {
+  const hash = createHash('sha1');
+  for (const one of tsconfigChain(file)) hash.update(one).update(readFileSync(one));
+  return hash.digest('hex').slice(0, 12);
+}
+
 function checkCompilation({ compilation = 'oxc', disableTypeChecking, tsconfig }) {
   if (compilation !== 'oxc' && compilation !== 'ngp') {
     throw new Error(
@@ -802,7 +848,7 @@ function recordCompilation(config, options, projectRoot) {
     config.transformer.cacheVersion,
     ngpBuild(projectRoot),
     typeCheck ? 'typecheck' : 'no-typecheck',
-    tsconfig && `tsconfig-${tsconfig}`,
+    `tsconfig-${tsconfigHash(path.resolve(projectRoot ?? process.cwd(), tsconfig ?? 'tsconfig.json'))}`,
   ]
     .filter(Boolean)
     .join('-');
@@ -924,4 +970,10 @@ function withAngularNative(config, options = {}) {
 
 // An app reaches this file through `withAngularNative` alone. The other three are exported for the
 // integration tests, which pin what each does on its own.
-module.exports = { withAngularNative, compilerFingerprint, chunkOutsideServerRoot, watchCompiler };
+module.exports = {
+  withAngularNative,
+  compilerFingerprint,
+  chunkOutsideServerRoot,
+  watchCompiler,
+  tsconfigChain,
+};

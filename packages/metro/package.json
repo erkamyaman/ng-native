@@ -29,7 +29,7 @@
   "peerDependencies": {
     "@angular/compiler-cli": "^22.2.0",
     "@expo/metro-config": "*",
-    "@typescript/native-preview": "*",
+    "@typescript/native-preview": "^7.0.0-0",
     "marked": "^18.0.14",
     "typescript": ">=5.9"
   },

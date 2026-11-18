@@ -126,21 +126,19 @@ class Session {
     return run;
   }
 
-  /** @param {string} file @param {string} src @param {boolean} sweep */
-  async sync(file, src, sweep) {
+  /** @param {string} file @param {string} src */
+  async sync(file, src) {
     /** @type {{ filePath: string, updateType: 'Created' | 'Deleted' | 'Changed' }[]} */
     const changes = [];
-    if (sweep) {
-      for (const [key, known] of this.seen) {
-        const now = modified(known.filePath);
-        if (now === known.mtime) continue;
-        if (now === null) this.seen.delete(key);
-        else known.mtime = now;
-        changes.push({
-          filePath: known.filePath,
-          updateType: now === null ? 'Deleted' : 'Changed',
-        });
-      }
+    for (const [key, known] of this.seen) {
+      const now = modified(known.filePath);
+      if (now === known.mtime) continue;
+      if (now === null) this.seen.delete(key);
+      else known.mtime = now;
+      changes.push({
+        filePath: known.filePath,
+        updateType: now === null ? 'Deleted' : 'Changed',
+      });
     }
     if (changes.length) await this.compiler.invalidateFiles(changes);
     if (!this.seen.has(keyOf(file))) {
@@ -160,8 +158,16 @@ class Session {
   }
 }
 
-/** @type {Map<string, Promise<Session>>} */
+/** @type {Map<string, { session: Promise<Session>, signature: string }>} */
 const sessions = new Map();
+
+/** @param {string} tsconfig */
+function tsconfigSignature(tsconfig) {
+  const { tsconfigChain } = require('./config.cjs');
+  return tsconfigChain(tsconfig)
+    .map((file) => `${file}:${modified(file)}`)
+    .join('|');
+}
 
 /** @param {NgpOptions} options */
 function tsconfigOf(options) {
@@ -181,31 +187,40 @@ function sessionFor(options) {
   const tsconfig = tsconfigOf(options);
   const dev = options.dev === true;
   const key = `${tsconfig}\0${dev}`;
-  let session = sessions.get(key);
-  if (!session) {
-    session = (async () => {
-      const projectRoot = options.projectRoot ?? process.cwd();
-      const { api, analyzerOptions } = await loadNgp(projectRoot);
-      const angular = await angularCompilerOptions(projectRoot, tsconfig);
-      const analyzer = await api.createAnalyzer(tsconfig, { ...analyzerOptions, enableHmr: false });
-      const compiler = new api.HybridCompiler(analyzer, {
-        ...angular,
-        optimize: true,
-        enableHmr: false,
-        supportTestBed: dev,
-        supportJitMode: dev,
-        tsconfigPath: tsconfig,
-        tcbConfig: api.buildTypeCheckingConfig(angular),
-      });
-      const created = new Session(api, analyzer, compiler, tsconfig);
-      for await (const chunk of compiler.analyzeOptimized()) {
-        for (const file of chunk.files) created.track(file);
-      }
-      return created;
-    })();
-    session.catch(() => sessions.delete(key));
-    sessions.set(key, session);
+  const signature = tsconfigSignature(tsconfig);
+  const open = sessions.get(key);
+  if (open?.signature === signature) return open.session;
+  if (open) {
+    sessions.delete(key);
+    open.session.then(
+      (stale) => stale.queue.then(() => stale.close()),
+      () => {},
+    );
   }
+  const session = (async () => {
+    const projectRoot = options.projectRoot ?? process.cwd();
+    const { api, analyzerOptions } = await loadNgp(projectRoot);
+    const angular = await angularCompilerOptions(projectRoot, tsconfig);
+    const analyzer = await api.createAnalyzer(tsconfig, { ...analyzerOptions, enableHmr: false });
+    const compiler = new api.HybridCompiler(analyzer, {
+      ...angular,
+      optimize: true,
+      enableHmr: false,
+      supportTestBed: dev,
+      supportJitMode: dev,
+      tsconfigPath: tsconfig,
+      tcbConfig: api.buildTypeCheckingConfig(angular),
+    });
+    const created = new Session(api, analyzer, compiler, tsconfig);
+    for await (const chunk of compiler.analyzeOptimized()) {
+      for (const file of chunk.files) created.track(file);
+    }
+    return created;
+  })();
+  session.catch(() => {
+    if (sessions.get(key)?.session === session) sessions.delete(key);
+  });
+  sessions.set(key, { session, signature });
   return session;
 }
 
@@ -226,7 +241,7 @@ async function compileWithNgp(src, filename, options) {
   const session = await sessionFor(options);
   const file = path.resolve(options.projectRoot ?? process.cwd(), filename);
   return session.serial(async () => {
-    await session.sync(file, src, options.dev === true);
+    await session.sync(file, src);
     const metadata = await session.analyzer.getMetadataForFile(file);
     if (!metadata) return null;
     session.track(metadata);
@@ -255,7 +270,7 @@ async function typeCheckWithNgp(src, filename, options) {
   const session = await sessionFor(options);
   const file = path.resolve(options.projectRoot ?? process.cwd(), filename);
   await session.serial(async () => {
-    await session.sync(file, src, options.dev === true);
+    await session.sync(file, src);
     await checkTypes(session, file, src);
   });
 }
@@ -263,7 +278,7 @@ async function typeCheckWithNgp(src, filename, options) {
 async function closeNgp() {
   const open = [...sessions.values()];
   sessions.clear();
-  for (const session of open) (await session.catch(() => null))?.close();
+  for (const { session } of open) (await session.catch(() => null))?.close();
 }
 
 module.exports = { compileWithNgp, typeCheckWithNgp, closeNgp, loadNgp, messageOf };

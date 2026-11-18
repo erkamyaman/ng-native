@@ -1,5 +1,5 @@
 ---
-__default__: minor
+__default__: patch
 ---
 
 `withAngularNative` takes an experimental `compilation: 'ngp'`, which compiles components with Angular's hybrid compiler (a Rust analysis pass in front of Angular's own template compiler) in place of oxc, as Analog's `compilation: 'ngp'` does.

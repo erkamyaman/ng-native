@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
@@ -70,6 +70,29 @@ describe("the preset's compilation option", () => {
     assert.notEqual(checked.transformer.cacheVersion, unchecked.transformer.cacheVersion);
     const oxc = withAngularNative(base(), { compilation: 'oxc' }) as Config;
     assert.notEqual(oxc.transformer.cacheVersion, checked.transformer.cacheVersion);
+  });
+
+  it("puts the tsconfig and what it extends in Metro's cacheVersion", () => {
+    const dir = mkdtempSync(path.join(import.meta.dirname, '.ngp-tsconfig-'));
+    try {
+      writeFileSync(path.join(dir, 'base.json'), '{ "angularCompilerOptions": {} }');
+      writeFileSync(path.join(dir, 'tsconfig.json'), '{ "extends": "./base" }');
+      const version = () =>
+        (withAngularNative({ ...base(), projectRoot: dir }, { compilation: 'ngp' }) as Config)
+          .transformer.cacheVersion;
+      const first = version();
+      assert.equal(version(), first);
+      writeFileSync(
+        path.join(dir, 'base.json'),
+        '{ "angularCompilerOptions": { "strictTemplates": true } }',
+      );
+      const second = version();
+      assert.notEqual(second, first);
+      writeFileSync(path.join(dir, 'tsconfig.json'), '{ "extends": "./base", "files": [] }');
+      assert.notEqual(version(), second);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('drops a recorded compilation when the option goes away', () => {
@@ -208,7 +231,7 @@ describe('a component compiled with NGP', () => {
   write('inline.ts', component('inline', "template: '<text>{{ name }}</text>'"));
 
   const compile = (name: string, dev = false) =>
-    transformAngularWithNgp(require('node:fs').readFileSync(path.join(root, name), 'utf8'), name, {
+    transformAngularWithNgp(readFileSync(path.join(root, name), 'utf8'), name, {
       projectRoot: root,
       platform: 'ios',
       dev,
@@ -248,6 +271,16 @@ describe('a component compiled with NGP', () => {
     const { code } = await compile('hello.ts', true);
     assert.match(code, /ɵɵtextInterpolate1\('goodbye ',/);
     assert.doesNotMatch(code, /ɵɵtextInterpolate1\('hello ',/);
+  });
+
+  it('compiles an edited template again in a release build too', async () => {
+    write('hello.html', '<text>release {{ name }}</text>');
+    await compile('hello.ts');
+    write('hello.html', '<text>again {{ name }}</text>');
+    const later = new Date(Date.now() + 15000);
+    utimesSync(path.join(root, 'hello.html'), later, later);
+    const { code } = await compile('hello.ts');
+    assert.match(code, /ɵɵtextInterpolate1\('again ',/);
   });
 
   it('compiles a component file added after the first analysis', async () => {
@@ -310,11 +343,11 @@ describe('a component compiled with NGP', () => {
     );
     write('typed.html', '<view>\n  <text>{{ count.toFixed(2) }}</text>\n</view>\n');
     const typed = (dev: boolean) =>
-      transformAngularWithNgp(
-        require('node:fs').readFileSync(path.join(root, 'typed.ts'), 'utf8'),
-        'typed.ts',
-        { projectRoot: root, platform: 'ios', dev },
-      );
+      transformAngularWithNgp(readFileSync(path.join(root, 'typed.ts'), 'utf8'), 'typed.ts', {
+        projectRoot: root,
+        platform: 'ios',
+        dev,
+      });
     await assert.rejects(
       typed(false),
       /typed\.html:2:\d+ - error TS\d+: Property .toFixed. does not exist/,
@@ -352,6 +385,25 @@ describe('a component compiled with NGP', () => {
     );
     const { code } = await compile('host.ts', true);
     assert.match(code, /ɵɵdomProperty\('markers'|ɵɵproperty\('markers'/);
+  });
+
+  it('analyses again with the new angularCompilerOptions once the tsconfig changes', async () => {
+    const tsconfig = path.join(root, 'tsconfig.json');
+    const before = readFileSync(tsconfig, 'utf8');
+    try {
+      await compile('host.ts', true);
+      writeFileSync(
+        tsconfig,
+        before.replace('"typeCheckHostBindings":false', '"typeCheckHostBindings":true'),
+      );
+      const later = new Date(Date.now() + 20000);
+      utimesSync(tsconfig, later, later);
+      await assert.rejects(compile('host.ts', true), /Can't bind to 'markers'/);
+    } finally {
+      writeFileSync(tsconfig, before);
+      const after = new Date(Date.now() + 25000);
+      utimesSync(tsconfig, after, after);
+    }
   });
 
   it('fails the build on a template error, naming the file', async () => {
