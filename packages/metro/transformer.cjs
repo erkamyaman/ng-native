@@ -113,7 +113,7 @@ function originalLoc(loc, tracer, lineOffset) {
     line: loc.start.line - lineOffset,
     column: loc.start.column,
   });
-  if (start.line == null) return null;
+  if (start.line == null || start.source !== tracer.resolvedSources[0]) return null;
   const end = originalPositionFor(tracer, {
     line: loc.end.line - lineOffset,
     column: loc.end.column,
@@ -121,7 +121,7 @@ function originalLoc(loc, tracer, lineOffset) {
   return {
     start: { line: start.line, column: start.column },
     end:
-      end.line == null
+      end.line == null || end.source !== start.source
         ? { line: start.line, column: start.column }
         : { line: end.line, column: end.column },
     filename: loc.filename,

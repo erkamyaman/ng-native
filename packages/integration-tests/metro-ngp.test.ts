@@ -133,6 +133,56 @@ describe("the preset's compilation option", () => {
     }
   });
 
+  it("follows a package's own tsconfig field, and a file over a directory of the same name", () => {
+    const dir = mkdtempSync(path.join(import.meta.dirname, '.ngp-extends-'));
+    try {
+      const preset = path.join(dir, 'node_modules/@acme/tsconfig');
+      mkdirSync(path.join(preset, 'configs'), { recursive: true });
+      writeFileSync(
+        path.join(preset, 'package.json'),
+        '{ "name": "@acme/tsconfig", "main": "./index.js", "tsconfig": "./configs/native.json" }',
+      );
+      writeFileSync(path.join(preset, 'index.js'), '');
+      writeFileSync(path.join(preset, 'configs/native.json'), '{ "compilerOptions": {} }');
+      mkdirSync(path.join(dir, 'base'));
+      writeFileSync(path.join(dir, 'base.json'), '{ "compilerOptions": {} }');
+      writeFileSync(path.join(dir, 'tsconfig.json'), '{ "extends": ["./base", "@acme/tsconfig"] }');
+      const version = () =>
+        (withAngularNative({ ...base(), projectRoot: dir }, { compilation: 'ngp' }) as Config)
+          .transformer.cacheVersion;
+      const first = version();
+      writeFileSync(
+        path.join(preset, 'configs/native.json'),
+        '{ "compilerOptions": { "strict": true } }',
+      );
+      const second = version();
+      assert.notEqual(second, first);
+      writeFileSync(path.join(dir, 'base.json'), '{ "compilerOptions": { "strict": true } }');
+      assert.notEqual(version(), second);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("takes the conditions a 'ngp' tsconfig inherits through extends", () => {
+    const dir = mkdtempSync(path.join(import.meta.dirname, '.ngp-inherit-'));
+    try {
+      writeFileSync(
+        path.join(dir, 'base.json'),
+        '{ "compilerOptions": { "customConditions": ["from-base"] } }',
+      );
+      writeFileSync(path.join(dir, 'tsconfig.app.json'), '{ "extends": "./base.json" }');
+      writeFileSync(path.join(dir, 'tsconfig.json'), '{}');
+      const config = withAngularNative(
+        { ...base(), projectRoot: dir },
+        { compilation: 'ngp', tsconfig: 'tsconfig.app.json' },
+      ) as Config & { resolver: { unstable_conditionNames?: string[] } };
+      assert.ok(config.resolver.unstable_conditionNames?.includes('from-base'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('drops a recorded compilation when the option goes away', () => {
     const config = base();
     withAngularNative(config, { compilation: 'ngp' });
@@ -463,13 +513,43 @@ describe('a component compiled with NGP', () => {
     assert.deepEqual(takeResourcesRead('uses-helper.ts'), []);
   });
 
-  it("compiles with the tsconfig's angularCompilerOptions, not NGP's defaults", async () => {
+  it('marks the .cts behind a .cjs import read', async () => {
+    write('helper.cts', 'export const three = 3;\n');
+    const src = "import { three } from './helper.cjs';\nexport const four: number = three + 1;\n";
+    await transformAngularWithNgp(src, 'uses-cts.ts', {
+      projectRoot: root,
+      platform: 'ios',
+      typeCheck: false,
+    });
+    takeResourcesRead('uses-cts.ts');
+    write('uses-cts.ts', src);
+    await transformAngularWithNgp(src, 'uses-cts.ts', { projectRoot: root, platform: 'ios' }).catch(
+      () => undefined,
+    );
+    assert.ok(takeResourcesRead('uses-cts.ts').includes(path.join(root, 'helper.cts')));
+  });
+
+  it('type-checks an app .tsx file with no Angular in it', async () => {
+    write('screen.tsx', 'export const count: number = "bad";\n');
+    await assert.rejects(
+      transformAngularWithNgp('export const count: number = "bad";\n', 'screen.tsx', {
+        projectRoot: root,
+        platform: 'ios',
+      }),
+      /screen\.tsx:1:14 - error TS2322/,
+    );
+  });
+
+  const writeHost = () =>
     write(
       'host.ts',
       `import { Component } from '@angular/core';\n` +
         `@Component({ selector: 'x-map', template: '', host: { '[markers]': 'markers' } })\n` +
         `export class XMap { protected markers = []; }\n`,
     );
+
+  it("compiles with the tsconfig's angularCompilerOptions, not NGP's defaults", async () => {
+    writeHost();
     const { code } = await compile('host.ts', true);
     assert.match(code, /ɵɵdomProperty\('markers'|ɵɵproperty\('markers'/);
   });
@@ -477,6 +557,7 @@ describe('a component compiled with NGP', () => {
   it('analyses again with the new angularCompilerOptions once the tsconfig changes', async () => {
     const tsconfig = path.join(root, 'tsconfig.json');
     const before = readFileSync(tsconfig, 'utf8');
+    writeHost();
     try {
       await compile('host.ts', true);
       writeFileSync(
@@ -559,7 +640,10 @@ describe('NGP with resources and checkers of its own', () => {
   it('fails a check on a checker that sends what is not JSON, and the next check starts afresh', async () => {
     const restore = env(
       'TSNATIVE_BINARY_PATH',
-      fake('broken.js', `process.stdout.write('Content-Length: 5\\r\\n\\r\\nnope!');`),
+      fake(
+        'broken.js',
+        `process.stdin.resume(); process.stdout.write('Content-Length: 5\\r\\n\\r\\nnope!');`,
+      ),
     );
     try {
       await assert.rejects(
@@ -577,6 +661,41 @@ describe('NGP with resources and checkers of its own', () => {
       platform: 'ios',
     });
     assert.match(code, /a: number = 1/);
+  });
+
+  it('fails a check on a checker that sends JSON that is not an object', async () => {
+    const restore = env(
+      'TSNATIVE_BINARY_PATH',
+      fake(
+        'null.js',
+        `process.stdin.resume(); process.stdout.write('Content-Length: 4\\r\\n\\r\\nnull');`,
+      ),
+    );
+    const checker = new TsgoChecker(path.join(root, 'tsconfig.json'));
+    try {
+      await assert.rejects(
+        checker.check(path.join(root, 'src/a.ts'), ''),
+        /sent a message that is not a JSON object/,
+      );
+    } finally {
+      checker.close();
+      restore();
+    }
+  });
+
+  it('keeps the default deadline for a timeout that is not a positive whole number', async () => {
+    const restore = env('ANGULAR_NATIVE_TSGO_TIMEOUT_MS', '-1');
+    const checker = new TsgoChecker(path.join(root, 'tsconfig.json'));
+    try {
+      writeFileSync(path.join(root, 'src/ok.ts'), 'export const ok = 1;\n');
+      assert.deepEqual(
+        await checker.check(path.join(root, 'src/ok.ts'), 'export const ok = 1;\n'),
+        [],
+      );
+    } finally {
+      checker.close();
+      restore();
+    }
   });
 
   it('gives up on a checker that never answers', async () => {

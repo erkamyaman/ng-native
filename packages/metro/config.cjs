@@ -16,7 +16,7 @@
  */
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { existsSync, readdirSync, readFileSync, watch } = require('node:fs');
+const { existsSync, readdirSync, readFileSync, statSync, watch } = require('node:fs');
 const { iconSetVersions } = require('./inline-icons.cjs');
 const { checkingResources, rereadingResources } = require('./resource-cache.cjs');
 const {
@@ -47,9 +47,9 @@ const POLYFILLS = [
  * `compilerOptions.customConditions` from the project's own `tsconfig.json`, or none. Only that
  * file, not its `extends`: the Nx generator writes the workspace's conditions into it.
  */
-function tsconfigConditions(projectRoot, tsconfig = 'tsconfig.json') {
+function tsconfigConditions(projectRoot) {
   try {
-    const text = readFileSync(path.resolve(projectRoot ?? process.cwd(), tsconfig), 'utf8');
+    const text = readFileSync(path.join(projectRoot ?? process.cwd(), 'tsconfig.json'), 'utf8');
     const conditions = JSON.parse(withoutJsonComments(text)).compilerOptions?.customConditions;
     return Array.isArray(conditions) ? conditions : [];
   } catch {
@@ -763,7 +763,38 @@ function ngpBuild(projectRoot) {
 }
 
 /** The tsconfig and every file it extends, in the order tsc reads them. */
-function tsconfigChain(file, chain = []) {
+function typescriptConfig(file) {
+  if (!isFile(file)) return null;
+  let ts;
+  try {
+    ts = require(require.resolve('typescript', { paths: [path.dirname(file), __dirname] }));
+  } catch {
+    return null;
+  }
+  const source = ts.readJsonConfigFile(file, ts.sys.readFile);
+  const parsed = ts.parseJsonSourceFileConfigFileContent(
+    source,
+    ts.sys,
+    path.dirname(file),
+    undefined,
+    file,
+  );
+  return { files: [file, ...(source.extendedSourceFiles ?? [])], options: parsed.options };
+}
+
+function isFile(file) {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function tsconfigChain(file) {
+  return typescriptConfig(file)?.files ?? readChain(file);
+}
+
+function readChain(file, chain = []) {
   if (chain.includes(file)) return chain;
   let text;
   try {
@@ -780,7 +811,7 @@ function tsconfigChain(file, chain = []) {
   }
   for (const base of [parsed?.extends ?? []].flat()) {
     const resolved = resolveExtends(base, path.dirname(file));
-    if (resolved) tsconfigChain(resolved, chain);
+    if (resolved) readChain(resolved, chain);
   }
   return chain;
 }
@@ -789,8 +820,8 @@ function resolveExtends(base, directory) {
   if (typeof base !== 'string') return null;
   if (/^\.\.?[\\/]/.test(base) || path.isAbsolute(base)) {
     const at = path.resolve(directory, base);
-    if (existsSync(at)) return at;
-    return existsSync(`${at}.json`) ? `${at}.json` : null;
+    if (isFile(at)) return at;
+    return isFile(`${at}.json`) ? `${at}.json` : null;
   }
   for (const id of [base, `${base}/tsconfig.json`, `${base}.json`]) {
     try {
@@ -855,8 +886,15 @@ function recordCompilation(config, options, projectRoot) {
 }
 
 function conditionsOf(config, options) {
-  const tsconfig = options.compilation === 'ngp' ? options.tsconfig : undefined;
-  return tsconfigConditions(config.projectRoot, tsconfig).filter((c) => c !== 'react-native');
+  const ngp =
+    options.compilation === 'ngp' &&
+    typescriptConfig(
+      path.resolve(config.projectRoot ?? process.cwd(), options.tsconfig ?? 'tsconfig.json'),
+    );
+  const conditions = ngp
+    ? (ngp.options.customConditions ?? [])
+    : tsconfigConditions(config.projectRoot);
+  return conditions.filter((c) => c !== 'react-native');
 }
 
 function withAngularNative(config, options = {}) {

@@ -357,39 +357,46 @@ class TsgoChecker {
   /** @param {Buffer} chunk */
   onData(chunk) {
     this.buffer = Buffer.concat([this.buffer, chunk]);
-    for (;;) {
-      const headerEnd = this.buffer.indexOf('\r\n\r\n');
-      if (headerEnd === -1) return;
-      const length = /Content-Length: (\d+)/i.exec(
-        this.buffer.subarray(0, headerEnd).toString('utf8'),
-      );
-      if (!length) {
-        this.broken('a message with no Content-Length');
-        return;
-      }
-      const bodyStart = headerEnd + 4;
-      const bodyEnd = bodyStart + Number(length[1]);
-      if (this.buffer.length < bodyEnd) return;
-      let message;
-      try {
-        message = JSON.parse(this.buffer.subarray(bodyStart, bodyEnd).toString('utf8'));
-      } catch {
-        this.broken('a message that is not JSON');
-        return;
-      }
-      this.buffer = this.buffer.subarray(bodyEnd);
-      if (message.id !== undefined && message.method !== undefined) {
-        this.send({ jsonrpc: '2.0', id: message.id, result: null });
-      } else if (message.id !== undefined && this.pending.has(message.id)) {
-        const entry = /** @type {NonNullable<ReturnType<typeof this.pending.get>>} */ (
-          this.pending.get(message.id)
-        );
-        this.pending.delete(message.id);
-        clearTimeout(entry.timer);
-        if (message.error) entry.reject(new Error(message.error.message));
-        else entry.resolve(message.result);
-      }
+    for (let message = this.nextMessage(); message; message = this.nextMessage()) {
+      this.dispatch(message);
     }
+  }
+
+  nextMessage() {
+    const headerEnd = this.buffer.indexOf('\r\n\r\n');
+    if (headerEnd === -1) return null;
+    const length = /Content-Length: (\d+)/i.exec(
+      this.buffer.subarray(0, headerEnd).toString('utf8'),
+    );
+    if (!length) return this.broken('a message with no Content-Length');
+    const bodyStart = headerEnd + 4;
+    const bodyEnd = bodyStart + Number(length[1]);
+    if (this.buffer.length < bodyEnd) return null;
+    let message;
+    try {
+      message = JSON.parse(this.buffer.subarray(bodyStart, bodyEnd).toString('utf8'));
+    } catch {
+      return this.broken('a message that is not JSON');
+    }
+    if (typeof message !== 'object' || message === null) {
+      return this.broken('a message that is not a JSON object');
+    }
+    this.buffer = this.buffer.subarray(bodyEnd);
+    return message;
+  }
+
+  /** @param {any} message */
+  dispatch(message) {
+    if (message.id !== undefined && message.method !== undefined) {
+      this.send({ jsonrpc: '2.0', id: message.id, result: null });
+      return;
+    }
+    const entry = message.id === undefined ? undefined : this.pending.get(message.id);
+    if (!entry) return;
+    this.pending.delete(message.id);
+    clearTimeout(entry.timer);
+    if (message.error) entry.reject(new Error(message.error.message));
+    else entry.resolve(message.result);
   }
 
   /** @param {object} payload */
@@ -407,7 +414,8 @@ class TsgoChecker {
   request(method, params) {
     if (this.exitError) return Promise.reject(this.exitError);
     const id = this.seq++;
-    const timeout = Number(process.env['ANGULAR_NATIVE_TSGO_TIMEOUT_MS']) || 300_000;
+    const asked = Number(process.env['ANGULAR_NATIVE_TSGO_TIMEOUT_MS']);
+    const timeout = Number.isInteger(asked) && asked >= 1 && asked <= 2 ** 31 - 1 ? asked : 300_000;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -422,11 +430,12 @@ class TsgoChecker {
     });
   }
 
-  /** @param {string} what */
+  /** @param {string} what @returns {null} */
   broken(what) {
     this.buffer = Buffer.alloc(0);
     this.fail(new Error(`type checker sent ${what}`));
     this.proc.kill();
+    return null;
   }
 
   /** @param {string} filePath @param {string} text */

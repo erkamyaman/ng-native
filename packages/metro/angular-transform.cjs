@@ -18,7 +18,7 @@ const { compileCss } = require('./css/compile.cjs');
 const { nameFaces } = require('./css/font-names.cjs');
 const { componentDeclarations } = require('./component-declarations.cjs');
 const { hotShape } = require('./hot-shape.cjs');
-const { compileWithNgp, typeCheckWithNgp } = require('./ngp-compile.cjs');
+const { compileWithNgp, stampOf, typeCheckWithNgp } = require('./ngp-compile.cjs');
 const {
   compileForHmrSync,
   extractComponentMetadataSync,
@@ -1682,12 +1682,9 @@ async function transformAngularWithNgp(src, filename, options = {}) {
   if (isResource(filename)) return transformAngular(src, filename, rest);
   let transformed;
   if (IS_SOURCE.test(filename) && HAS_ANGULAR_DECORATOR.test(src)) {
-    const result = await compileWithNgp(src, filename, ngp);
-    transformed = result
-      ? transformAngular(src, filename, rest, () => withResources(result, filename, rest))
-      : transformAngular(src, filename, rest);
+    transformed = await compiledWithNgp(src, filename, ngp, rest);
   } else {
-    const checked = isAppModule(filename) && !IS_PARTIAL_COMPILED.test(src);
+    const checked = isCheckedModule(filename) && !IS_PARTIAL_COMPILED.test(src);
     if (checked) await typeCheckWithNgp(src, filename, ngp);
     transformed = transformAngular(src, filename, rest);
     if (!checked) return transformed;
@@ -1699,20 +1696,54 @@ async function transformAngularWithNgp(src, filename, options = {}) {
   return transformed;
 }
 
+const isCheckedModule = (filename) =>
+  /(?<!\.d)\.[cm]?tsx?$/.test(filename) && !INSTALLED.test(filename);
+
+/**
+ * @param {string} src
+ * @param {string} filename
+ * @param {Record<string, any>} ngp
+ * @param {Record<string, any>} options
+ */
+async function compiledWithNgp(src, filename, ngp, options) {
+  for (let attempt = 1; ; attempt++) {
+    const result = await compileWithNgp(src, filename, ngp);
+    if (!result) return transformAngular(src, filename, options);
+    const transformed = transformAngular(src, filename, options, () =>
+      withResources(result, filename, options),
+    );
+    const current = result.resources.every(
+      ({ resolvedPath, stamp }) => stampOf(resolvedPath) === stamp,
+    );
+    if (current) return transformed;
+    if (attempt === 3) {
+      throw new Error(`${filename}: a template or stylesheet kept changing while it compiled.`);
+    }
+  }
+}
+
 const RELATIVE_IMPORT = /\b(?:from|import)\s*['"](\.{1,2}\/[^'"]+)['"]/g;
+const SOURCE_OF = { '.js': ['.ts', '.tsx'], '.jsx': ['.tsx'], '.mjs': ['.mts'], '.cjs': ['.cts'] };
 
 function relativeImports(src, directory) {
   const files = new Set();
   for (const [, specifier] of src.matchAll(RELATIVE_IMPORT)) {
     const base = path.resolve(directory, specifier);
-    const stem = base.replace(/\.[cm]?js$/, '');
-    const found = [
-      base,
-      `${stem}.ts`,
-      `${stem}.tsx`,
-      `${stem}.mts`,
-      path.join(base, 'index.ts'),
-    ].find((candidate) => /\.[cm]?tsx?$/.test(candidate) && existsSync(candidate));
+    const extension = path.extname(base);
+    const sources = SOURCE_OF[extension];
+    const candidates = sources
+      ? sources.map((source) => base.slice(0, -extension.length) + source)
+      : [
+          base,
+          `${base}.ts`,
+          `${base}.tsx`,
+          `${base}.mts`,
+          `${base}.cts`,
+          path.join(base, 'index.ts'),
+        ];
+    const found = candidates.find(
+      (candidate) => /\.[cm]?tsx?$/.test(candidate) && existsSync(candidate),
+    );
     if (found) files.add(found);
   }
   return files;
