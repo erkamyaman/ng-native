@@ -110,8 +110,8 @@ module.exports = withAngularNative(getDefaultConfig(__dirname), { compilation: '
   off. Each Metro worker runs its own checker, against the nearest `tsconfig.json`, so a `tsconfig`
   other than that one gets a warning. A file's cached transform is redone when a file it imports by
   a relative path changes; a change further down the import chain is checked once Metro transforms
-  the file again. `ANGULAR_NATIVE_TSGO_TIMEOUT_MS` (five minutes by default) is how long a check waits
-  for the checker before starting a new one.
+  the file again. `ANGULAR_NATIVE_TSGO_TIMEOUT_MS` (five minutes by default) is how long a check
+  waits for the checker before starting a new one.
 - Unlike oxc, Angular's compiler reports an element no component in `imports` matches, as `ngc`
   does.
 - Hot reload works as it does with oxc: a swapped template is still compiled by oxc.
