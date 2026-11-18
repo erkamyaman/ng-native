@@ -86,6 +86,7 @@ add_library(ngn_core STATIC
     core/src/desktop-view-props.cpp
     core/src/default-menu.cpp
     core/src/dev-server.cpp
+    core/src/dom-web-view.cpp
     core/src/focus-order.cpp
     core/src/gestures.cpp
     core/src/glass.cpp
@@ -210,7 +211,7 @@ if(NGN_TESTS)
         appkit/web-view.mm appkit/tests/web-view.test.mm
         appkit/expo-image-drawing.mm appkit/tests/expo-image.test.mm
         appkit/expo-ui-renderer.mm appkit/tests/expo-ui.test.mm
-        appkit/camera.mm appkit/tests/camera.test.mm
+        appkit/camera.mm appkit/tests/camera.test.mm appkit/camera-sheet.mm appkit/system-access.mm appkit/tests/camera-sheet.test.mm
         appkit/maps.mm appkit/tests/maps.test.mm
         appkit/apple-authentication.mm appkit/tests/apple-authentication.test.mm
         appkit/video.mm appkit/tests/video.test.mm
@@ -218,7 +219,7 @@ if(NGN_TESTS)
         appkit/text-input-field.mm appkit/tests/text-input-field.test.mm
         appkit/search-field.mm appkit/tests/search-field.test.mm
         appkit/search-toolbar-item.mm appkit/tests/search-toolbar-item.test.mm
-        appkit/cg-canvas.mm appkit/tests/svg-effects.test.mm
+        appkit/cg-canvas.mm appkit/tests/svg-effects.test.mm appkit/tests/svg-text.test.mm
         appkit/scrollers.mm appkit/tests/scrollers.test.mm
         appkit/bookmarks.mm appkit/tests/bookmarks.test.mm
         appkit/push.mm appkit/tests/push.test.mm
@@ -226,6 +227,7 @@ if(NGN_TESTS)
         appkit/undo.mm appkit/tests/undo.test.mm
         appkit/input-replay.mm appkit/tests/input-replay.test.mm
         appkit/modal-focus.mm appkit/tests/modal-focus.test.mm
+        appkit/presentation-label.mm appkit/tests/presentation-label.test.mm
         appkit/glass-effect.mm appkit/tests/glass.test.mm
         appkit/menu-bar.mm appkit/tests/menu-bar.test.mm
         appkit/system.mm appkit/tests/system.test.mm

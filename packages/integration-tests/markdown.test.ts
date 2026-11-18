@@ -728,12 +728,99 @@ describe('streaming', () => {
     assert.deepEqual(texts(named('VirtualText')), ['the docs'], 'drawn as a link');
   });
 
-  it('turns the last paragraph into a heading when its underline arrives', async () => {
+  it('turns the last paragraph into a heading when its underline line ends', async () => {
     const { blocks, feed } = await stream('Intro\n\nTitle\n');
     assert.equal(blocks()[1]!.props['accessibilityRole'], undefined);
-    await feed('===');
+    await feed('=== ');
     assert.deepEqual(texts(blocks()), ['Intro', 'Title']);
+    assert.equal(blocks()[1]!.props['accessibilityRole'], undefined, 'may yet be text');
+    await feed('\n');
     assert.equal(blocks()[1]!.props['accessibilityRole'], 'header');
+    const dashed = await stream('Title\n---');
+    assert.equal(dashed.blocks()[0]!.props['accessibilityRole'], undefined);
+    await dashed.feed('\nAfter');
+    assert.deepEqual(texts(dashed.blocks()), ['Title', 'After']);
+    assert.equal(dashed.blocks()[0]!.props['accessibilityRole'], 'header');
+  });
+
+  /** The block types `document` streams as, a character at a time, with each one's source. */
+  const typesStreamed = (document: string) => {
+    const markdown = new MarkdownStream();
+    return Array.from({ length: document.length }, (_, end) => {
+      const prefix = document.slice(0, end + 1);
+      return JSON.stringify(prefix) + ' ' + blocksOf(markdown.lex(prefix)).map((one) => one.type);
+    });
+  };
+
+  it('holds back a line of dashes under a paragraph until the next character says what it is', async () => {
+    const { blocks, feed } = await stream('Here are the options:\n-');
+    assert.deepEqual(texts(blocks()), ['Here are the options:']);
+    assert.equal(blocks()[0]!.props['accessibilityRole'], undefined, 'not a heading');
+    await feed(' ');
+    assert.equal(blocks()[0]!.props['accessibilityRole'], undefined, 'not a heading');
+    await feed('one');
+    assert.deepEqual(texts(blocks()), ['Here are the options:', '•one']);
+    const quoted = await stream('> Here are the options:\n> -');
+    const header = (node: FakeFabricNode) => node.props['accessibilityRole'] === 'header';
+    assert.equal(flatten(quoted.blocks()).filter(header).length, 0, 'not a heading in a quote');
+    const types = typesStreamed('Here are the options:\n- one\n');
+    assert.deepEqual(
+      types.filter((one) => one.includes('heading')),
+      [],
+    );
+  });
+
+  it('holds back a table header row while its delimiter row is only dashes', async () => {
+    const { blocks, feed } = await stream('a | b\n---');
+    assert.equal(blocks().length, 0, 'not a heading');
+    await feed('|---\n1 | 2\n');
+    assert.equal(textOf(blocks()[0]!), 'ab12');
+    const types = typesStreamed('a | b\n---|---\n1 | 2\n');
+    assert.deepEqual(
+      types.filter((one) => one.includes('heading')),
+      [],
+    );
+  });
+
+  it('streams a table whose delimiter row starts with one dash as a table', async () => {
+    const { blocks, feed } = await stream('a | b\n- | -');
+    assert.equal(blocks().length, 0, 'neither a paragraph nor a list');
+    await feed('\n1 | 2\n');
+    assert.equal(blocks().length, 1);
+    assert.equal(textOf(blocks()[0]!), 'ab12');
+    const types = typesStreamed('a | b\n- | -\n1 | 2\n');
+    assert.deepEqual(
+      types.filter((one) => /heading|list/.test(one)),
+      [],
+    );
+    assert.equal(types.at(-1), JSON.stringify('a | b\n- | -\n1 | 2\n') + ' table');
+  });
+
+  it('holds back a lone list marker under a paragraph until its item has text', async () => {
+    for (const marker of ['+', '*', '1.', '1)', '+ ', '* ', '1. ']) {
+      const { blocks, feed } = await stream(`Intro\n${marker}`);
+      assert.deepEqual(texts(blocks()), ['Intro'], JSON.stringify(marker));
+      await feed(marker.endsWith(' ') ? 'one' : ' one');
+      assert.deepEqual(texts(blocks()), ['Intro', /^\d/.test(marker) ? '1.one' : '•one']);
+    }
+    const quoted = await stream('> Intro\n> +');
+    assert.deepEqual(texts(quoted.blocks()), ['Intro'], 'in a quote');
+    const quotedNumber = await stream('> Intro\n> 1.');
+    assert.deepEqual(texts(quotedNumber.blocks()), ['Intro'], 'in a quote');
+    const nested = await stream('- a\n  +');
+    assert.deepEqual(texts(nested.blocks()), ['•a'], 'indented, under a list item');
+  });
+
+  it('draws a thematic break once its line ends, or once streaming ends', async () => {
+    const { blocks, feed, app, screen } = await stream('Intro\n\n--');
+    assert.deepEqual(texts(blocks()), ['Intro'], 'neither a paragraph nor a list item yet');
+    await feed('-');
+    assert.equal(blocks().length, 1);
+    screen.streaming.set(false);
+    await app.detectChanges();
+    assert.equal(blocks().length, 2, 'the break, once streaming ends');
+    const ended = await stream('Intro\n\n---\n');
+    assert.equal(ended.blocks().length, 2, 'the break, once its line ends');
   });
 
   it('keeps the native views of the blocks before a block that arrives', async () => {
@@ -879,6 +966,8 @@ describe('streaming', () => {
       'Text\n\n```ts\nconst a = `b`;\n```\n\n~~~\ncode\n~~~\n\nSetext\n---\n',
       '*x\n*x y\n\nEnd *a *b _c [d] [e](f) `g *h* and **i\n\n> *q\n> *q _r\n',
       'Intro\n- `cx` and *em*\n- [l](u)\n\nNext\n> - *a*\n',
+      'a | b\n- | :-:\n1 | 2\n\nTitle\n===\n\n> Quoted\n> ---\n\n- item\n  ---\n',
+      'Intro\n+ one\n\nNext\n1. a\n2) b\n\nQuote\n> Para\n> + x\n> 1. y\n\nStars *em* here\n* s\n\n***\n\n**b**\n',
     ];
     for (const document of documents) {
       const markdown = new MarkdownStream();

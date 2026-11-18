@@ -6,6 +6,7 @@
 #include <chrono>
 
 #include "ngn/desktop-modal.h"
+#include "ngn/dom-web-view.h"
 #include "ngn/native-controls.h"
 #include "ngn/split-view.h"
 #include "ngn/apple-authentication.h"
@@ -70,6 +71,7 @@ MountingManager::MountingManager(
       concreteComponentDescriptorProvider<AppleButtonComponentDescriptor>(),
       concreteComponentDescriptorProvider<GlassViewComponentDescriptor>(),
       concreteComponentDescriptorProvider<GlassContainerComponentDescriptor>(),
+      concreteComponentDescriptorProvider<DomWebViewComponentDescriptor>(),
       concreteComponentDescriptorProvider<UnimplementedNativeViewComponentDescriptor>(),
   };
   for (auto &provider : expoUIComponentProviders()) {
@@ -220,12 +222,14 @@ void MountingManager::apply(SurfaceId surfaceId, const ShadowViewMutationList &m
         }
         if (old.state != view.state) {
           backend_->updateState(view);
+          svgs_.relaidOut(tree_, view.tag);
           if (auto sizes = controlSizes()) {
             sizes->relaidOut(view.tag);
           }
         }
         if (old.layoutMetrics != view.layoutMetrics) {
           backend_->updateLayout(view);
+          svgs_.relaidOut(tree_, view.tag);
         }
         break;
       }

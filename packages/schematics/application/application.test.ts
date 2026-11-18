@@ -26,6 +26,7 @@ const template = path.resolve(import.meta.dirname, '../../../template');
 const native = require('../native-app.cjs') as {
   ESLINT_CONFIG: string;
   lintDevDependencies: Record<string, string>;
+  sourceFile(name: string, desktopOnly?: boolean): string;
 };
 
 // Through the manifest: the package's `exports` map would resolve `collection.json` to a `.js`.
@@ -349,5 +350,65 @@ describe('ng generate application', () => {
         id,
       );
     }
+  });
+});
+
+describe('ng add --desktop-only', () => {
+  it("writes the desktop template's app, with macos and package targets", async () => {
+    const runner = new SchematicTestRunner('@ng-native/schematics', collection);
+    const tree = await runner.runSchematic(
+      'ng-add',
+      { desktopOnly: true, skipInstall: true },
+      await webWorkspace(),
+    );
+    assert.deepEqual(json(tree, 'projects/native/app.json').expo.platforms, ['macos']);
+    assert.match(tree.readContent('projects/native/src/app/app.ts'), /<split-view>/);
+    const { architect } = json(tree, 'angular.json').projects.native;
+    assert.deepEqual(architect.macos.options, { command: 'macos' });
+    assert.deepEqual(architect.package.options, { command: 'package' });
+    assert.equal(architect['run-ios'], undefined);
+    const { dependencies } = json(tree, 'package.json');
+    assert.ok(dependencies['@ng-native/desktop']);
+    assert.ok(dependencies['@ng-native/expo']);
+    assert.equal(dependencies['expo-status-bar'], undefined);
+    const agents = tree.readContent('projects/native/AGENTS.md');
+    assert.match(agents, /^ng run native:macos +# /m);
+    assert.doesNotMatch(agents, /run-ios|Expo Go/);
+    assert.match(tree.readContent('projects/native/.gitignore'), /^\/dist\/macos$/m);
+  });
+
+  it("writes the desktop template's in-app test, and tests in Node alone as its npm test does", async () => {
+    const runner = new SchematicTestRunner('@ng-native/schematics', collection);
+    const tree = await runner.runSchematic(
+      'ng-add',
+      { desktopOnly: true, skipInstall: true },
+      await webWorkspace(),
+    );
+    assert.equal(
+      tree.readContent('projects/native/src/app/app.device.ts'),
+      native.sourceFile('src/app/app.device.ts', true),
+    );
+    const { architect } = json(tree, 'angular.json').projects.native;
+    assert.deepEqual(architect.test, {
+      builder: '@ng-native/schematics:vitest',
+      options: { project: 'node-macos' },
+    });
+    const { scripts } = JSON.parse(
+      readFileSync(path.join(template, '../template-desktop/package.json'), 'utf8'),
+    );
+    const { vitestArgs } = require('../builders/vitest.cjs');
+    assert.equal(['vitest', ...vitestArgs(architect.test.options)].join(' '), scripts.test);
+  });
+
+  it("says how a desktop-only app's package target makes a .dmg: with its args in angular.json", async () => {
+    const runner = new SchematicTestRunner('@ng-native/schematics', collection);
+    const tree = await runner.runSchematic(
+      'ng-add',
+      { desktopOnly: true, skipInstall: true },
+      await webWorkspace(),
+    );
+    const agents = tree.readContent('projects/native/AGENTS.md');
+    assert.doesNotMatch(agents, /--format dmg or mas/);
+    assert.match(agents, /"args": \["--format", "dmg"\]/);
   });
 });

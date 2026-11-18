@@ -185,6 +185,8 @@ export {
   type TrayIconModel,
 } from './tray.ts';
 export { SIDEBAR_SELECTION } from './sidebar-selection.ts';
+export { expoViewName } from './expo-view-name.ts';
+export { hostInputNames, ownHost } from './own-host.ts';
 export { WINDOW_NAVIGATOR, type WindowNavigator } from './window-navigator.ts';
 export {
   AppWindows,
@@ -225,3 +227,17 @@ export {
   type WindowRestoreStore,
 } from './window-restore.ts';
 export { buildMenuTemplate, type MenuTemplate } from './menu-template.ts';
+export {
+  INTERACTION_OBSERVERS,
+  MAX_TEXT_LENGTH,
+  describeElement,
+  interactionObservers,
+  notifyInteraction,
+  provideInteractionObserver,
+  textWithin,
+  type InteractionDirection,
+  type InteractionEvent,
+  type InteractionGesture,
+  type InteractionObserver,
+  type InteractionType,
+} from './interaction-observer.ts';

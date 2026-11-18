@@ -10,6 +10,7 @@
 #include "ngn/network.h"
 #include "ngn/reload-thread.h"
 #include "ngn/surface-book.h"
+#include "ngn/surface-metrics.h"
 #include "ngn/native-controls.h"
 #include "ngn/text-measurer.h"
 
@@ -35,14 +36,6 @@ class Runtime;
 } // namespace facebook::jsi
 
 namespace ngn {
-
-struct SurfaceMetrics {
-  facebook::react::Size size{};
-  // Device pixels per point.
-  float pointScale{2};
-  // The text size multiplier.
-  float fontScale{1};
-};
 
 // The OS's HTTP and WebSocket clients, which Networking, WebSocket and the dev server use.
 struct NetworkClients {
@@ -85,12 +78,19 @@ class Runtime {
   // that resumes it; then that it resumed. On the inspector's thread. Set them before loadBundle.
   std::function<void(std::function<void()> resume)> onDebuggerPaused;
   std::function<void()> onDebuggerResumed;
+  // Whether the app lays out right to left, asked as each JavaScript instance loads (the first
+  // and each reload's) and kept for its run, as its I18nManager keeps isRTL. Set before loadBundle.
+  std::function<bool()> rightToLeft;
 
   // Loads the bundle (JavaScript or Hermes bytecode). False if it could not be read or downloaded.
   bool loadBundle();
   // The dev server the bundle came from, or nothing for a bundle on disk.
   const std::optional<DevServer> &devServer() const {
     return devServer_;
+  }
+  // Whether the running instance's surfaces lay out right to left, as its I18nManager.isRTL says.
+  bool laysOutRightToLeft() const {
+    return direction_.rightToLeft();
   }
   // Tears the runtime down and starts it again on a fresh download of the bundle, with every
   // running surface restarted. Runs off the calling thread; a second call while one runs is
@@ -156,6 +156,8 @@ class Runtime {
   // Taken before mutex_ when both are, and never held by a reload while it holds mutex_.
   std::mutex surfacesMutex_;
   SurfaceBook<Surface> surfaces_;
+  // The direction the running instance's surfaces lay out from.
+  SurfaceDirection direction_{[this] { return rightToLeft && rightToLeft(); }};
 };
 
 } // namespace ngn

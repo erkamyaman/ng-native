@@ -1,0 +1,295 @@
+import { NgComponentOutlet } from '@angular/common';
+import {
+  ChangeDetectorRef,
+  Component,
+  Directive,
+  ElementRef,
+  inject,
+  input,
+  signal,
+  viewChild,
+} from '@angular/core';
+import { PressBehavior, Pressable } from '../../components/src/pressable.ts';
+import { ScrollView } from '../../components/src/scroll-view.ts';
+import { Text } from '../../components/src/text.ts';
+import { TouchableOpacity } from '../../components/src/touchable-opacity.ts';
+import { View } from '../../components/src/view.ts';
+import { VirtualList } from '../../components/src/virtual-list.ts';
+
+/** A button composed onto its own host, which names the element an event reports. */
+@Component({
+  selector: 'x-observed-button',
+  template: `<ng-content />`,
+  hostDirectives: [{ directive: PressBehavior, outputs: ['press'] }],
+})
+export class ObservedButton {}
+
+/** A design-system button, with its pressable inside its template. */
+@Component({
+  selector: 'x-wrapped-button',
+  imports: [Pressable, Text],
+  template: `<pressable testID="wrapped" (press)="pressed = true"><text>Wrapped</text></pressable>`,
+})
+export class WrappedButton {
+  pressed = false;
+}
+
+/** An element only a directive matches: not a component, so never the one an event names. */
+@Directive({ selector: 'x-region' })
+export class Region {}
+
+/** A card that asks to be left out of interaction reports. */
+@Component({
+  selector: 'x-hidden-card',
+  imports: [Pressable],
+  host: { interactionName: '' },
+  template: `<pressable testID="hidden-action" />`,
+})
+export class HiddenCard {}
+
+/** A card with a pressable and a scroll view of its own, a wrapped button and a slot. */
+@Component({
+  selector: 'x-observed-card',
+  imports: [HiddenCard, ObservedButton, Pressable, Region, ScrollView, View, WrappedButton],
+  template: `
+    <view>
+      <pressable testID="card-action" />
+      <x-region><pressable testID="in-region" /></x-region>
+      <x-observed-button testID="composed-in-card" />
+      <x-wrapped-button />
+      <scroll-view testID="card-scroll" />
+      <x-hidden-card />
+      <ng-content />
+    </view>
+  `,
+})
+export class ObservedCard {}
+
+/** A bar written straight into the root component's template, with nothing around it. */
+@Component({
+  selector: 'x-top-bar',
+  imports: [Pressable],
+  template: `<pressable testID="top-action" />`,
+})
+export class TopBar {}
+
+/** A component on a plain element, matched by an attribute: named by its selector. */
+@Component({
+  selector: 'section[x-attribute-card]',
+  imports: [Pressable],
+  template: `<pressable testID="attribute-action" />`,
+})
+export class AttributeCard {}
+
+/** One of several selectors: named by the one for the element it is on. */
+@Component({
+  selector: 'x-tile, article[x-tile].wide',
+  imports: [Pressable],
+  template: `<pressable testID="tile-action" />`,
+})
+export class Tile {}
+
+/** Alternatives on one element name: named by the one whose attribute the host has. */
+@Component({
+  selector: 'section[x-primary], section[x-secondary]:not(.x-off)',
+  imports: [Pressable],
+  template: `<pressable testID="panel-action" />`,
+})
+export class Panel {}
+
+/** Alternatives told apart by an attribute's value: named by the one the host's value matches. */
+@Component({
+  selector: 'aside[x-level=info], aside[x-level=warn]',
+  imports: [Pressable],
+  template: `<pressable testID="level-action" />`,
+})
+export class Level {}
+
+/** Alternatives its host is ruled out of by a :not(): named by the one it matches. */
+@Component({
+  selector: 'header:not(.x-off), header:not(header[x-mute]), header[x-on]',
+  imports: [Pressable],
+  template: `<pressable testID="banner-action" />`,
+})
+export class Banner {}
+
+/** Alternatives of classes alone: named by the one whose class the host has. */
+@Component({
+  selector: '.x-first-badge, .x-second-badge',
+  imports: [Pressable],
+  template: `<pressable testID="badge-action" />`,
+})
+export class Badge {}
+
+/** A pressable inside an iframe, which web-compat keeps a plain view. */
+@Component({
+  selector: 'x-framed-card',
+  imports: [Pressable],
+  template: `<iframe><pressable testID="in-frame" /></iframe>`,
+})
+export class FramedCard {}
+
+/** A note matched by an attribute's value, and not where it is hidden. */
+@Component({
+  selector: 'aside[x-note=warn]:not(.hidden)',
+  imports: [Pressable],
+  template: `<pressable testID="note-action" />`,
+})
+export class Note {}
+
+/** A component on an input, which web-compat makes a plain view while it is a checkbox. */
+@Component({
+  selector: 'input[x-check]',
+  imports: [Pressable],
+  template: `<pressable testID="in-check" />`,
+})
+export class Check {}
+
+/** The framed card, in an app of its own: it is only a known element where web-compat is. */
+@Component({
+  selector: 'x-framed',
+  imports: [Check, FramedCard, Note, View],
+  template: `
+    <view>
+      <x-framed-card />
+      <aside x-note="warn"></aside>
+      <input x-check [type]="checkType()" />
+    </view>
+  `,
+})
+export class FramedFixture {
+  readonly checkType = signal('checkbox');
+}
+
+/** A card that names itself in interaction reports. */
+@Component({
+  selector: 'x-named-card',
+  imports: [Pressable],
+  host: { interactionName: 'Checkout card' },
+  template: `<pressable testID="named-action" />`,
+})
+export class NamedCard {}
+
+/** A card named, or left out, where it is used. */
+@Component({
+  selector: 'x-plain-card',
+  imports: [Pressable],
+  template: `<pressable [testID]="actionID()" />`,
+})
+export class PlainCard {
+  readonly actionID = input.required<string>();
+}
+
+/** A component with no selector, as a routed page is, holding one that opts out. */
+@Component({
+  imports: [PlainCard],
+  template: `<x-plain-card actionID="unnamed-quiet-action" interactionName="" />`,
+})
+export class UnnamedPanel {}
+
+/** A named card that shows the selectorless panel. */
+@Component({
+  selector: 'x-outlet-card',
+  imports: [NgComponentOutlet],
+  template: `<ng-container *ngComponentOutlet="panel" />`,
+})
+export class OutletCard {
+  protected readonly panel = UnnamedPanel;
+}
+
+/** Every kind of touchable, a scroll view and a list, each logging its own presses. */
+@Component({
+  selector: 'x-interaction-observer',
+  imports: [
+    AttributeCard,
+    Badge,
+    Banner,
+    Level,
+    NamedCard,
+    ObservedButton,
+    ObservedCard,
+    OutletCard,
+    Panel,
+    PlainCard,
+    Pressable,
+    ScrollView,
+    Text,
+    Tile,
+    TopBar,
+    TouchableOpacity,
+    View,
+    VirtualList,
+  ],
+  template: `
+    <scroll-view #scroll testID="list">
+      <pressable
+        testID="save"
+        nativeID="save-button"
+        accessibilityLabel="Save the draft"
+        role="button"
+        (press)="log('save')"
+      >
+        <text>Save</text>
+        <view><text> draft now </text></view>
+      </pressable>
+      <pressable testID="silent"><text>Nothing happens</text></pressable>
+      <pressable
+        testID="hold"
+        [delayLongPress]="5"
+        (press)="log('hold press')"
+        (longPress)="log('hold long')"
+      />
+      <pressable testID="slow" (press)="log('slow press')" />
+      <touchable-opacity testID="fade" aria-label="Fade" (press)="log('fade')" />
+      <text testID="link" pressable (press)="log('link')">Read more</text>
+      <text testID="label">Just a label</text>
+      <x-observed-button testID="composed" (press)="log('composed')" />
+      <pressable testID="spaced"
+        ><text>{{ spacedText }}</text></pressable
+      >
+      <pressable testID="long-text"
+        ><text>{{ longText }}</text></pressable
+      >
+      <pressable testID="off" [disabled]="true" (press)="log('off')" />
+      <x-observed-card><pressable testID="projected" /></x-observed-card>
+      <x-outlet-card />
+      <section x-attribute-card></section>
+      <article x-tile class="wide"></article>
+      <section x-secondary></section>
+      <aside x-level="warn"></aside>
+      <section class="x-second-badge"></section>
+      <header class="x-off" x-mute x-on></header>
+      @if (dismissible()) {
+        <pressable testID="dismiss" accessibilityLabel="Dismiss" (press)="dismiss()">
+          <text>Dismiss</text>
+        </pressable>
+      }
+    </scroll-view>
+    <x-top-bar />
+    <x-named-card testID="named-host" />
+    <x-plain-card actionID="renamed-action" interactionName="Plain renamed" />
+    <x-plain-card actionID="quiet-action" interactionName="" />
+    <virtual-list testID="rows" [items]="rows" [itemHeight]="20" [style]="{ height: 60 }" />
+  `,
+})
+export class InteractionObserverFixture {
+  readonly events: string[] = [];
+  readonly longText = 'word '.repeat(60);
+  readonly spacedText = '  Two\n   lines  ';
+  /** The scroll view's own node, to see what it listens for. */
+  readonly scroll = viewChild.required('scroll', { read: ElementRef });
+  readonly rows = [1, 2, 3];
+
+  readonly dismissible = signal(true);
+  private readonly changes = inject(ChangeDetectorRef);
+
+  /** Removes its own control before the press is over, as a dismiss button does. */
+  dismiss(): void {
+    this.dismissible.set(false);
+    this.changes.detectChanges();
+  }
+
+  log(event: string): void {
+    this.events.push(event);
+  }
+}

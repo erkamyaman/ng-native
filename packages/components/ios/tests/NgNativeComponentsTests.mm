@@ -1,9 +1,10 @@
 // Unit tests for the iOS code of @ng-native/components that runs without React Native: the view
 // binder, the menu building (the iPad menu bar's duplicate keys among it), the long press a view
 // inside a context menu takes, `NgNativeHook`'s call-through, which first responders answer the
-// shared undo manager, the undo steps, and what a dropped item is. The hooks installed on
-// UIApplication and the app delegate, and the modules themselves, need React Native and are not
-// here. Run by `run-tests.sh` on a simulator, through XCTest's own runner; no CI job runs them.
+// shared undo manager, the undo steps, what a dropped item is, the split view's delegate, and which
+// scene a window opens in. The hooks installed on UIApplication and the app delegate, and the
+// modules themselves, need React Native and are not here. Run by `run-tests.sh` on a simulator,
+// through XCTest's own runner; no CI job runs them.
 #import <React/RCTViewComponentView.h>
 #import <XCTest/XCTest.h>
 #import <objc/runtime.h>
@@ -12,6 +13,8 @@
 #import "../NgNativeResponderHooks.h"
 #import "../NgNativeUndoSteps.h"
 #import "../NgNativeDropItems.h"
+#import "../NgNativeSplitViewDelegate.h"
+#import "../NgNativeSceneKeys.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "../NgNativeViewBinder.h"
 
@@ -438,6 +441,173 @@ static RCTViewComponentView *viewNamed(NSString *nativeID)
   XCTAssertEqualObjects(NgNativeDropFileName(nil, nil), @"file");
   XCTAssertEqualObjects(NgNativeDropFileName(@"photo", UTTypeJPEG.identifier), @"photo.jpeg");
   XCTAssertEqualObjects(NgNativeDropFileName(@"a.pdf", UTTypePNG.identifier), @"a.pdf");
+}
+
+@end
+
+#pragma mark - The split view's delegate
+
+// UIKit does not change a split view controller's display mode outside an app, so these call the
+// delegate in the order a device does.
+@interface NgNativeSplitViewDelegateTests : XCTestCase
+@end
+
+@implementation NgNativeSplitViewDelegateTests {
+  UISplitViewController *_controller;
+  NgNativeSplitViewDelegate *_delegate;
+  NSMutableArray<NSNumber *> *_reported;
+}
+
+- (void)setUp
+{
+  _controller = [[UISplitViewController alloc] initWithStyle:UISplitViewControllerStyleDoubleColumn];
+  _controller.preferredDisplayMode = UISplitViewControllerDisplayModeOneBesideSecondary;
+  if (@available(iOS 17, *)) {
+    _controller.traitOverrides.horizontalSizeClass = UIUserInterfaceSizeClassRegular;
+  }
+  _delegate = [[NgNativeSplitViewDelegate alloc] initWithController:_controller];
+  _reported = [NSMutableArray array];
+  NSMutableArray<NSNumber *> *reported = _reported;
+  _delegate.onCollapse = ^(BOOL collapsed) {
+    [reported addObject:@(collapsed)];
+  };
+  [self layOutAtWidth:820];
+}
+
+- (void)layOutAtWidth:(CGFloat)width
+{
+  _controller.view.frame = CGRectMake(0, 0, width, 1000);
+  [_delegate columnLaidOut];
+}
+
+// UIKit, laying out at `width`, changes the display mode first and the columns after.
+- (void)changeTo:(UISplitViewControllerDisplayMode)mode atWidth:(CGFloat)width
+{
+  _controller.view.frame = CGRectMake(0, 0, width, 1000);
+  [_delegate splitViewController:_controller willChangeToDisplayMode:mode];
+  [_delegate columnLaidOut];
+}
+
+- (UISplitViewControllerDisplayMode)expand
+{
+  UISplitViewControllerDisplayMode mode =
+      [_delegate splitViewController:_controller
+          displayModeForExpandingToProposedDisplayMode:UISplitViewControllerDisplayModeAutomatic];
+  [_delegate splitViewControllerDidExpand:_controller];
+  return mode;
+}
+
+- (void)testANarrowerWidthHidingTheSidebarIsNotTheUsersChoice
+{
+  [self changeTo:UISplitViewControllerDisplayModeSecondaryOnly atWidth:375];
+  XCTAssertEqualObjects(_reported, @[], @"the sidebar is not reported shut");
+  XCTAssertEqual(_controller.preferredDisplayMode, UISplitViewControllerDisplayModeOneBesideSecondary);
+  XCTAssertEqual([self expand], UISplitViewControllerDisplayModeOneBesideSecondary, @"expanding shows it again");
+}
+
+- (void)testTheUsersChoiceAtTheSameWidthIsKept
+{
+  [self changeTo:UISplitViewControllerDisplayModeSecondaryOnly atWidth:820];
+  XCTAssertEqualObjects(_reported, @[ @YES ]);
+  XCTAssertEqual(_controller.preferredDisplayMode, UISplitViewControllerDisplayModeSecondaryOnly);
+  XCTAssertEqual([self expand], UISplitViewControllerDisplayModeSecondaryOnly, @"expanding keeps it shut");
+
+  [self changeTo:UISplitViewControllerDisplayModeOneBesideSecondary atWidth:820];
+  XCTAssertEqualObjects(_reported, (@[ @YES, @NO ]));
+  XCTAssertEqual(_controller.preferredDisplayMode, UISplitViewControllerDisplayModeOneBesideSecondary);
+}
+
+- (void)testTheUsersChoiceAfterAResizeIsTheirs
+{
+  [self layOutAtWidth:1000];
+  [self changeTo:UISplitViewControllerDisplayModeSecondaryOnly atWidth:1000];
+  XCTAssertEqualObjects(_reported, @[ @YES ]);
+}
+
+- (void)testASizeClassChangeIsNotTheUsersChoice
+{
+  if (@available(iOS 17, *)) {
+    [self changeTo:UISplitViewControllerDisplayModeSecondaryOnly atWidth:820];
+    _controller.traitOverrides.horizontalSizeClass = UIUserInterfaceSizeClassCompact;
+    [self changeTo:UISplitViewControllerDisplayModeOneBesideSecondary atWidth:820];
+    XCTAssertEqualObjects(_reported, @[ @YES ], @"only the user's own choice is reported");
+    XCTAssertEqual(_controller.preferredDisplayMode, UISplitViewControllerDisplayModeSecondaryOnly);
+  }
+}
+
+- (void)testTheAppsCollapsedIsKeptAndNotReportedBack
+{
+  [_delegate setCollapsed:YES];
+  XCTAssertEqual(_controller.preferredDisplayMode, UISplitViewControllerDisplayModeSecondaryOnly);
+  [self changeTo:UISplitViewControllerDisplayModeSecondaryOnly atWidth:820];
+  [self changeTo:UISplitViewControllerDisplayModeOneBesideSecondary atWidth:1000];
+  XCTAssertEqualObjects(_reported, @[]);
+  XCTAssertEqual(_controller.preferredDisplayMode, UISplitViewControllerDisplayModeSecondaryOnly);
+  XCTAssertEqual([self expand], UISplitViewControllerDisplayModeSecondaryOnly);
+}
+
+@end
+
+#pragma mark - Scene keys
+
+@interface NgNativeSceneKeysTests : XCTestCase
+@end
+
+@implementation NgNativeSceneKeysTests
+
+- (void)testKeepsTheKeyOfTheWindowEachSessionHad
+{
+  NSDictionary *kept = NgNativeKeepSession(nil, @"a", @"library");
+  kept = NgNativeKeepSession(kept, @"b", nil);
+  XCTAssertTrue(NgNativeSessionHadWindow(kept, @"a"));
+  XCTAssertEqualObjects(NgNativeSessionKey(kept, @"a"), @"library");
+  XCTAssertTrue(NgNativeSessionHadWindow(kept, @"b"), @"a window with no key");
+  XCTAssertNil(NgNativeSessionKey(kept, @"b"));
+  XCTAssertFalse(NgNativeSessionHadWindow(kept, @"c"), @"a scene the user made");
+  XCTAssertNil(NgNativeSessionKey(kept, @"c"));
+  XCTAssertFalse(NgNativeSessionHadWindow(nil, @"a"));
+  kept = NgNativeKeepSession(kept, @"a", @"main");
+  XCTAssertEqualObjects(NgNativeSessionKey(kept, @"a"), @"main", @"a session whose window changed");
+  kept = NgNativeKeepSession(kept, @"a", nil);
+  XCTAssertNil(NgNativeSessionKey(kept, @"a"), @"a window with no key leaves none behind");
+  XCTAssertNil(NgNativeSessionKey(@{@"a" : @3}, @"a"));
+  XCTAssertFalse(NgNativeSessionHadWindow(@{@"a" : @3}, @"a"), @"a value written outside the app");
+}
+
+- (void)testForgetsTheSessionsIPadOSNoLongerKeeps
+{
+  NSDictionary *kept = @{@"a" : @"main", @"b" : @"library", @"c" : @""};
+  NSDictionary *open = NgNativeKeepOpenSessions(kept, [NSSet setWithObjects:@"a", @"c", @"d", nil]);
+  XCTAssertEqualObjects(open, (@{@"a" : @"main", @"c" : @""}));
+  XCTAssertEqualObjects(NgNativeKeepOpenSessions(kept, [NSSet set]), @{});
+  XCTAssertEqualObjects(NgNativeKeepOpenSessions(nil, [NSSet setWithObject:@"a"]), @{});
+}
+
+- (void)testOpensAWindowInTheSceneKeptForItsKey
+{
+  NSArray *scenes = @[ @"library", NSNull.null, @"main" ];
+  XCTAssertEqual(NgNativeSceneForKey(scenes, @"main"), 2u);
+  XCTAssertEqual(NgNativeSceneForKey(scenes, @"library"), 0u);
+  XCTAssertEqual(NgNativeSceneForKey(scenes, @"settings"), 1u, @"else the first scene kept for no key");
+  XCTAssertEqual(NgNativeSceneForKey(scenes, nil), 1u);
+  XCTAssertEqual(NgNativeSceneForKey((@[ NSNull.null, NSNull.null ]), @"main"), 0u);
+}
+
+- (void)testLeavesASceneKeptForAnotherKeyToThatKey
+{
+  XCTAssertEqual(NgNativeSceneForKey(@[ @"library" ], @"main"), (NSUInteger)NSNotFound);
+  XCTAssertEqual(NgNativeSceneForKey(@[ @"library" ], nil), (NSUInteger)NSNotFound);
+  XCTAssertEqual(NgNativeSceneForKey(@[], @"main"), (NSUInteger)NSNotFound);
+}
+
+- (void)testFindsTheHiddenSessionOfAWindowOnlyByItsKey
+{
+  NSDictionary *kept = @{@"b" : @"", @"c" : @"main"};
+  NSArray *sessions = @[ @"a", @"b", @"c" ];
+  XCTAssertEqual(NgNativeSessionForKey(kept, sessions, @"main"), 2u);
+  XCTAssertEqual(NgNativeSessionForKey(kept, sessions, @"library"), (NSUInteger)NSNotFound);
+  XCTAssertEqual(NgNativeSessionForKey(kept, sessions, nil), (NSUInteger)NSNotFound, @"not a session kept for no key");
+  XCTAssertEqual(NgNativeSessionForKey(kept, @[ @"a", @"b" ], @"main"), (NSUInteger)NSNotFound, @"only among those given");
 }
 
 @end

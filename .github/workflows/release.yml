@@ -76,6 +76,59 @@ jobs:
         run: pnpm --filter @ng-native/web exec playwright install chromium
       - run: pnpm coverage
 
+  # The prebuilt desktop hosts for the React Native version the packages support, both universal
+  # and packed with their hermesc and Sparkle, so an app with no native desktop code of its own
+  # compiles nothing (packages/desktop/bin/prebuilt.mjs): the debug host, the dev build `run` uses,
+  # with React Native's debugger, and the release host, the Release build `package` ships. One job
+  # each, side by side. Built against the canary, which has every host library but
+  # react-native-webview. Signed ad hoc, so the job needs no secrets: an app re-signs the host when
+  # it packages, and the download is checked by its SHA-256. The archives go up with the GitHub
+  # release; their SHA-256s go into packages/desktop/prebuilt.json, inside the npm package, before
+  # it is packed.
+  desktop-host:
+    name: desktop-host (${{ matrix.flavour }})
+    needs: validate
+    if: github.ref == 'refs/heads/main' || inputs.dry_run
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        flavour: [debug, release]
+    # It builds fetched third-party sources, so it gets no write access, and its read-only token
+    # goes only to the step that fetches main's host, before anything is built.
+    permissions:
+      contents: read
+      actions: read
+    # Unchanged inputs pack a kept host in under 2 minutes, and a change with ccache warm builds in
+    # about 5 (dry runs 43990876531 and 43991351989). The limit is for the build from scratch that
+    # anything the action cannot check falls back to: 50 minutes for release and 52 for debug, cold
+    # and through ccache (dry run 43979954553).
+    timeout-minutes: 75
+    env:
+      NGN_JOBS: '4'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+
+      # The last release's archive when nothing it is built from changed, else a host kept from a
+      # build with the same inputs, else a build through ccache: see the action.
+      - uses: ./.github/actions/desktop-prebuilt
+        with:
+          flavour: ${{ matrix.flavour }}
+          version: ${{ needs.validate.outputs.version }}
+          base-url: https://github.com/${{ github.repository }}/releases/download/v${{ needs.validate.outputs.version }}
+          out: .prebuilt
+          github-token: ${{ github.token }}
+
+      # .prebuilt is a dot folder, which upload-artifact leaves out unless told otherwise.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-host-${{ matrix.flavour }}
+          path: .prebuilt
+          include-hidden-files: true
+          if-no-files-found: error
+
   # One setup route in a fresh project: ng new with ng add, Nx's angular-monorepo preset with
   # nx add and the library generators, or the manual setup guide followed from its code blocks.
   # Too slow for every push, and exactly what a release of the schematics, the Nx plugin or the
@@ -153,7 +206,7 @@ jobs:
         run: cat verdaccio.log
 
   release:
-    needs: [validate, native, verify, generators, storybook]
+    needs: [validate, native, verify, generators, storybook, desktop-host]
     if: github.ref == 'refs/heads/main' || inputs.dry_run
     runs-on: ubuntu-latest
     outputs:
@@ -166,6 +219,13 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           registry-url: https://registry.npmjs.org
+
+      # Both flavours' archives and entries into one folder: their file names differ.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-host-*
+          merge-multiple: true
+          path: .prebuilt
 
       - name: Version
         id: version
@@ -188,6 +248,22 @@ jobs:
               "$file" > "$file.tmp" && mv "$file.tmp" "$file"
             git add "$file"
           done
+          # Each prebuilt desktop host's entry, with its SHA-256, into the manifest
+          # @ng-native/desktop ships, so the package names the archives the GitHub release below
+          # serves. A flavour's entry missing fails the step, so no release ships without either.
+          node --input-type=module -e "
+            import { readFileSync, writeFileSync } from 'node:fs';
+            import { entryName, FLAVOURS, readManifest, withHost } from './packages/desktop/bin/prebuilt.mjs';
+            const file = 'packages/desktop/prebuilt.json';
+            let manifest = readManifest(readFileSync(file, 'utf8'));
+            for (const flavour of FLAVOURS) {
+              const host = JSON.parse(readFileSync('.prebuilt/' + entryName(flavour), 'utf8'));
+              if (host.flavour !== flavour) throw new Error(entryName(flavour) + ' is not a ' + flavour + ' host.');
+              manifest = withHost(manifest, host);
+            }
+            writeFileSync(file, JSON.stringify(manifest, null, 2) + '\\n');
+          "
+          git add packages/desktop/prebuilt.json
           # The version plans in .nx/version-plans become this release's CHANGELOG.md entry and are
           # deleted; the versions staged above go into the same `Release <version>` commit and tag.
           npx nx release changelog "$version"
@@ -221,7 +297,21 @@ jobs:
       - name: Publish
         env:
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '--provenance' }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
+          # A new run builds new desktop hosts, whose archives have other SHA-256s. When an earlier
+          # run already published @ng-native/desktop at this version, its prebuilt.json names that
+          # run's archives, and attaching these would fail every download: stop instead. Re-run
+          # the failed jobs of the earlier run, which keeps its hosts.
+          if npm view "@ng-native/desktop@$VERSION" version > /dev/null 2>&1; then
+            published=$(mktemp -d)
+            npm pack "@ng-native/desktop@$VERSION" --pack-destination "$published" > /dev/null
+            if ! tar -xOzf "$published"/*.tgz package/prebuilt.json | jq -S . |
+              cmp -s - <(jq -S . packages/desktop/prebuilt.json); then
+              echo "::error::@ng-native/desktop@$VERSION is already published with another prebuilt desktop host. Re-run the failed jobs of the run that published it, which keeps its host, instead of starting a new run."
+              exit 1
+            fi
+          fi
           for tarball in .release/*.tgz; do
             name=$(tar -xOzf "$tarball" package/package.json | jq -r .name)
             # Already there means an earlier run got this far: skip it, so running again with the
@@ -258,6 +348,7 @@ jobs:
           awk '/^## /{n++} n==1' CHANGELOG.md | tail -n +2 > .release/notes.md
           gh release create 'v${{ steps.version.outputs.version }}' \
             --notes-file .release/notes.md \
+            .prebuilt/*.tar.gz \
             ${{ steps.version.outputs.tag != 'latest' && '--prerelease' || '' }}
 
       - name: Dry run summary
@@ -272,6 +363,16 @@ jobs:
             echo 'Nothing was published, pushed or deployed. These tarballs would be published:'
             echo
             for tarball in .release/*.tgz; do echo "- \`$(basename "$tarball")\`"; done
+            echo
+            echo 'These prebuilt desktop hosts would go up with the GitHub release:'
+            echo
+            for archive in .prebuilt/*.tar.gz; do echo "- \`$(basename "$archive")\`"; done
+            echo
+            echo 'With these entries in packages/desktop/prebuilt.json:'
+            echo
+            echo '```json'
+            cat packages/desktop/prebuilt.json
+            echo '```'
             echo
             echo '### Changelog entry'
             echo

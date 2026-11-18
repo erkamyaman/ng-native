@@ -14,35 +14,15 @@
  * No decorators and no Angular here on purpose: this is a registration, and the components it
  * registers are ordinary elements in a template.
  */
+import { expoViewName } from '@ng-native/device';
 import { registerViewName, type PlatformViewName, type ViewNameOptions } from '@ng-native/fabric';
 import { currentPlatform, optional } from './native.ts';
 
 /**
- * What Expo installs on the global when the app starts. Only the app identifier matters here;
- * `getViewConfig` is for React's renderer, which never runs.
- */
-interface ExpoGlobal {
-  readonly __expo_app_identifier__?: string;
-}
-
-/**
  * The Fabric component name for a module's view, exactly as `requireNativeViewManager` computes
- * it in `expo-modules-core`.
- *
- * The app identifier is the part that cannot be hardcoded. Expo Go runs many projects in one
- * binary, so it namespaces every view name with a per-app suffix; a standalone build has no
- * identifier and no suffix. Get it wrong and the view commits as `UnimplementedNativeView`
- * with no error, which is the same failure mode as a misspelled name.
- *
- * A module with more than one view names the extra ones (`viewName`); the default view is the
- * module itself.
+ * it in `expo-modules-core`: the module's name, plus Expo Go's per-app suffix where there is one.
  */
-export function expoViewName(moduleName: string, viewName?: string): string {
-  const identifier = (globalThis as { expo?: ExpoGlobal }).expo?.__expo_app_identifier__ ?? '';
-  const suffix = identifier ? `_${identifier}` : '';
-  const module = viewName ? `${moduleName}_${viewName}` : moduleName;
-  return `ViewManagerAdapter_${module}${suffix}`;
-}
+export { expoViewName };
 
 export interface ExpoViewOptions {
   /**
@@ -113,10 +93,13 @@ export function registerExpoView(
 /**
  * The views worth knowing the names of, so an app does not have to look each one up.
  *
- * Deliberately names and defaults, not components. An Angular component per Expo view, prop for
- * prop, is a maintenance burden with no end and a second place for every prop to be wrong; the
- * element plus the module's own documentation covers the common case, and an app that wants a
- * nicer surface writes the one component it actually needs.
+ * Names and defaults. Each view here also has a typed component or directive in this package
+ * (`ExpoImage`, `ExpoBlur`, `ExpoVideo`, `Camera`, `AppleSignInButton`, `ExpoSymbol`, `ExpoGL`,
+ * `ExpoGlass`, `ExpoGlassContainer`, `ExpoMeshGradient`, `ExpoLivePhoto`, and `MapView` for both
+ * maps), whose inputs are the module's props: a template is checked against them, and a boolean
+ * written as a bare attribute commits as true. Without it the element still commits, and takes
+ * whatever it is given, so a bare boolean attribute reaches native as an empty string, which iOS,
+ * Android and macOS each drop for a boolean prop.
  *
  * A module still has to be installed for its element to commit as anything: this is the
  * JavaScript half. An element whose native side is missing commits as `UnimplementedNativeView`.

@@ -65,6 +65,22 @@ export class Avatar {
   (`'images'`, `'videos'`, `'livePhotos'`), `allowsEditing`, `quality`, `allowsMultipleSelection`
   and the rest.
 
+## On macOS
+
+macOS has no system camera screen, so `capture()` shows the desktop host's own as a sheet on the
+window in front: the camera's preview, mirrored as Photo Booth shows it, with Cancel (Escape) and
+Take Photo (Return). The photo is a JPEG at `quality`, not mirrored, and has no `assetId` or
+`fileName`, as on iOS.
+
+With `mediaTypes: 'videos'` the shutter is Record, then Stop, with the time recorded beside it.
+`mediaTypes: ['images', 'videos']` adds a Photo and Video switch, in photo mode first, as iOS's
+camera opens. The video is a QuickTime movie (`video/quicktime`, a `.mov`), not mirrored, recorded
+at `videoQuality` and stopped at `videoMaxDuration` seconds when that is set. Its `duration` is in
+milliseconds, as on iOS. A request for videos asks for the microphone when it has not been asked
+yet. With the microphone refused, the video is recorded with no sound, as on iOS. The microphone
+makes the request reject only when the app's `Info.plist` has no `NSMicrophoneUsageDescription`,
+with iOS's message. On a Mac with no camera `capture()` rejects.
+
 ## Permissions
 
 Two separate permissions, each a `Permission` (see [Permissions](/packages/expo/permissions)):

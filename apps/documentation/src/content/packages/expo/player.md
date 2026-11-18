@@ -12,6 +12,8 @@ What these functions add is the two things a component needs and cannot get othe
 is _released_ when the component is destroyed, and its changing state is _readable_, because the
 player's own properties are plain mutable fields no template can watch.
 
+<!-- platforms: videoPlayer, audioPlayer, audioRecorder -->
+
 ## Install
 
 ```sh
@@ -30,24 +32,18 @@ own module installed. `Player`, `PlayerState` and the watchers both use come fro
 ## The smallest useful example
 
 ```ts
-import { Component, input } from '@angular/core';
+import { Component } from '@angular/core';
 import { Pressable, Text } from '@ng-native/components';
-import { registerExpoViews } from '@ng-native/expo';
+import { ExpoVideo, registerExpoViews } from '@ng-native/expo';
 import { videoPlayer } from '@ng-native/expo/video';
 
 registerExpoViews('expo-video'); // once, before the app mounts
-
-/** The view's one prop this uses, as an input, so the template is checked against it. */
-@Component({ selector: 'expo-video', template: '', host: { '[player]': 'player()' } })
-class ExpoVideo {
-  readonly player = input<number>();
-}
 
 @Component({
   selector: 'app-clip',
   imports: [ExpoVideo, Pressable, Text],
   template: `
-    <expo-video [player]="player.id" class="flex-1" />
+    <expo-video [player]="player" class="flex-1" />
     <text>{{ player.state().currentTime }} / {{ player.state().duration }}</text>
     <pressable (press)="player.native.play()"><text>Play</text></pressable>
   `,
@@ -69,10 +65,11 @@ Each returns a `Player<T>`:
 - **`native`** - the module's own player object, straight through: it already has `play()`,
   `pause()`, `seekBy()`, `replace()` and the rest, and wrapping them would be a second place for
   each to be wrong. Call its methods directly.
-- **`id`** - the player's shared-object id, which is what `<expo-video [player]="player.id">`
-  takes: `expo-video`'s own `VideoView` passes this id, not the player. Bound to the player
-  itself, the view has no player and draws nothing, while the video keeps playing with nothing on
-  screen.
+- **`id`** - the player's shared-object id, which is what the `<expo-video>` view takes:
+  `expo-video`'s own `VideoView` passes this id, not the player. `ExpoVideo` takes either, and
+  commits the id. On the element with no `ExpoVideo` imported, bind `[player]="player.id"`: bound
+  to the player itself, the view has no player and draws nothing, while the video keeps playing
+  with nothing on screen.
 - **`state`** - a signal, updated from the player's own change events: `playing`, `status`
   (`'idle'`, `'loading'`, `'readyToPlay'`, `'error'`), `currentTime`, `duration`, `muted`,
   `volume`, and `ended` (set once playback runs to the end, cleared when it starts again). Video
@@ -98,17 +95,20 @@ controls, so this happens automatically rather than being something a caller has
 ## Playing with the silent switch on
 
 On iOS an app plays nothing while the silent switch is on, unless it says it plays anyway. That is
-`expo-audio`'s own `setAudioModeAsync`, a plain function with no React in it, so it is called
-directly, before playing:
+the audio mode, set with `setAudioMode()` before playing. It takes `expo-audio`'s
+`setAudioModeAsync` options:
 
 ```ts
-import { setAudioModeAsync } from 'expo-audio';
+import { setAudioMode } from '@ng-native/expo/audio';
 
-await setAudioModeAsync({ playsInSilentMode: true });
+await setAudioMode({ playsInSilentMode: true });
 ```
 
 The mode belongs to the app, not to a player, and stays until it is set again. Android has no
-silent switch and plays either way.
+silent switch and plays either way. On macOS, which has neither a silent switch nor an audio
+session, the desktop host takes the mode and changes nothing, so the same call is safe there;
+calling `expo-audio`'s `setAudioModeAsync` directly throws on macOS, where `expo-audio` is an empty
+module.
 
 ## `audioRecorder(options, { statusInterval? })`
 
@@ -118,15 +118,18 @@ it in an injection context, as the players:
 
 ```ts
 import { Component, DestroyRef, ErrorHandler, inject } from '@angular/core';
-import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
-import { audioRecorder } from '@ng-native/expo/audio';
+import { RecordingPresets } from 'expo-audio';
+import { Text } from '@ng-native/components';
+import { audioRecorder, recordingPermission, setAudioMode } from '@ng-native/expo/audio';
 
 @Component({
   selector: 'app-voice-note',
+  imports: [Text],
   template: `<text>{{ recorder.state().durationMillis / 1000 }} s</text>`,
 })
 export class VoiceNote {
   protected readonly recorder = audioRecorder(RecordingPresets.HIGH_QUALITY);
+  protected readonly permission = recordingPermission();
   private readonly errorHandler = inject(ErrorHandler);
   private recordingMode = false;
 
@@ -139,10 +142,10 @@ export class VoiceNote {
   }
 
   async start(): Promise<void> {
-    if (!(await requestRecordingPermissionsAsync()).granted) return;
+    if (!(await this.permission.ensure())) return;
     this.recordingMode = true;
     try {
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await setAudioMode({ allowsRecording: true, playsInSilentMode: true });
       await this.recorder.native.prepareToRecordAsync();
       this.recorder.native.record();
     } catch (error) {
@@ -163,7 +166,7 @@ export class VoiceNote {
   /** Recording mode routes playback to the earpiece on iOS, so it goes as soon as recording does. */
   private stopRecordingMode(): Promise<void> {
     this.recordingMode = false;
-    return setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+    return setAudioMode({ allowsRecording: false, playsInSilentMode: true });
   }
 }
 ```
@@ -184,10 +187,17 @@ The recorder is made with `options` merged for the platform, as `useAudioRecorde
 `prepareToRecordAsync()` takes none. That matters on Android, where the recorder reads
 `isMeteringEnabled` only from the options it was made with: one prepared with it but made without
 it reports no `metering`. Android also measures the peak level where iOS measures the average, so
-the same voice reads louder there. Permissions and the audio mode are `expo-audio`'s own plain
-functions, as above. Releasing a recorder stops its recording but leaves the audio mode as it
-was, so a component that sets recording mode sets it back when it is destroyed, as `VoiceNote`
-does.
+the same voice reads louder there. The audio mode is `expo-audio`'s own plain function, as above.
+Releasing a recorder stops its recording but leaves the audio mode as it was, so a component that
+sets recording mode sets it back when it is destroyed, as `VoiceNote` does.
+
+The microphone permission is **`recordingPermission()`**, a
+[`Permission`](/packages/expo/permissions): `status()`, `granted()` and `blocked()` as signals, and
+`check()`, `request()` and `ensure()`. Made in an injection context, as `VoiceNote` makes it, it
+checks a refusal again each time the app comes back to the front. On iOS, Android and the web it
+calls `expo-audio`'s own permission functions, and on macOS the desktop host's, so the same code
+runs on each. Where there is no such module, as in a test in Node, it answers denied, and
+`blocked()` is true.
 
 ## The `<expo-video>` view
 
@@ -200,21 +210,29 @@ import { registerExpoViews } from '@ng-native/expo';
 registerExpoViews('expo-video');
 ```
 
-Then use it as a plain element, with `player` bound to `player.id`:
+Then import `ExpoVideo`, the view's typed component, and bind `player` to the player:
 
 ```html
-<expo-video [player]="player.id" [nativeControls]="false" contentFit="cover" class="flex-1" />
+<expo-video [player]="player" [nativeControls]="false" contentFit="cover" class="flex-1" />
 ```
 
 The view is `VideoView` on iOS and `SurfaceVideoView` on Android, as `expo-video` names them;
 `registerExpoViews('expo-video')` registers each on its own platform.
 
-The props are `expo-video`'s own `VideoViewProps`, unwrapped: `player`, `nativeControls` (default
-`true`), `contentFit` (`'contain'`, `'cover'` or `'fill'`, default `'contain'`),
-`requiresLinearPlayback`, `fullscreenOptions`, and a few platform-specific ones (`showsTimecodes`
-on iOS, `buttonOptions` on Android). There is no Angular component wrapping these props one by
-one - an unknown prop on the element reaches native exactly as it would in `expo-video`'s own
-React component, and the module's own documentation is the reference for what each one does.
+On macOS the desktop host plays a `videoPlayer` with AVPlayer and draws `<expo-video>` with
+AVPlayerView, under the iOS view's name and with its props. `requiresLinearPlayback` does nothing
+there, and the player has no tracks, thumbnails or now-playing controls.
+
+`ExpoVideo`'s inputs are `expo-video`'s own `VideoViewProps`, typed: `player`, `nativeControls`
+(default `true`), `contentFit` (`'contain'`, `'cover'` or `'fill'`, default `'contain'`),
+`requiresLinearPlayback`, `fullscreenOptions`, `allowsPictureInPicture`,
+`startsPictureInPictureAutomatically`, and the platform-specific ones (`showsTimecodes`,
+`contentPosition` and `allowsVideoFrameAnalysis` on iOS, `buttonOptions`, `useExoShutter` and
+`controllerAutoShow` on Android). A boolean works bound or written bare: `requiresLinearPlayback`
+on its own is true, and `null` or `undefined` leaves the prop to `expo-video`'s default. The
+module's own documentation is the reference for what each one does. The view's events,
+`(firstFrameRender)`, `(fullscreenEnter)`, `(fullscreenExit)`, `(pictureInPictureStart)` and
+`(pictureInPictureStop)`, are typed outputs.
 
 `surfaceType` is the exception: `expo-video`'s React component reads it to choose between two
 Android views, and no native view reads it, so on the element it does nothing. For a

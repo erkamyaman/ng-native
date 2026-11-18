@@ -1,6 +1,6 @@
 {
   "name": "@ng-native/schematics",
-  "version": "0.22.2",
+  "version": "0.24.0",
   "description": "ng add and ng generate for Angular Native: an Expo app in an Angular CLI workspace, with builders that run it.",
   "keywords": [
     "angular",
@@ -27,6 +27,7 @@
     "packageGroup": [
       "@ng-native/analog",
       "@ng-native/components",
+      "@ng-native/desktop",
       "@ng-native/device",
       "@ng-native/eslint-plugin",
       "@ng-native/expo",
@@ -62,12 +63,13 @@
       "layer:build"
     ],
     "implicitDependencies": [
-      "@ng-native/template"
+      "@ng-native/template",
+      "@ng-native/template-desktop"
     ]
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test \"*.test.ts\" \"{application,component,builders,migrations}/*.test.ts\""
+    "test": "node --test \"*.test.ts\" \"{application,component,builders,migrations,desktop,mobile}/*.test.ts\""
   },
   "license": "MIT",
   "homepage": "https://ng-native.com/packages/schematics",

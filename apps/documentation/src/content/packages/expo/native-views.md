@@ -74,9 +74,9 @@ have to look each one up:
 | `expo-video`                           | `ExpoVideo` (`VideoView`)               | `SurfaceVideoView` on Android. Bind `player` to the player's `id`.     |
 | `expo-camera`                          | `ExpoCamera`                            | The module's default view. See [Camera](/packages/expo/camera).        |
 | `apple-sign-in-button`                 | `ExpoAppleAuthentication`               | See [Sign in with Apple](/packages/expo/apple-sign-in). iOS only.      |
-| `expo-symbol`                          | `SymbolModule`                          | SF Symbols, iOS only.                                                  |
+| `expo-symbol`                          | `SymbolModule`                          | SF Symbols, iOS and macOS.                                             |
 | `expo-gl`                              | `ExpoGL`                                | Its context is reached through an event rather than a prop.            |
-| `expo-glass`                           | `ExpoGlassEffect` (`GlassView`)         | The iOS 26 material. Renders as a plain view where unavailable.        |
+| `expo-glass`                           | `ExpoGlassEffect` (`GlassView`)         | The iOS 26 material, and macOS's. See below.                           |
 | `expo-glass-container`                 | `ExpoGlassEffect` (`GlassContainer`)    | Glass views inside merge when they come within `spacing` points.       |
 | `expo-mesh-gradient`                   | `ExpoMeshGradient` (`MeshGradientView`) | The one gradient with no CSS spelling.                                 |
 | `expo-live-photo`                      | `ExpoLivePhoto` (`LivePhotoView`)       | iOS only.                                                              |
@@ -94,18 +94,36 @@ something JavaScript can do without importing them all.
 
 ## Typed components
 
-A registered element takes whatever props it is given. For the views an app reaches for most, a
-component over the same element gives it typed inputs, so a template is checked against the props
-native reads, and does in Angular what the module's React component does first. Import the
-component and keep registering the element:
+A registered element takes whatever props it is given. Every view in `EXPO_VIEWS` also has a
+component or directive over the same element that gives it typed inputs, so a template is checked
+against the props native reads, and does in Angular what the module's React component does first.
+Import it and keep registering the element. `Camera` is on `@ng-native/expo/camera` and `MapView` on
+`@ng-native/expo/map-view`; the rest are on the bare `@ng-native/expo` import:
 
-| Component            | Element                | What it adds                                                                                                    |
-| -------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `ExpoImage`          | `expo-image`           | `source` and `contentFit` typed.                                                                                |
-| `ExpoGlass`          | `expo-glass`           | `glassEffectStyle` (`regular`, `clear`, `none`), `tintColor`, `isInteractive`, `colorScheme`.                   |
-| `ExpoGlassContainer` | `expo-glass-container` | `spacing`.                                                                                                      |
-| `ExpoSymbol`         | `expo-symbol`          | `name`, `type` (`monochrome` unless set), `weight`, `scale`, `colors`, a `size` as a point size, 24 unless set. |
-| `AppleSignInButton`  | `apple-sign-in-button` | `buttonType` and `buttonStyle` by name. See [Sign in with Apple](/packages/expo/apple-sign-in).                 |
+| Component            | Element                                | What it adds                                                                                                                                                                             |
+| -------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ExpoImage`          | `expo-image`                           | `source` and `contentFit` typed.                                                                                                                                                         |
+| `ExpoBlur`           | `expo-blur`                            | `tint`, `intensity`, and Android's `blurMethod` and `blurReductionFactor`.                                                                                                               |
+| `ExpoVideo`          | `expo-video`                           | `expo-video`'s view props. `player` takes a `videoPlayer()` or its id. See [Players](/packages/expo/player).                                                                             |
+| `Camera`             | `expo-camera`                          | `expo-camera`'s view props, `flash` and `autofocus` committed as the `flashMode` and `autoFocus` native reads, and the view's functions. See [Camera](/packages/expo/camera#view-props). |
+| `ExpoGL`             | `expo-gl`                              | `msaaSamples`, `enableExperimentalWorkletSupport`, and `surfaceCreate` typed.                                                                                                            |
+| `ExpoGlass`          | `expo-glass`                           | `glassEffectStyle` (`regular`, `clear`, `none`), `tintColor`, `isInteractive`, `colorScheme`.                                                                                            |
+| `ExpoGlassContainer` | `expo-glass-container`                 | `spacing`.                                                                                                                                                                               |
+| `ExpoMeshGradient`   | `expo-mesh-gradient`                   | `columns`, `rows`, `points`, `colors`, `smoothsColors`, and iOS's `mask` and `ignoresSafeArea`.                                                                                          |
+| `ExpoLivePhoto`      | `expo-live-photo`                      | `source`, `isMuted`, `contentFit`, `useDefaultGestureRecognizer`, and the load and playback events. iOS only.                                                                            |
+| `ExpoSymbol`         | `expo-symbol`                          | `name`, `type` (`monochrome` unless set), `weight`, `scale`, `colors`, a `size` as a point size, 24 unless set.                                                                          |
+| `MapView`            | `expo-maps-apple` / `expo-maps-google` | The same component as `<expo-map>`. See [Maps](/packages/expo/maps).                                                                                                                     |
+| `AppleSignInButton`  | `apple-sign-in-button`                 | `buttonType` and `buttonStyle` by name. See [Sign in with Apple](/packages/expo/apple-sign-in).                                                                                          |
+
+A boolean prop works bound, `[mute]="muted()"`, or written bare, `<expo-camera mute />`, when the
+component is imported: the bare attribute is true, as in HTML, and `null` or `undefined` leaves the
+prop to native's default. On an element with no component imported, a bare attribute reaches native
+as an empty string, which iOS, Android and macOS each drop for a boolean prop, so the prop is never
+set. Most inputs left unset commit nothing, so native keeps its own default, or the one the
+registration sets: `<expo-blur>` is registered with `intensity` 50 and `tint` `default`. An input
+whose module's React component sends a default of its own commits that default in place of
+native's: `ExpoSymbol`'s `type` is `monochrome`, `Camera`'s `flash` is `off`, and on iOS
+`ExpoGL`'s `msaaSamples` is 4.
 
 ```ts
 import { Component } from '@angular/core';
@@ -125,6 +143,11 @@ registerExpoViews('expo-glass', 'expo-symbol'); // once, before the app mounts
 export class Like {}
 ```
 
+Where Liquid Glass is unavailable, before iOS 26 and on Android, `<expo-glass>` renders as a plain
+view, so its fallback background is the app's to set. On macOS the desktop host draws
+NSGlassEffectView from macOS 26, and a frosted material before it, in the element's own corners;
+`<expo-glass-container>` is a plain view there, each glass view inside drawing its own.
+
 A symbol's color is its `tintColor`, and `tint-color` in a stylesheet is the declaration that sets
 it, so that is how a symbol takes its color from a token and follows a theme:
 `.like { tint-color: var(--color-accent); }` on `<expo-symbol class="like">`. `color` does not tint
@@ -137,6 +160,9 @@ weight and scale, which is wider or taller than `size` for most symbols, as Swif
 SwiftUI leaves the badge's overhang out of it, and `<expo-symbol>` keeps it in. This takes
 `@ng-native/expo`'s native module, so a development build. In Expo Go the view is `size` points
 square and the symbol is fitted into it, which draws most symbols smaller.
+
+On macOS the desktop host draws the symbol with AppKit and sizes its view the same way. It draws
+the type, weight, scale, colors and `resizeMode`, and plays no `animationSpec`.
 
 A glass view's corners are its own `border-radius`. Where Liquid Glass is unavailable - before iOS
 26, and on Android - `<expo-glass>` renders as a plain view, and `liquidGlassAvailable()` says
@@ -167,6 +193,11 @@ only installs its `onChange` native block when the prop is set - as React's hand
 there. Bind `(change)` or nothing fires. `SegmentedControl` (`segmented-control.ts`) is a thin
 typed component over this element for strict templates: import it and keep registering the name -
 the component supplies the types, the registration is what makes the element commit.
+
+On macOS `slider`, `picker` and `masked-view` are absent: their libraries have no macOS view, so
+the element is a plain view and the desktop host's view registry reports it missing. Use
+`ui-slider` and `ui-picker` from `@expo/ui`, which are SwiftUI's slider and picker there; a masked
+view's content shows unmasked.
 
 `date-time-picker` is the library's native view, not its React component, so it takes what the
 view does and not what the library's README lists: the date is `date`, in milliseconds, where the

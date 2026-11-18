@@ -8,6 +8,8 @@ summary: Face ID, Touch ID and fingerprint unlock through one authenticate() cal
 `Biometrics` wraps `expo-local-authentication`: whether the device can authenticate the person in
 front of it, and the system prompt that does it.
 
+<!-- platforms: Biometrics -->
+
 ## Install
 
 ```sh
@@ -71,6 +73,14 @@ Face ID ends the app the first time it is asked for without one. Add to `Info.pl
 The module's config plugin writes this automatically. Android's `USE_BIOMETRIC` and
 `USE_FINGERPRINT` permissions are added automatically too - there is no separate ask-at-runtime
 permission dialog on either platform; `authenticate()` itself shows the system UI.
+
+## On macOS
+
+`NgNativeLocalAuthentication` answers `Biometrics` over LAContext: Touch ID, the login password and
+an Apple Watch. The password stands in for Touch ID unless `disableDeviceFallback` is set, and with
+it set a call that Touch ID cannot answer (no sensor, nothing enrolled, locked out, the lid closed)
+fails at once with no prompt. With `NGN_NO_PROMPTS=1` in the environment no prompt is ever shown,
+and every evaluation fails as `not_interactive`, so an automated run never waits on a dialog.
 
 ## Without the module
 

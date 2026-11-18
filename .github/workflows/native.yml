@@ -28,6 +28,7 @@ on:
       - 'packages/nx/**'
       - 'packages/schematics/**'
       - 'template/**'
+      - 'template-desktop/**'
       - 'scripts/**'
       - '**/*.test.ts'
       - '.github/workflows/ci.yml'
@@ -230,6 +231,17 @@ jobs:
         # minute of the build, and none of that code is ours to fix.
         run: >
           ./gradlew assembleRelease --build-cache -x lintVitalRelease
+          -PreactNativeArchitectures=x86_64
+          -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g"
+
+      # The JVM tests of @ng-native/components' Android sources (packages/components/android/src/test),
+      # whenever the native half changed, which those sources are part of. Expo modules have no
+      # release unit-test task, so this is the debug one.
+      - name: Run the components package's Android JVM tests
+        if: steps.rebundle.outcome != 'success'
+        working-directory: examples/canary/android
+        run: >
+          ./gradlew :ng-native-components:testDebugUnitTest --build-cache
           -PreactNativeArchitectures=x86_64
           -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g"
 

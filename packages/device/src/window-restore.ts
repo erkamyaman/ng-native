@@ -1,8 +1,8 @@
 /**
  * Which windows open again after a reload or a relaunch, and what they rendered.
  *
- * The desktop host keeps a window that has a key across a reload, and closes it unless the
- * reloaded app opens that key again within a few seconds. So `AppWindows` writes down each window
+ * The host, on macOS and on iPadOS, keeps a window that has a key across a reload, and closes it
+ * unless the reloaded app opens that key again within a few seconds. So `AppWindows` writes down each window
  * with a key as it opens and forgets it as it closes, and a starting app opens every one it finds:
  * the main window, a route window at the path it was last opened at, and a `restoreKey` component
  * window with its inputs. A relaunch takes the same path, with the frames the host autosaved.
@@ -46,18 +46,38 @@ export interface WindowRestoreStore {
 
 const SETTINGS_KEY = 'ngNative.windows';
 
-/** React Native's `Settings`, the app's user defaults, on macOS; null elsewhere. */
+/**
+ * React Native's `Settings`, the app's user defaults, on macOS and iOS; null elsewhere. On iPadOS
+ * the host keeps a window's scene across a reload, as the desktop host keeps the window, until the
+ * reloaded app opens its key again.
+ */
 function settingsStore(): WindowRestoreStore | null {
-  // iPadOS restores its scenes itself, so only the desktop host is asked to.
-  if (injectOs() !== 'macos') return null;
+  const os = injectOs();
+  if (os !== 'macos' && os !== 'ios') return null;
   const settings = reactNative()?.Settings;
   if (!settings) return null;
   return {
     read: () => {
       const saved = settings.get(SETTINGS_KEY);
-      return Array.isArray(saved) ? (saved as RestoredWindow[]) : [];
+      let records: unknown = saved;
+      if (typeof saved === 'string') {
+        try {
+          records = JSON.parse(saved);
+        } catch {
+          return [];
+        }
+      }
+      // A list as a property list too: what an earlier version saved still opens. Only records,
+      // since a value written outside the app can hold anything.
+      return Array.isArray(records)
+        ? records.filter(
+            (window): window is RestoredWindow => typeof window === 'object' && window !== null,
+          )
+        : [];
     },
-    write: (windows) => settings.set({ [SETTINGS_KEY]: windows }),
+    // As JSON: a property list drops null, from an object and from an array, so a window's inputs
+    // would not come back as they were given.
+    write: (windows) => settings.set({ [SETTINGS_KEY]: JSON.stringify(windows) }),
   };
 }
 
