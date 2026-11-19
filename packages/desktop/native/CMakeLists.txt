@@ -97,6 +97,7 @@ add_library(ngn_core STATIC
     core/src/host-os.cpp
     core/src/host-state.cpp
     core/src/host-views.cpp
+    core/src/image-source.cpp
     core/src/input-dispatcher.cpp
     core/src/input-script.cpp
     core/src/key-value-store.cpp
@@ -111,6 +112,7 @@ add_library(ngn_core STATIC
     core/src/text-input.cpp
     core/src/text-layout-manager.cpp
     core/src/tray-and-dock.cpp
+    core/src/undo-stacks.cpp
     core/src/safe-areas.cpp
     core/src/scrollers.cpp
     core/src/posix-launcher.cpp
@@ -121,6 +123,7 @@ add_library(ngn_core STATIC
     core/src/split-view.cpp
     core/src/svg.cpp
     core/src/symbol.cpp
+    core/src/system.cpp
     core/src/tabs-host.cpp
     core/src/download.cpp
     core/src/updates.cpp
