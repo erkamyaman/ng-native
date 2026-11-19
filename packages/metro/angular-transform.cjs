@@ -18,7 +18,12 @@ const { compileCss } = require('./css/compile.cjs');
 const { nameFaces } = require('./css/font-names.cjs');
 const { componentDeclarations } = require('./component-declarations.cjs');
 const { hotShape } = require('./hot-shape.cjs');
-const { compileWithNgp, stampOf, typeCheckWithNgp } = require('./ngp-compile.cjs');
+const {
+  compileWithNgp,
+  importResolverOf,
+  stampOf,
+  typeCheckWithNgp,
+} = require('./ngp-compile.cjs');
 const {
   compileForHmrSync,
   extractComponentMetadataSync,
@@ -1684,14 +1689,15 @@ async function transformAngularWithNgp(src, filename, options = {}) {
   if (IS_SOURCE.test(filename) && HAS_ANGULAR_DECORATOR.test(src)) {
     transformed = await compiledWithNgp(src, filename, ngp, rest);
   } else {
-    const checked = isCheckedModule(filename) && !IS_PARTIAL_COMPILED.test(src);
-    if (checked) await typeCheckWithNgp(src, filename, ngp);
+    const checked =
+      typeCheck !== false && isCheckedModule(filename) && !IS_PARTIAL_COMPILED.test(src);
+    if (!checked) return transformAngular(src, filename, rest);
+    await typeCheckWithNgp(src, filename, ngp);
     transformed = transformAngular(src, filename, rest);
-    if (!checked) return transformed;
   }
-  if (typeCheck !== false) {
-    const directory = path.dirname(path.resolve(options.projectRoot ?? process.cwd(), filename));
-    for (const imported of relativeImports(src, directory)) noteRead(filename, imported);
+  const file = path.resolve(options.projectRoot ?? process.cwd(), filename);
+  for (const imported of importedFiles(src, file, importResolverOf(ngp))) {
+    noteRead(filename, imported);
   }
   return transformed;
 }
@@ -1722,57 +1728,47 @@ async function compiledWithNgp(src, filename, ngp, options) {
   }
 }
 
-const RELATIVE_IMPORT = /\b(?:from|import)\s*['"](\.{1,2}\/[^'"]+)['"]/g;
-const SOURCE_OF = { '.js': ['.ts', '.tsx'], '.jsx': ['.tsx'], '.mjs': ['.mts'], '.cjs': ['.cts'] };
+const IMPORT = /(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"\n]+)['"]/g;
 
-function directImports(src, directory) {
+/** @typedef {(specifier: string, from: string) => string | undefined} Resolve */
+
+/** @param {string} src @param {string} file @param {Resolve} resolve */
+function directImports(src, file, resolve) {
   const files = new Set();
-  for (const [, specifier] of src.matchAll(RELATIVE_IMPORT)) {
-    const base = path.resolve(directory, specifier);
-    const extension = path.extname(base);
-    const sources = SOURCE_OF[extension];
-    const candidates = sources
-      ? sources.map((source) => base.slice(0, -extension.length) + source)
-      : [
-          base,
-          `${base}.ts`,
-          `${base}.tsx`,
-          `${base}.mts`,
-          `${base}.cts`,
-          path.join(base, 'index.ts'),
-        ];
-    const found = candidates.find(
-      (candidate) => /\.[cm]?tsx?$/.test(candidate) && existsSync(candidate),
-    );
-    if (found && !INSTALLED.test(found)) files.add(found);
+  for (const [, specifier] of src.matchAll(IMPORT)) {
+    const found = resolve(specifier, file);
+    if (found && !INSTALLED.test(found)) files.add(path.resolve(found));
   }
   return files;
 }
 
+/** @type {Map<string, { stamp: string | null, resolve: Resolve, imports: Set<string> }>} */
 const IMPORTS_OF = new Map();
 
-function importsOf(file) {
+/** @param {string} file @param {Resolve} resolve */
+function importsOf(file, resolve) {
   const stamp = stampOf(file);
   const known = IMPORTS_OF.get(file);
-  if (known?.stamp === stamp) return known.imports;
+  if (known?.stamp === stamp && known.resolve === resolve) return known.imports;
   let imports = new Set();
   try {
-    imports = directImports(readFileSync(file, 'utf8'), path.dirname(file));
+    imports = directImports(readFileSync(file, 'utf8'), file, resolve);
   } catch {
     // Gone since it was imported: what imports it is what fails, on its own transform.
   }
-  IMPORTS_OF.set(file, { stamp, imports });
+  IMPORTS_OF.set(file, { stamp, resolve, imports });
   return imports;
 }
 
-function relativeImports(src, directory) {
+/** @param {string} src @param {string} file @param {Resolve} resolve */
+function importedFiles(src, file, resolve) {
   const files = new Set();
-  const queue = [...directImports(src, directory)];
+  const queue = [...directImports(src, file, resolve)];
   while (queue.length && files.size < 5000) {
-    const file = /** @type {string} */ (queue.pop());
-    if (files.has(file)) continue;
-    files.add(file);
-    queue.push(...importsOf(file));
+    const next = /** @type {string} */ (queue.pop());
+    if (files.has(next)) continue;
+    files.add(next);
+    queue.push(...importsOf(next, resolve));
   }
   return files;
 }

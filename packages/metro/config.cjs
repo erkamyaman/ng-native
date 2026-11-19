@@ -763,14 +763,18 @@ function ngpBuild(projectRoot) {
 }
 
 /** The tsconfig and every file it extends, in the order tsc reads them. */
-function typescriptConfig(file) {
-  if (!isFile(file)) return null;
-  let ts;
+function typescriptFor(directory) {
   try {
-    ts = require(require.resolve('typescript', { paths: [path.dirname(file), __dirname] }));
+    return require(require.resolve('typescript', { paths: [directory, __dirname] }));
   } catch {
     return null;
   }
+}
+
+function typescriptConfig(file) {
+  if (!isFile(file)) return null;
+  const ts = typescriptFor(path.dirname(file));
+  if (!ts) return null;
   const source = ts.readJsonConfigFile(file, ts.sys.readFile);
   const host = { ...ts.sys, readDirectory: () => [] };
   const parsed = ts.parseJsonSourceFileConfigFileContent(
@@ -981,4 +985,6 @@ module.exports = {
   chunkOutsideServerRoot,
   watchCompiler,
   tsconfigChain,
+  typescriptConfig,
+  typescriptFor,
 };

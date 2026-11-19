@@ -101,17 +101,20 @@ module.exports = withAngularNative(getDefaultConfig(__dirname), { compilation: '
   native analyzer in place of the WebAssembly one.
 - Each Metro worker analyzes the app's `tsconfig.json` once, the first time it compiles a
   component, and compiles a file at a time after that, with that file's `angularCompilerOptions`.
-  `tsconfig` names another file. A component
-  outside that program is compiled by oxc. In dev, a changed file, template or stylesheet is
-  analyzed again before the next file compiles.
+  `tsconfig` names another file. A component outside that program is compiled by oxc. In dev, a
+  changed file, template or stylesheet is analyzed again before the next file compiles.
+- Metro resolves packages with that tsconfig's `customConditions`, inherited through `extends`.
+  With oxc they come from the app's own `tsconfig.json` alone, so switching `compilation` can change
+  which entry of a package's `exports` Metro picks.
 - Templates and the app's TypeScript are type-checked as they compile, with TypeScript 7's language
   server, so the build fails on a type error in a template, at its line in the template. That needs
   `@typescript/native-preview` (or `TSNATIVE_BINARY_PATH`); `disableTypeChecking: true` turns it
   off. Each Metro worker runs its own checker, against the nearest `tsconfig.json`, so a `tsconfig`
-  other than that one gets a warning. A file's cached transform is redone when a file it imports by
-  a relative path changes; a change further down the import chain is checked once Metro transforms
-  the file again. `ANGULAR_NATIVE_TSGO_TIMEOUT_MS` (five minutes by default) is how long a check
-  waits for the checker before starting a new one.
+  other than that one gets a warning. `ANGULAR_NATIVE_TSGO_TIMEOUT_MS` (five minutes by default) is
+  how long a check waits for the checker before starting a new one.
+- A component's cached transform, and with type checking on any app module's, is redone when a file
+  it imports changes, directly or through the files those import. Imports resolve as the tsconfig
+  resolves them, a `paths` alias included; packages in `node_modules` are not followed.
 - Unlike oxc, Angular's compiler reports an element no component in `imports` matches, as `ngc`
   does.
 - Hot reload works as it does with oxc: a swapped template is still compiled by oxc.

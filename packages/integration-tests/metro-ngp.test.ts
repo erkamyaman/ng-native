@@ -327,6 +327,7 @@ describe('a component compiled with NGP', () => {
         moduleResolution: 'bundler',
         strict: true,
         skipLibCheck: true,
+        paths: { '@lib/*': ['./lib/*'] },
       },
       include: ['*.ts'],
       angularCompilerOptions: { strictTemplates: true, typeCheckHostBindings: false },
@@ -538,6 +539,55 @@ describe('a component compiled with NGP', () => {
       () => undefined,
     );
     assert.ok(takeResourcesRead('uses-cts.ts').includes(path.join(root, 'helper.cts')));
+  });
+
+  it('marks a file imported through a tsconfig paths alias read', async () => {
+    mkdirSync(path.join(root, 'lib'), { recursive: true });
+    write('lib/aliased.ts', 'export const five = 5;\n');
+    const src = "import { five } from '@lib/aliased';\nexport const six: number = five + 1;\n";
+    write('uses-alias.ts', src);
+    await transformAngularWithNgp(src, 'uses-alias.ts', { projectRoot: root, platform: 'ios' });
+    assert.ok(takeResourcesRead('uses-alias.ts').includes(path.join(root, 'lib', 'aliased.ts')));
+  });
+
+  it("marks a component's imports read with type checking off, since its selectors decide the build", async () => {
+    write(
+      'parent.ts',
+      "import { Inline } from './inline';\n" +
+        component('parent', "imports: [Inline], template: '<inline />'"),
+    );
+    takeResourcesRead('parent.ts');
+    await compile('parent.ts');
+    assert.ok(takeResourcesRead('parent.ts').includes(path.join(root, 'inline.ts')));
+  });
+
+  it('keeps no position from an external template on the compiled component', async () => {
+    write('far.ts', component('far', "templateUrl: './far.html'"));
+    write('far.html', `${'\n'.repeat(40)}<text>{{ name.length }}</text>\n`);
+    const transformer = require('@ng-native/metro/transformer.cjs') as {
+      transform(params: object): Promise<{ ast: object }>;
+    };
+    const { ast } = await transformer.transform({
+      filename: 'far.ts',
+      src: readFileSync(path.join(root, 'far.ts'), 'utf8'),
+      options: {
+        dev: false,
+        projectRoot: root,
+        platform: 'ios',
+        customTransformOptions: { angularNativeCompilation: 'ngp', angularNativeTypeCheck: false },
+      },
+      plugins: [],
+    });
+    const lines: number[] = [];
+    const visit = (node: unknown): void => {
+      if (!node || typeof node !== 'object') return;
+      const loc = (node as { loc?: { start?: { line?: number } } }).loc;
+      if (typeof loc?.start?.line === 'number') lines.push(loc.start.line);
+      for (const [key, value] of Object.entries(node)) if (key !== 'loc') visit(value);
+    };
+    visit(ast);
+    assert.ok(lines.length > 0);
+    assert.ok(Math.max(...lines) <= 3, `a position on line ${Math.max(...lines)} of far.ts`);
   });
 
   it('type-checks an app .tsx file with no Angular in it', async () => {

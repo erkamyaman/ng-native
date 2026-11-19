@@ -182,22 +182,45 @@ class Session {
 /** @type {Map<string, { session: Promise<Session>, signature: string, current?: Session }>} */
 const sessions = new Map();
 
-/** @type {Map<string, { files: string[], signature: string }>} */
+/**
+ * @typedef {{
+ *   files: string[],
+ *   signature: string,
+ *   resolve: (specifier: string, from: string) => string | undefined,
+ * }} TsconfigState
+ */
+
+/** @type {Map<string, TsconfigState>} */
 const chains = new Map();
 
 /** @param {string[]} files */
 const signatureOf = (files) => files.map((file) => `${file}:${modified(file)}`).join('|');
 
-/** @param {string} tsconfig */
-function tsconfigSignature(tsconfig) {
+/** @param {string} tsconfig @returns {TsconfigState} */
+function tsconfigState(tsconfig) {
   const known = chains.get(tsconfig);
-  if (known && signatureOf(known.files) === known.signature) return known.signature;
-  const { tsconfigChain } = require('./config.cjs');
-  const files = tsconfigChain(tsconfig);
-  const signature = signatureOf(files);
-  chains.set(tsconfig, { files, signature });
-  return signature;
+  if (known && signatureOf(known.files) === known.signature) return known;
+  const { tsconfigChain, typescriptConfig, typescriptFor } = require('./config.cjs');
+  const config = typescriptConfig(tsconfig);
+  const files = config?.files ?? tsconfigChain(tsconfig);
+  const ts = typescriptFor(path.dirname(tsconfig));
+  const options = config?.options ?? {};
+  /** @type {TsconfigState} */
+  const state = {
+    files,
+    signature: signatureOf(files),
+    resolve: (specifier, from) =>
+      ts?.resolveModuleName(specifier, from, options, ts.sys).resolvedModule?.resolvedFileName,
+  };
+  chains.set(tsconfig, state);
+  return state;
 }
+
+/** @param {string} tsconfig */
+const tsconfigSignature = (tsconfig) => tsconfigState(tsconfig).signature;
+
+/** @param {NgpOptions} options */
+const importResolverOf = (options) => tsconfigState(tsconfigOf(options)).resolve;
 
 /** @param {string} tsconfig @param {boolean} dev */
 const sessionKeyOf = (tsconfig, dev) => `${tsconfig}\0${dev}`;
@@ -356,6 +379,7 @@ module.exports = {
   compileWithNgp,
   typeCheckWithNgp,
   closeNgp,
+  importResolverOf,
   loadNgp,
   messageOf,
   stampOf: modified,
