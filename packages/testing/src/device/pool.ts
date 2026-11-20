@@ -33,8 +33,15 @@ import path from 'node:path';
 import type { PoolOptions, PoolRunnerInitializer, PoolWorker } from 'vitest/node';
 import { modulesOf, type BundleModule } from './bundle-modules.ts';
 import { mockedSpecifiers } from './mocks.ts';
+import { progress } from './command.ts';
+import { metroFor } from './metro-server.ts';
 import { DEFAULT_PORT } from './port.ts';
 import { type AppLauncher, type LaunchedApp } from './launcher.ts';
+import {
+  matchScreenshot,
+  type ScreenshotOptions,
+  type ScreenshotRequest,
+} from './screenshot-baselines.ts';
 
 export type { AppLauncher, LaunchedApp, LaunchRequest } from './launcher.ts';
 
@@ -49,8 +56,10 @@ export interface DevicePoolOptions {
   /**
    * Starts the app for each worker that finds none connected, and again after the app is lost: a
    * dropped session fails the file that was running, relaunches the app with fresh state, and the
-   * run goes on with the files that remain. See `AppLauncher`, and `macosLauncher()` for a Mac.
-   * Without one the app is opened by hand, as on a simulator, and a lost app ends the run.
+   * run goes on with the files that remain. With a launcher the pool also starts the Metro the app
+   * loads from. See `AppLauncher`, and `macosLauncher()`, `iosSimulatorLauncher()` and
+   * `androidEmulatorLauncher()`. Without one the app, and its Metro, are started by hand, and a
+   * lost app ends the run.
    */
   launch?: AppLauncher;
   /**
@@ -58,7 +67,11 @@ export interface DevicePoolOptions {
    * Expo's Metro config chooses it, or the project itself.
    */
   serverRoot?: string;
-  /** How long to wait for an app to connect, in milliseconds. Default 60 seconds. */
+  /**
+   * How long to wait for an app to connect, in milliseconds. Default 60 seconds for an app opened
+   * by hand, and ten minutes for one the pool launched, which can be building first (the desktop
+   * host builds itself on its first run); a launched app that exits fails at once either way.
+   */
   connectTimeout?: number;
   /**
    * How long an app may go silent while it owes Vitest an answer before the run fails as if the
@@ -66,6 +79,16 @@ export interface DevicePoolOptions {
    * needs more.
    */
   appTimeout?: number;
+  /**
+   * The port of a Metro already serving the project with `EXPO_PUBLIC_DEVICE_TESTS=1`, for a launched
+   * app to load from. Default: the pool starts its own, on a free port, and stops it as Vitest
+   * closes. The app learns the pool's `port` from the Metro the pool starts; a Metro of your own
+   * tells it only when started with `NG_NATIVE_DEVICE_TESTS_POOL_PORT` set to `port`, and without
+   * that the app polls 51730.
+   */
+  metroPort?: number;
+  /** What `toMatchScreenshot()` does unless a call says otherwise: see `ScreenshotOptions`. */
+  screenshots?: ScreenshotOptions;
 }
 
 export function devicePool(options: DevicePoolOptions = {}): PoolRunnerInitializer {
@@ -107,7 +130,10 @@ class DeviceWorker implements PoolWorker {
   private readonly serverRoot: string;
   private readonly projectRoot: string;
   private readonly options: DevicePoolOptions;
+  private readonly coverage: boolean;
   private session: Session | null = null;
+  /** The pool answered Vitest's `start` itself: the app's own answer is not passed on. */
+  private startAnswered = false;
   private launched: LaunchedApp | null = null;
   private launchedAt = 0;
   /** Settles when the worker has an app to send to: after a start, and after a relaunch. */
@@ -120,6 +146,7 @@ class DeviceWorker implements PoolWorker {
     this.bridge = Bridge.on(options.port ?? DEFAULT_PORT);
     this.bridge.silence = options.appTimeout ?? SILENCE_MS;
     this.projectRoot = pool.project.config.root;
+    this.coverage = Boolean(pool.project.config.coverage?.enabled);
     this.serverRoot = options.serverRoot ?? workspaceRoot(this.projectRoot);
   }
 
@@ -138,6 +165,25 @@ class DeviceWorker implements PoolWorker {
   async start(): Promise<void> {
     this.shutdown = new AbortController();
     this.bridge.hold(1);
+    // A launch can build the app first, for minutes, and Vitest gives a worker's start 90 seconds,
+    // its `start` request included: past 20 seconds the start returns, the pool answers `start`
+    // itself (see `send`), and the requests that follow wait for the app, as after a relaunch. A
+    // launch that fails sooner fails the start.
+    if (this.options.launch) {
+      const connecting = this.connect();
+      this.ready = connecting;
+      connecting.catch(() => {});
+      try {
+        await Promise.race([
+          connecting,
+          new Promise((resolve) => setTimeout(resolve, START_WAIT_MS).unref()),
+        ]);
+      } catch (error) {
+        this.bridge.hold(-1);
+        throw error;
+      }
+      return;
+    }
     try {
       await this.connect();
     } catch (error) {
@@ -167,22 +213,31 @@ class DeviceWorker implements PoolWorker {
    */
   private async connect(): Promise<void> {
     const { launch } = this.options;
-    const claim = (signal?: AbortSignal) =>
+    const claim = (signal?: AbortSignal, launched = false) =>
       this.bridge.claim((message) => this.receive(message), {
         platform: this.options.platform,
-        timeout: this.options.connectTimeout ?? 60_000,
+        timeout: this.options.connectTimeout ?? (launched ? 600_000 : 60_000),
+        launched,
         root: this.projectRoot,
+        screenshots: this.options.screenshots ?? {},
         signal: signal ? AbortSignal.any([signal, this.shutdown.signal]) : this.shutdown.signal,
       });
     if (!launch || this.bridge.hasFree(this.options.platform)) {
       this.session = await claim();
       return;
     }
+    const metroPort =
+      this.options.metroPort ??
+      (await metroFor(this.projectRoot, { coverage: this.coverage, poolPort: this.bridge.port }))
+        .port;
     this.launchedAt = Date.now();
     const app = await launch.start({
       port: this.bridge.port,
       runId: randomUUID(),
       stateDir: mkdtempSync(path.join(tmpdir(), 'ng-native-device-tests-')),
+      projectRoot: this.projectRoot,
+      metroPort,
+      signal: this.shutdown.signal,
     });
     this.launched = app;
     const early = app.exited.then((how) => {
@@ -195,7 +250,8 @@ class DeviceWorker implements PoolWorker {
     // An app that ended takes its claim with it: a claim left waiting would take the next app.
     const claiming = new AbortController();
     early.catch(() => claiming.abort());
-    this.session = await Promise.race([claim(claiming.signal), early]);
+    this.session = await Promise.race([claim(claiming.signal, true), early]);
+    progress(this.options.platform ?? 'app', 'connected', this.launchedAt);
     // From here a process that ends is a lost app at once, not after the silence is waited out.
     void app.exited.then((how) => {
       const session = this.session;
@@ -207,6 +263,16 @@ class DeviceWorker implements PoolWorker {
 
   /** What an app's session says to the worker: Vitest's messages, and the loss of the app. */
   private receive(message: unknown): void {
+    // The app's own `started`, which the pool already gave Vitest; not a loss of the app, which
+    // goes on to the relaunch below.
+    const reply = message as { type?: string; error?: unknown };
+    if (this.startAnswered && reply.type === 'started') {
+      this.startAnswered = false;
+      // Vitest has its `started` already: a loss of the app before it answered relaunches it, and
+      // the request Vitest is waiting on, if any, is answered as lost on its own.
+      if (reply.error instanceof AppLost && this.options.launch) this.relaunch();
+      return;
+    }
     const error = (message as { error?: unknown }).error;
     const launch = this.options.launch;
     if (!(error instanceof AppLost) || !launch) {
@@ -257,6 +323,12 @@ class DeviceWorker implements PoolWorker {
       // The app stays open for the next run: there is nothing of it to stop.
       queueMicrotask(() => this.events.emit('message', response('stopped')));
       return;
+    }
+    if (request.type === 'start' && this.options.launch) {
+      // Answered at once, as an app being built and booted can take longer than Vitest waits for
+      // one; the app is still sent the request, with the config it carries, before any file.
+      this.startAnswered = true;
+      queueMicrotask(() => this.events.emit('message', response('started')));
     }
     // After a relaunch the worker's app is the new one, once `ready`.
     void this.ready.then(
@@ -460,6 +532,12 @@ class AppLost extends Error {
   override name = 'AppLost';
 }
 
+/** How long a worker's start waits for a launch before it lets requests wait instead. */
+const START_WAIT_MS = 20_000;
+
+/** The platforms a reference screenshot can be named for. */
+const SCREENSHOT_PLATFORMS = new Set(['ios', 'android', 'macos']);
+
 /** How long an app may go without a word while it owes an answer. */
 const SILENCE_MS = 15_000;
 
@@ -486,6 +564,8 @@ interface Session {
   root: string | null;
   /** The test files the app was sent to run, which an inline snapshot is written into. */
   files: Set<string>;
+  /** The screenshot options of the worker that has the app. */
+  screenshots: ScreenshotOptions;
   lastType: string | undefined;
   lastSeen: number;
   /** The worker that has the app, and where its messages go. */
@@ -580,8 +660,17 @@ class Bridge {
       platform,
       timeout,
       root,
+      screenshots,
       signal,
-    }: { platform?: string; timeout: number; root: string; signal?: AbortSignal },
+      launched,
+    }: {
+      platform?: string;
+      timeout: number;
+      launched?: boolean;
+      root: string;
+      screenshots: ScreenshotOptions;
+      signal?: AbortSignal;
+    },
   ): Promise<Session> {
     if (this.failure) return Promise.reject(this.listenError(this.failure));
     return new Promise((resolve, reject) => {
@@ -597,9 +686,13 @@ class Bridge {
         cleanup();
         reject(
           new Error(
-            `No ${platform ? `${platform} ` : ''}app free on the device test pool's port ${this.port} ` +
-              `within ${timeout / 1000}s. Start Metro with EXPO_PUBLIC_DEVICE_TESTS=1 and open the ` +
-              'app on a simulator or emulator.',
+            launched
+              ? `The ${platform ?? ''} app the pool launched did not connect to port ${this.port} ` +
+                  `within ${timeout / 1000}s: it is stuck before its entry runs ` +
+                  'startDeviceTests(), or the entry does not call it under EXPO_PUBLIC_DEVICE_TESTS.'
+              : `No ${platform ? `${platform} ` : ''}app free on the device test pool's port ` +
+                  `${this.port} within ${timeout / 1000}s. Start Metro with ` +
+                  'EXPO_PUBLIC_DEVICE_TESTS=1 and open the app on a simulator or emulator.',
           ),
         );
       }, timeout);
@@ -609,6 +702,7 @@ class Bridge {
           cleanup();
           session.claimant = claimant;
           session.root = root;
+          session.screenshots = screenshots;
           session.files.clear();
           resolve(session);
         },
@@ -728,11 +822,22 @@ class Bridge {
     this.unwatch(session);
     if (session.owed.size === 0) return;
     session.owed.clear();
-    session.claimant?.({
+    const claimant = session.claimant;
+    claimant?.({
       __vitest_worker_response__: true,
       type: session.lastType === 'start' ? 'started' : 'testfileFinished',
       error: new AppLost(reason),
     });
+    // A run Vitest sent while the app still owed an earlier request, never sent it: Vitest waits
+    // for its end all the same. A plain error, as the loss above is what relaunches the app.
+    for (const queued of session.queue.splice(0)) {
+      if (queued.type !== 'run' && queued.type !== 'collect') continue;
+      claimant?.({
+        __vitest_worker_response__: true,
+        type: 'testfileFinished',
+        error: new Error(`Not run: ${reason}`),
+      });
+    }
   }
 
   /** Vitest's answer to one of an app's calls: `{ t: 's', i, r }` or `{ t: 's', i, e }`. */
@@ -767,6 +872,7 @@ class Bridge {
     if (request.url === '/alive') response.end();
     else if (request.url === '/rpc') this.call(session, message, response);
     else if (request.url === '/files') this.files(session, message, response);
+    else if (request.url === '/screenshot') this.screenshot(session, message, response);
     else this.poll(message as unknown as Poll, response);
   }
 
@@ -801,6 +907,36 @@ class Bridge {
     response.setHeader('content-type', 'application/json');
     try {
       response.end(JSON.stringify({ result: snapshotFile(session, message ?? {}) }));
+    } catch (error) {
+      response.end(JSON.stringify({ error: String(error) }));
+    }
+  }
+
+  /**
+   * A screenshot to compare with its reference, or record as one: only from an app a worker has,
+   * and only for a test file it was sent, whose `__screenshots__` the reference goes in.
+   */
+  private screenshot(
+    session: Session | undefined,
+    message: Record<string, unknown> | null,
+    response: ServerResponse,
+  ): void {
+    response.setHeader('content-type', 'application/json');
+    try {
+      const request = message as unknown as ScreenshotRequest;
+      const file = normalised(String(request?.file ?? ''));
+      if (!session?.claimant || !session.files.has(file)) {
+        throw new Error(`Not a test file this app was sent: ${String(request?.file)}`);
+      }
+      // The app says which platform it is, and the reference's file name is made from it.
+      if (!SCREENSHOT_PLATFORMS.has(session.platform)) {
+        throw new Error(`Not a platform screenshots are kept for: ${session.platform}`);
+      }
+      const result = matchScreenshot(
+        { ...request, file, platform: session.platform },
+        session.screenshots.comparatorOptions,
+      );
+      response.end(JSON.stringify({ result }));
     } catch (error) {
       response.end(JSON.stringify({ error: String(error) }));
     }
@@ -868,6 +1004,7 @@ class Bridge {
       nextRequest: 1,
       root: null,
       files: new Set(),
+      screenshots: {},
       lastType: undefined,
       lastSeen: Date.now(),
       claimant: null,
