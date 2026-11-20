@@ -53,6 +53,12 @@ NSImage *tintedImage(NSImage *image, const SharedColor &tint) {
   std::optional<ImageSource> _source;
   NSURLSessionDataTask *_task;
   NSImage *_image;
+  // resizeMode `repeat`: the image tiles at its own size from the top left, as React Native iOS
+  // tiles it, instead of being drawn once by the layer's contents gravity.
+  BOOL _repeat;
+  // The picked source's scale: how many of the picture's pixels make a point, as React Native iOS
+  // hands the source's scale to its loader. Sizes the repeat tile.
+  double _scale;
   // The `tintColor` the image is shown in, if it has one. Present and transparent black (0, which
   // converts to false) still tints: the picture goes clear, as it does in React Native iOS.
   std::optional<SharedColor> _tint;
@@ -113,13 +119,20 @@ NSImage *tintedImage(NSImage *image, const SharedColor &tint) {
   }
   self.layer.masksToBounds = YES;
   _imageLayer.contentsGravity = self.layer.contentsGravity;
-  if (p->tintColor != _tint) {
+  BOOL repeat = p->resizeMode == ImageResizeMode::Repeat;
+  if (p->tintColor != _tint || repeat != _repeat) {
     _tint = p->tintColor;
+    _repeat = repeat;
     [self showImage];
   }
   // The source whose scale is nearest the screen's, as React Native iOS picks.
   double screenScale = self.window ? self.window.backingScaleFactor : NSScreen.mainScreen.backingScaleFactor;
   auto source = ngn::pickImageSource(p->sources, screenScale);
+  double scale = source && source->scale > 0 ? source->scale : 1;
+  if (scale != _scale) {
+    _scale = scale;
+    [self showImage];
+  }
   if (source.has_value() == _source.has_value() && (!source || ngn::sameImageRequest(*source, *_source))) {
     return;
   }
@@ -186,14 +199,36 @@ NSImage *tintedImage(NSImage *image, const SharedColor &tint) {
   [_task resume];
 }
 
-// The image on its layer, in the tint if there is one.
+// `shown`, the loaded picture or its tinted copy, at the loaded picture's pixel size divided by the
+// source's scale, in points: the size one tile takes. A copy, so the image that other drawing uses
+// keeps its own size. The tinted copy is drawn at the screen's scale, so its own pixels are no guide.
+- (NSImage *)tile:(NSImage *)shown {
+  NSImageRep *rep = _image.representations.firstObject;
+  NSSize pixels = rep && rep.pixelsWide > 0 && rep.pixelsHigh > 0 ? NSMakeSize(rep.pixelsWide, rep.pixelsHigh) : _image.size;
+  NSImage *tile = [shown copy];
+  tile.size = NSMakeSize(pixels.width / _scale, pixels.height / _scale);
+  return tile;
+}
+
+// The image on its layer, in the tint if there is one: tiled as that layer's background, or as its
+// contents.
 - (void)showImage {
   if (_image == nil && _imageLayer == nil) {
     return;
   }
   CALayer *layer = [self imageLayer];
+  NSImage *shown = _image != nil && _tint.has_value() ? tintedImage(_image, *_tint) : _image;
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
   layer.contentsGravity = self.layer.contentsGravity;
-  layer.contents = _image != nil && _tint.has_value() ? tintedImage(_image, *_tint) : _image;
+  if (shown != nil && _repeat) {
+    layer.contents = nil;
+    layer.backgroundColor = [NSColor colorWithPatternImage:[self tile:shown]].CGColor;
+  } else {
+    layer.backgroundColor = nil;
+    layer.contents = shown;
+  }
+  [CATransaction commit];
 }
 
 - (void)loaded:(NSImage *)image {
