@@ -2,10 +2,15 @@
  * `@ng-native/nx:sync-native-modules`: lists in each Angular Native app's `package.json` the native
  * modules the workspace libraries it uses import, and adds their config plugins to its `app.json`.
  *
- * Expo links only the native modules an app's own `package.json` names. Expo Go contains every
- * module in the SDK, so an app whose library imports one the app does not list works there and
- * fails in a development or release build. A library cannot declare what it needs of an app, but
- * Nx's project graph records what each one imports, so this reads it from there.
+ * Expo's autolinking links the native modules in the app's dependency tree: the packages its
+ * `package.json` lists, and theirs. A library the app imports through a tsconfig path alias, as an
+ * integrated workspace's are, is not in that tree, so a native module it imports is linked only if
+ * the app lists it: the app works in Expo Go, which has the SDK's modules built in, and a development
+ * or release build has no native code for it. A library that is a workspace package the app lists
+ * is walked, and its modules are linked. Either way Expo applies a module's config plugin only when
+ * `app.json` names it, and `expo install --check` checks the versions of the app's own
+ * dependencies only. A library cannot declare what it needs of an app, but Nx's project graph
+ * records what each one imports, so this reads it from there.
  *
  * It is a sync generator: the app generator registers it on the app's `start`, `export` and
  * `prebuild` targets, so Nx runs it before them, and `nx sync:check` fails a CI run it would
@@ -207,7 +212,7 @@ async function syncNativeModules(tree) {
   await formatFiles(tree);
   return {
     outOfSyncMessage:
-      'An app does not list a native module its libraries import, so a development build would not link it.',
+      'An app does not list a native module its libraries import, or its config plugin, which Expo applies only from app.json.',
     outOfSyncDetails: details,
   };
 }
