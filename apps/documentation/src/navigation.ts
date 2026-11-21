@@ -62,9 +62,9 @@ export function flattenItems(items: readonly NavItem[]): NavItem[] {
  * something with it, then ship it. How the renderer works, how it compares and where it stops are
  * in `CONCEPTS`, because a reader who has not yet run the app has no use for them.
  *
- * "Existing apps" is a `branch` of "Getting started" rather than the page after it:
- * it is where a reader with an Expo app already lands, not the next step for one who just ran the
- * template. See `NavItem.branch`.
+ * "Existing apps" and "Turborepo" are `branch`es of "Getting started" rather than the page after it:
+ * they are where a reader with an Expo app or a Turborepo workspace already lands, not the next step
+ * for one who just ran the template. See `NavItem.branch`.
  */
 export const GUIDE: NavSection = {
   title: 'Guide',
@@ -72,7 +72,10 @@ export const GUIDE: NavSection = {
     {
       path: 'guide/getting-started',
       title: 'Getting started',
-      children: [{ path: 'guide/manual-setup', title: 'Existing apps', branch: true }],
+      children: [
+        { path: 'guide/manual-setup', title: 'Existing apps', branch: true },
+        { path: 'guide/turborepo', title: 'Turborepo', branch: true },
+      ],
     },
     // Where a reader still deciding looks first, but not the next step for one who has just run it.
     { path: 'guide/comparison', title: 'How it compares', branch: true },
