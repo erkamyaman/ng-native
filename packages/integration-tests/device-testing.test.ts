@@ -762,6 +762,110 @@ describe('the device pool', () => {
     }
   });
 
+  it('sends start again to the app it relaunches, before any file, and Vitest hears it once', async () => {
+    const { launch, launches } = fakeLauncher();
+    const run = await setup({ launch });
+    try {
+      const { worker, messages } = run.worker();
+      const starting = worker.start();
+      const config = { root: run.root };
+      worker.send(request('start', { config }) as never);
+      const first = run.app('one');
+      const asked = await first.poll();
+      assert.equal(asked?.type, 'start');
+      await starting;
+      // Started, then its process ends with nothing owed, as an app that crashes between files.
+      // A poll carrying the reply returns only once the pool has read it: with the next request,
+      // a cancel sent for the purpose. The cancel is answered too, so nothing stays owed, and its
+      // answer reaching Vitest shows the pool has read that as well.
+      const answer = async (app: ReturnType<typeof run.app>, deviceRequest: unknown) => {
+        const next = app.poll({
+          reply: { __vitest_worker_response__: true, type: 'started', deviceRequest },
+        });
+        worker.send(request('cancel') as never);
+        const cancel = await next;
+        assert.equal(cancel?.type, 'cancel');
+        const before = messages.length;
+        void app
+          .poll({
+            reply: {
+              __vitest_worker_response__: true,
+              type: 'cancelled',
+              deviceRequest: cancel.deviceRequest,
+            },
+          })
+          .catch(() => {});
+        const read = () =>
+          messages
+            .slice(before)
+            .some((message) => (message as { type?: string }).type === 'cancelled');
+        for (let waited = 0; waited < 2000 && !read(); waited += 10) await wait(10);
+        assert.ok(read(), 'the answer to cancel reached Vitest');
+      };
+      await answer(first, asked.deviceRequest);
+      launches[0]!.exit('signal SIGKILL');
+      for (let waited = 0; waited < 2000 && launches.length < 2; waited += 10) await wait(10);
+      assert.equal(launches.length, 2, 'a new app for the files to come');
+      const replacement = run.app('two');
+      const second = await Promise.race([
+        replacement.poll(),
+        wait(2000).then(() => ({ type: 'nothing' })),
+      ]);
+      assert.equal(second?.type, 'start', 'the new app is told the config before any file');
+      assert.deepEqual((second as { context?: unknown }).context, { config });
+      // Its own started is the pool's, not Vitest's: Vitest has had one.
+      await answer(replacement, second.deviceRequest);
+      const types = messages.map((message) => (message as { type?: string }).type);
+      assert.deepEqual(
+        types.filter((type) => type === 'started'),
+        ['started'],
+        'Vitest hears started once',
+      );
+      assert.ok(!types.includes('testfileFinished'), 'nothing was owed when the app exited');
+    } finally {
+      await run.done();
+    }
+  });
+
+  it('sends start once to an app it relaunched before Vitest sent start', async () => {
+    const { launch, launches } = fakeLauncher();
+    const run = await setup({ launch });
+    try {
+      const { worker, messages } = run.worker();
+      const starting = worker.start();
+      void run
+        .app('one')
+        .poll()
+        .catch(() => {});
+      await starting;
+      // Gone before Vitest's start, which then arrives while the replacement connects.
+      launches[0]!.exit('signal SIGKILL');
+      await wait(20);
+      worker.send(request('start', { config: { root: run.root } }) as never);
+      const replacement = run.app('two');
+      const first = await replacement.poll();
+      assert.equal(first?.type, 'start');
+      const next = await Promise.race([
+        replacement.poll({
+          reply: {
+            __vitest_worker_response__: true,
+            type: 'started',
+            deviceRequest: first.deviceRequest,
+          },
+        }),
+        wait(500).then(() => ({ type: 'nothing' })),
+      ]);
+      assert.equal(next?.type, 'nothing', 'no second start');
+      const types = messages.map((message) => (message as { type?: string }).type);
+      assert.deepEqual(
+        types.filter((type) => type === 'started'),
+        ['started'],
+      );
+    } finally {
+      await run.done();
+    }
+  });
+
   it('says the app it launched did not connect, not to open one by hand', async () => {
     const { launch } = fakeLauncher();
     const run = await setup({ launch, connectTimeout: 100 });
