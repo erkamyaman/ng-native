@@ -9,9 +9,9 @@ The [Getting started](/guide/getting-started) template is the shorter route, ver
 before each release. For manual setup in a blank or existing Expo app, complete every step below.
 Each step includes troubleshooting notes.
 
-Angular CLI and Nx generators perform this setup and integrate workspace commands: use
-`ng add @ng-native/schematics` ([Angular CLI](/packages/schematics)) or `nx g @ng-native/nx:app`
-([Nx](/packages/nx)).
+Angular CLI, Nx and Turborepo generators perform this setup and integrate workspace commands: use
+`ng add @ng-native/schematics` ([Angular CLI](/packages/schematics)), `nx g @ng-native/nx:app`
+([Nx](/packages/nx)) or `turbo gen ng-native-app` ([Turborepo](/packages/turbo)).
 
 ## Start the project
 
