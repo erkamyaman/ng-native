@@ -167,7 +167,10 @@ async function setup(options: Parameters<typeof devicePool>[0] = {}) {
 }
 
 /** A launcher whose apps a test ends by hand, as their processes would. */
-function fakeLauncher(crashReport?: () => string | undefined | Promise<string | undefined>) {
+function fakeLauncher(
+  crashReport?: () => string | undefined | Promise<string | undefined>,
+  output?: () => string,
+) {
   const launches: { exit: (how: string) => void; stopped: boolean }[] = [];
   const launch = {
     start: () => {
@@ -180,6 +183,7 @@ function fakeLauncher(crashReport?: () => string | undefined | Promise<string | 
         stop: async () => {
           launched.stopped = true;
         },
+        ...(output && { output }),
       };
     },
     ...(crashReport && { crashReport }),
@@ -763,6 +767,35 @@ describe('the device pool', () => {
     const run = await setup({ launch, connectTimeout: 100 });
     try {
       await assert.rejects(run.worker().worker.start(), /app the pool launched did not connect/);
+    } finally {
+      await run.done();
+    }
+  });
+
+  it("ends a launched app's failure to connect with the last of what it printed", async () => {
+    const { launch } = fakeLauncher(undefined, () => 'Loading from Metro...\nStill waiting');
+    const run = await setup({ launch, connectTimeout: 100 });
+    try {
+      await assert.rejects(
+        run.worker().worker.start(),
+        /did not connect[^]*The app's last output:\nLoading from Metro\.\.\.\nStill waiting$/,
+      );
+    } finally {
+      await run.done();
+    }
+  });
+
+  it('ends the failure of a launched app that exits before it connects with what it printed', async () => {
+    const { launch, launches } = fakeLauncher(undefined, () => 'Unhandled JS Exception');
+    const run = await setup({ launch });
+    try {
+      const starting = run.worker().worker.start();
+      await wait(20);
+      launches[0]!.exit('status 1');
+      await assert.rejects(
+        starting,
+        /exited before it connected \(status 1\)\.\n\nThe app's last output:\nUnhandled JS Exception/,
+      );
     } finally {
       await run.done();
     }

@@ -8,13 +8,15 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
-import { progress, sleep, tail } from './command.ts';
+import { keepLines, progress, sleep } from './command.ts';
 
 export interface MetroServer {
   port: number;
   stop(): Promise<void>;
   /** Settles when Metro's process ends, however it ends. */
   exited: Promise<string>;
+  /** The last lines Metro printed. */
+  output(): string;
 }
 
 const servers = new Map<string, Promise<MetroServer>>();
@@ -76,8 +78,11 @@ async function startMetro(
     },
   });
   let output = '';
-  child.stdout!.on('data', (chunk: Buffer) => (output = tail(output + chunk, 60)));
-  child.stderr!.on('data', (chunk: Buffer) => (output = tail(output + chunk, 60)));
+  // Decoded per stream, so a character split across two chunks stays whole.
+  for (const stream of [child.stdout!, child.stderr!]) {
+    stream.setEncoding('utf8');
+    stream.on('data', (chunk: string) => (output = keepLines(output + chunk, 60)));
+  }
   const exited = new Promise<string>((resolve) => {
     child.once('error', (error) => resolve(`it could not be started: ${error.message}`));
     child.once('close', (code, signal) => resolve(signal ? `signal ${signal}` : `status ${code}`));
@@ -93,7 +98,7 @@ async function startMetro(
     }
     if (await running(port)) {
       progress('metro', `serving on port ${port}`, started);
-      return { port, stop, exited };
+      return { port, stop, exited, output: () => output };
     }
     if (Date.now() > deadline) {
       await stop();
