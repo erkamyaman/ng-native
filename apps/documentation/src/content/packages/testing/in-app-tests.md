@@ -13,8 +13,17 @@ simulator or emulator, and reports to the same terminal, watch mode and CI.
 
 ## Set up
 
+An app made from the template, or by `@ng-native/nx` or `@ng-native/schematics`, at this release or
+later has all of this already, with `ios` and `android` projects (`macos` for a desktop-only app)
+and an example, `src/app/app.device.ts`. A desktop-only app that later adds iOS and Android keeps
+only its macOS projects, and adds the `ios` and `android` ones below. An app made before, or any
+other app, adds three things.
+
 Metro wraps its config with `withDeviceTests`, and the app's entry starts the test host when Metro
-is started with `EXPO_PUBLIC_DEVICE_TESTS` set:
+is started with `EXPO_PUBLIC_DEVICE_TESTS` set. The host mounts with the app's own options, so an
+entry that passes `mount` its options inline moves them into a function, `mountOptions` here, that
+both `mount(..., mountOptions())` and the host use. The host is given the function itself and calls
+it each time it mounts, so the conditions it reads are the device's at that mount:
 
 ```js
 const { withDeviceTests } = require('@ng-native/testing/device/metro');
@@ -23,9 +32,30 @@ module.exports = withDeviceTests(config);
 ```
 
 ```ts
+import { watchConditions } from '@ng-native/device';
+
 if (process.env.EXPO_PUBLIC_DEVICE_TESTS) {
-  const { startDeviceTests } = require('@ng-native/testing/device/host');
-  startDeviceTests({ mount: mountOptions() });
+  // Typed as the module, so the callbacks below are typed too.
+  const { startDeviceTests } =
+    require('@ng-native/testing/device/host') as typeof import('@ng-native/testing/device/host');
+  startDeviceTests({
+    mount: mountOptions,
+    // What the app's runnable does after mount, for the host too, with the same options (such as
+    // { darkClass: false }), or no onMount if the app does nothing: here, following rotation, the
+    // theme and reduced motion.
+    onMount: (app) => {
+      const stopWatching = watchConditions(app.engine);
+      app.applicationRef.onDestroy(stopWatching);
+    },
+  });
+} else {
+  // The app's own runnable, moved here whole, with all it does after mount (such as
+  // watchConditions), and only outside the tests: a second registration of 'main' would replace
+  // the test host.
+  AppRegistry.registerRunnable('main', ({ rootTag }) => {
+    const app = mount(Number(rootTag), App, getFabricUIManager(), mountOptions());
+    // ...the rest of the app's runnable, as it was.
+  });
 }
 ```
 

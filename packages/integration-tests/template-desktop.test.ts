@@ -19,6 +19,7 @@ const SHARED = [
   'CLAUDE.md',
   'LICENSE',
   'gitignore',
+  'metro.config.js',
   'tsconfig.json',
   'assets/icon.png',
 ];
@@ -88,7 +89,10 @@ describe('the desktop template', () => {
     );
     const main = read(desktop, 'src/main.ts').toString('utf8');
     assert.match(main, /if \(process\.env\.EXPO_PUBLIC_DEVICE_TESTS\) \{/);
-    assert.match(main, /startDeviceTests\(\{ mount: mountOptions\(\) \}\)/);
+    assert.match(
+      main,
+      /startDeviceTests\(\{\s*mount: mountOptions,\s*\/\/[^\n]*\n\s*onMount: \(app\) => \{\s*const stopWatching = watchConditions\(app\.engine\);\s*app\.applicationRef\.onDestroy\(stopWatching\);/,
+    );
     // The mobile template's app mounts the same options, so the two stay alike where they can.
     assert.match(main, /AppRegistry\.registerRunnable\('main'/);
   });
