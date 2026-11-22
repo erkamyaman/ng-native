@@ -48,8 +48,11 @@ const DESKTOP_SOURCE_FILES = [
  */
 const TEST_PROJECT = 'node';
 
-/** The desktop template's, whose other project opens the app on the Mac. */
-const DESKTOP_TEST_PROJECT = 'node-macos';
+/**
+ * The desktop template's Vitest projects that run in Node, one for each OS, which `ng test` runs
+ * alone: its others open the app.
+ */
+const DESKTOP_TEST_PROJECTS = shared.DESKTOP_OSES.map((os) => `node-${os}`);
 
 /**
  * @param {string} name
@@ -97,8 +100,8 @@ module.exports = {
   ...shared,
   SOURCE_FILES,
   DESKTOP_SOURCE_FILES,
+  DESKTOP_TEST_PROJECTS,
   TEST_PROJECT,
-  DESKTOP_TEST_PROJECT,
   sourceFile,
   agentsFile,
   projectManifest,

@@ -10,14 +10,16 @@
  *
  * A project per platform runs every file on each, and `vitest --project ios` runs the one: the
  * project is named for its `platform`, as `name` says. For each the pool starts Metro, and the app:
- * the desktop host on a Mac (`macosLauncher()`), and on iOS and Android the project's development
- * build, built the first time and kept by its native fingerprint, on the simulator or emulator
- * `device` names (`iosSimulatorLauncher()`, `androidEmulatorLauncher()`), with fresh state for each
- * run. `launch: false` leaves the app, and Metro, to be started by hand.
+ * the desktop host on a Mac (`macosLauncher()`) or in GTK on Linux (`linuxLauncher()`), and on iOS
+ * and Android the project's development build, built the first time and kept by its native
+ * fingerprint, on the simulator or emulator `device` names (`iosSimulatorLauncher()`,
+ * `androidEmulatorLauncher()`), with fresh state for each run. `launch: false` leaves the app, and
+ * Metro, to be started by hand.
  *
  *     projects: [
  *       { plugins: [ngNative()], test: { name: 'node' } },
  *       { plugins: [deviceTests({ platform: 'macos' })] },
+ *       { plugins: [deviceTests({ platform: 'linux' })] },
  *     ]
  */
 import path from 'node:path';
@@ -27,6 +29,7 @@ import type {} from 'vitest/config';
 import { androidEmulatorLauncher } from './android-launcher.ts';
 import { iosSimulatorLauncher } from './ios-launcher.ts';
 import type { AppLauncher } from './launcher.ts';
+import { linuxLauncher } from './linux-launcher.ts';
 import { macosLauncher } from './macos-launcher.ts';
 import { stopMetro } from './metro-server.ts';
 import { devicePool, type DevicePoolOptions } from './pool.ts';
@@ -77,6 +80,14 @@ export function deviceTests(options: DeviceTestsOptions = {}): Plugin {
     },
     config(config) {
       const root = path.resolve(config.root ?? process.cwd());
+      // The Linux host is found by the desktop CLI, which reads the app's configuration from its
+      // working directory: the project's root, not the folder Vitest was started in.
+      // Chosen here, not with the others in launcherFor, as it needs the root; `launch: false`
+      // still leaves it to be started by hand.
+      const launching =
+        pool.platform === 'linux' && pool.launch === undefined && launch !== false
+          ? { ...pool, launch: linuxLauncher({ cwd: root }) }
+          : pool;
       return {
         test: {
           name: name ?? pool.platform ?? 'device',
@@ -91,7 +102,7 @@ export function deviceTests(options: DeviceTestsOptions = {}): Plugin {
               ),
           }),
           include,
-          pool: devicePool(pool),
+          pool: devicePool(launching),
           maxWorkers: 1,
           // A first render on a simulator just booted, as on CI, can take a few seconds.
           testTimeout: config.test?.testTimeout ?? 30_000,
@@ -119,4 +130,5 @@ export type { ScreenshotComparatorOptions, ScreenshotOptions } from './screensho
 export { macosLauncher, type MacosLauncherOptions } from './macos-launcher.ts';
 export { iosSimulatorLauncher, type IosSimulatorOptions } from './ios-launcher.ts';
 export { androidEmulatorLauncher, type AndroidEmulatorOptions } from './android-launcher.ts';
+export { linuxLauncher, type LinuxDisplay, type LinuxLauncherOptions } from './linux-launcher.ts';
 export type { AppLauncher, LaunchRequest, LaunchedApp } from './launcher.ts';

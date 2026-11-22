@@ -76,8 +76,14 @@ const DESKTOP_SOURCE_FILES = [
  */
 const TEST = 'vitest run --project node';
 
-/** The desktop template's, whose other project opens the app on the Mac. */
-const DESKTOP_TEST = 'vitest run --project node-macos';
+/**
+ * The desktop template's Vitest projects that run in Node, one for each OS, which `test` runs
+ * alone: its others open the app.
+ */
+const DESKTOP_TEST = shared.DESKTOP_OSES.reduce(
+  (command, os) => `${command} --project node-${os}`,
+  'vitest run',
+);
 
 /**
  * @param {string} name
@@ -223,7 +229,7 @@ export default defineConfig({
 /**
  * @param {boolean} withPaths whether to resolve the workspace's tsconfig path aliases
  * @param {'app' | 'desktop' | 'library'} [variant] the template's config, with its Node, iOS and
- *   Android projects; the desktop template's, with its macOS projects; or a library's, Node alone
+ *   Android projects; the desktop template's, with a project for each desktop OS; or a library's, Node alone
  */
 function vitestConfig(withPaths, variant = 'app') {
   const config =
@@ -239,13 +245,16 @@ function vitestConfig(withPaths, variant = 'app') {
           'utf8',
         );
   if (!withPaths) return config;
-  return config
-    .replace(
-      "import { defineConfig } from 'vitest/config';",
-      "import tsconfigPaths from 'vite-tsconfig-paths';\n" +
+  return (
+    config
+      .replace(
         "import { defineConfig } from 'vitest/config';",
-    )
-    .replace('plugins: [ngNative(', 'plugins: [tsconfigPaths(), ngNative(');
+        "import tsconfigPaths from 'vite-tsconfig-paths';\n" +
+          "import { defineConfig } from 'vitest/config';",
+      )
+      // Each project's: the phone template's one in Node, the desktop template's one for each OS.
+      .replaceAll('plugins: [ngNative(', 'plugins: [tsconfigPaths(), ngNative(')
+  );
 }
 
 /**

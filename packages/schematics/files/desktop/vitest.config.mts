@@ -2,15 +2,18 @@ import { ngNative } from '@ng-native/testing/vitest';
 import { deviceTests } from '@ng-native/testing/device/vitest';
 import { defineConfig } from 'vitest/config';
 
-// Two projects. `node-macos` compiles Angular for the tests the way Metro compiles it for the app
-// and runs them in Node against a fake of the native side: no app window. `macos` runs the
-// `*.device.ts` files inside the running app on this Mac, starting Metro and the app itself.
-// `npm test` runs `node-macos` alone.
+// Four projects. `node-macos` and `node-linux` compile Angular for the tests the way Metro
+// compiles it for the app and run them in Node against a fake of the native side: no app window.
+// `macos` and `linux` run the `*.device.ts` files inside the running app, starting Metro and the
+// app themselves: `macos` on this Mac, `linux` in GTK, on Linux or in the ngn-el9 container on a
+// Mac. `npm test` runs the two Node projects alone.
 export default defineConfig({
   test: {
     projects: [
       { plugins: [ngNative({ os: 'macos' })], test: { name: 'node-macos' } },
+      { plugins: [ngNative({ os: 'linux' })], test: { name: 'node-linux' } },
       { plugins: [deviceTests({ platform: 'macos' })] },
+      { plugins: [deviceTests({ platform: 'linux' })] },
     ],
   },
 });

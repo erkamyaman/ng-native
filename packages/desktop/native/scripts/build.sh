@@ -2,19 +2,22 @@
 # Builds the desktop host (or only the core and its tests) in the per-user cache, fetching the
 # pinned sources and building Hermes first when they are missing. Prints the build directory.
 #
-#   build.sh [node_modules/react-native] [--backend appkit|none] [--runtime] [--universal]
+#   build.sh [node_modules/react-native] [--backend appkit|gtk|none] [--runtime] [--universal]
 #            [--debug|--release] [--test | --no-tests] [--no-debug-info]
 #            [--library <node_modules/library>]... [--build-dir <dir>]
 #
 # Without a path, react-native is resolved from the current directory.
 #
 #   --backend none  the toolkit-free core and its tests only: any OS, no Hermes
+#   --backend gtk   the GTK 4 host, ngn-linux: Linux's, and on a Mac a dev loop over Homebrew's GTK
+#                   (brew install gtk4 libadwaita)
 #   --runtime       with --backend none, the core's runtime half too: Hermes, ReactHost and the
 #                   runtime tests, still with no toolkit (what Linux builds until it has a backend)
 #   --universal     arm64 and x86_64 in one binary (default: this machine's architecture)
 #   --debug         a Debug build (default: RelWithDebInfo)
 #   --release       a Release build without the core tests, as a packaged app ships it
-#   --test          run the core tests after building, and the AppKit view tests when it built them
+#   --test          run the core tests after building, and the AppKit or GTK view tests when it
+#                   built them (the GTK ones need a display: xvfb-run on a Linux machine without one)
 #   --no-tests      leave the core tests out, as an app's build does: the published package has
 #                   none of their sources
 #   --no-debug-info the default RelWithDebInfo build without its debug info, for a host that is
@@ -85,7 +88,9 @@ JOBS="${NGN_JOBS:-8}"
 RN_VERSION="$(node -p 'require(process.argv[1] + "/package.json").version' "$RN_PKG")"
 CACHE="$("$here/cache-dir.sh" "$RN_VERSION")"
 
-"$here/fetch.sh" "$RN_PKG" >&2
+fetch_args=()
+[ "$backend" = "gtk" ] && fetch_args=(--curl)
+"$here/fetch.sh" "$RN_PKG" ${fetch_args[@]+"${fetch_args[@]}"} >&2
 
 library_dirs=""
 for lib in ${libraries[@]+"${libraries[@]}"}; do
@@ -131,6 +136,11 @@ launcher_args=()
 while IFS= read -r arg; do
   launcher_args+=("$arg")
 done < <("$here/compiler-launcher.sh" "${NGN_COMPILER_LAUNCHER:-}")
+
+compiler_args=()
+while IFS= read -r arg; do
+  compiler_args+=("$arg")
+done < <("$here/compilers.sh")
 
 # RelWithDebInfo's flags, with or without -g, set either way: CMake keeps a -D in the build
 # directory's cache, so a build with debug info after one without would otherwise go without too.
@@ -182,6 +192,8 @@ BUILD="${build_dir:-$host_dir/$variant-$arch_key-$config}"
 # One build at a time in it (build-lock.sh), held until this script and the ninja it runs end.
 . "$here/build-lock.sh"
 lock_build "$BUILD"
+# Configured with GCC before the build named clang, it starts over (reset-for-compilers.sh).
+"$here/reset-for-compilers.sh" "$BUILD" ${compiler_args[@]+"${compiler_args[@]}"}
 cmake --log-level=WARNING -G Ninja -S "$native_dir" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE="$config" \
   -DCMAKE_OSX_ARCHITECTURES="$archs" \
@@ -192,6 +204,7 @@ cmake --log-level=WARNING -G Ninja -S "$native_dir" -B "$BUILD" \
   -DNGN_LIBRARIES="$library_dirs" \
   -DNGN_TESTS="$tests" \
   "${link_args[@]}" \
+  ${compiler_args[@]+"${compiler_args[@]}"} \
   ${launcher_args[@]+"${launcher_args[@]}"} \
   ${flags_args[@]+"${flags_args[@]}"} \
   ${hermes_args[@]+"${hermes_args[@]}"} >&2
@@ -209,6 +222,10 @@ if [ "$run_tests" = 1 ]; then
   # The AppKit view tests, which a build with the AppKit backend has.
   if [ -x "$BUILD/appkit/ngn_appkit_tests" ]; then
     "$BUILD/appkit/ngn_appkit_tests" >&2
+  fi
+  # The GTK view tests, which a build with the GTK backend has.
+  if [ -x "$BUILD/gtk/ngn_gtk_tests" ]; then
+    "$BUILD/gtk/ngn_gtk_tests" >&2
   fi
 fi
 echo "$BUILD"

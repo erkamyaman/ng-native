@@ -23,9 +23,34 @@ function packed(): Set<string> {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
   });
-  const [{ files }] = JSON.parse(out) as [{ files: { path: string }[] }];
-  return new Set(files.map((file) => file.path));
+  return packedFiles(out);
 }
+
+/** The files in `npm pack --json`'s report of one package. */
+function packedFiles(json: string): Set<string> {
+  type Report = { files: { path: string }[] };
+  // npm 11 and earlier write a list of the packages packed, npm 12 an object of them by name.
+  const parsed = JSON.parse(json) as Report[] | Record<string, Report>;
+  const reports = Array.isArray(parsed) ? parsed : Object.values(parsed);
+  assert.equal(reports.length, 1, 'npm pack reported one package');
+  return new Set(reports[0]!.files.map((file) => file.path));
+}
+
+describe("npm pack's report", () => {
+  const report = {
+    name: '@ng-native/desktop',
+    files: [{ path: 'package.json' }, { path: 'bin/cli.mjs' }],
+  };
+  it('is read as npm 11 and earlier write it, a list of packages', () => {
+    assert.deepEqual([...packedFiles(JSON.stringify([report]))], ['package.json', 'bin/cli.mjs']);
+  });
+  it('is read as npm 12 writes it, packages by name', () => {
+    assert.deepEqual(
+      [...packedFiles(JSON.stringify({ [report.name]: report }))],
+      ['package.json', 'bin/cli.mjs'],
+    );
+  });
+});
 
 /** `text` without its `if(NGN_TESTS)` blocks, each up to the `endif()` that closes it. */
 function withoutTests(text: string): string {
@@ -88,6 +113,11 @@ describe('the published package', () => {
     assert.ok(sources.includes('native/appkit/expo-ui.swift'), 'the Swift sources are found');
     const missing = sources.filter((source) => !shipped(files, source));
     assert.deepEqual(missing, []);
+  });
+
+  it('has the AlmaLinux 9 image, which a Mac builds to run the Linux host in a container', () => {
+    // The desktop template's README builds it from node_modules for `vitest --project linux`.
+    assert.ok(files.has('native/docker/Dockerfile'));
   });
 
   it('leaves out the core tests and their fakes, which only the repo builds', () => {
