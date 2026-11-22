@@ -209,12 +209,28 @@ jobs:
     needs: [validate, native, verify, generators, storybook, desktop-host]
     if: github.ref == 'refs/heads/main' || inputs.dry_run
     runs-on: ubuntu-latest
+    # The environment holds the release App's key and only lets `main` in. A dry run, which can
+    # start from any branch, pushes nothing and runs outside it.
+    environment: ${{ !inputs.dry_run && 'release' || '' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
+      # Only the release App gets past the ruleset on `main`. A token first, so a missing App or key
+      # stops the run before it publishes anything; the push mints its own, as one lives an hour.
+      - name: Check the release App
+        if: ${{ !inputs.dry_run }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # No credentials left in the git config: the build runs installed packages' code, and only
+      # the push step below gets the App's token. The repository is public, so fetching needs none.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: ./.github/actions/setup
         with:
@@ -323,9 +339,20 @@ jobs:
             npm publish "$tarball" "$DRY_RUN" --access public --tag '${{ steps.version.outputs.tag }}'
           done
 
+      - id: app-token
+        if: ${{ !inputs.dry_run }}
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Push the version commit and tag
         if: ${{ !inputs.dry_run }}
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
+          git remote set-url origin "https://x-access-token:$TOKEN@github.com/$GITHUB_REPOSITORY.git"
           # Pull requests can merge while a release runs. Replay the release commit on top of them
           # and tag where it lands. A rebase conflict (a merge that touched a version, the
           # changelog or a migrations.json) fails the step rather than guessing.
