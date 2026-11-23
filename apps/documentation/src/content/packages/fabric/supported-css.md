@@ -204,6 +204,15 @@ Any of them can take tokens, `translate: var(--tw-translate-x) var(--tw-translat
 token is read in degrees whatever unit it was written in, so `--r: 0.25turn` turns 90. With a
 token in it, `transform` takes the translate, scale, rotate and skew functions.
 
+`transform-origin` sets the point `transform`, `rotate` and `scale` turn and scale about. It takes
+lengths, percentages and the keywords `left`, `right`, `top`, `bottom` and `center`, so
+`transform-origin: top left` and `transform-origin: 10px 20px` both work. A keyword becomes the
+percentage CSS defines it as, so the origin follows the box when it resizes. Mixing the two works
+as CSS reads it: `transform-origin: right 10px` is the right edge horizontally and 10px down
+vertically. CSS has no offset from a side in `transform-origin`, so the four-value form
+`right 10px top 5px` is invalid in browsers; the compiler drops it with a warning, as it does any
+value it cannot express. It draws on iOS, Android and the desktop hosts.
+
 In a `[style]` binding, write a transform as a string, `{ transform: 'rotate(45deg)' }`. React
 Native's array form, `{ transform: [{ rotate: '45deg' }] }`, renders the same, but Angular's dev
 mode checks each style value and logs NG0318 for one that is not a string or a number, every time
