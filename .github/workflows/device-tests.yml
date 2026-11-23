@@ -69,8 +69,11 @@ jobs:
       # React Native's ccache wrapper runs plain clang, silently, without CCACHE_BINARY.
       - run: echo "CCACHE_BINARY=$(command -v ccache)" >> "$GITHUB_ENV"
 
+      # Under the job's limit, so a run that hangs fails here and the logs below are still collected:
+      # a job that reaches its own limit is cancelled, and runs no step after.
       - name: Run the device tests on a simulator
         working-directory: examples/canary
+        timeout-minutes: 35
         run: npx vitest run --project ios
 
       # A build this run finished, whether the tests then passed or not: a screenshot that does not
@@ -96,6 +99,28 @@ jobs:
         with:
           name: screenshots-ios
           path: examples/canary/src/device-tests/**/__screenshots__
+          if-no-files-found: ignore
+
+      # The pool sees only the app's stdout and whether it exited. React Native logs to os_log, which
+      # is kept on the simulator, still booted, after the pool uninstalled the app.
+      - name: Collect the simulator's logs
+        if: failure()
+        run: |
+          out="$RUNNER_TEMP/simulator-logs"
+          mkdir -p "$out"
+          xcrun simctl spawn booted log show --last 60m --info --style compact \
+            --predicate 'process == "canary" OR subsystem BEGINSWITH "com.facebook.react"' \
+            > "$out/app.log" 2>&1 || true
+          find "$HOME/Library/Logs/DiagnosticReports" -name '*.ips' -mmin -60 \
+            -exec cp {} "$out" \; 2>/dev/null || true
+          { sysctl hw.ncpu hw.memsize; vm_stat; top -l 1 -n 15; } > "$out/machine.txt" 2>&1 || true
+
+      - name: Upload the simulator's logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: simulator-logs-ios
+          path: ${{ runner.temp }}/simulator-logs
           if-no-files-found: ignore
 
   android:
