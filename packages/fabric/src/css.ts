@@ -4919,7 +4919,7 @@ export class StyleResolver {
         continue;
       }
       const settled = this.settled(declaration, own, parentInherited, tokens);
-      if (settled === undefined) this.reportUnsettled(declaration, tokens);
+      if (settled === undefined) this.reportUnsettled(declaration, tokens, own, parentInherited);
       const outranked = (prop: string) =>
         !declaration.important && important !== null && prop in important;
       // Said only of a display that is written: an important one wins over the token's.
@@ -5033,9 +5033,29 @@ export class StyleResolver {
   private reportUnsettled(
     declaration: DeferredDeclaration,
     tokens: Readonly<Record<string, TokenValue>>,
+    own: Record<string, unknown>,
+    parentInherited: Record<string, unknown>,
   ): void {
     if (this.onUndefinedToken) this.reportUndefined(declaration, tokens);
-    if (this.onPlatformColour) this.reportPlatformColour(declaration, tokens);
+    if (!this.onPlatformColour) return;
+    this.reportPlatformColour(declaration, tokens);
+    // A shadow in currentColor, where the colour in scope is a platform one: `color: CanvasText`.
+    // The colour in scope, which for a declaration of color itself is the inherited one.
+    const current = declaration.props.includes('color')
+      ? parentInherited['color']
+      : (own['color'] ?? parentInherited['color']);
+    // Written in the declaration, or in the token it is all of: `box-shadow: var(--shadow)`.
+    // Or in its fallback, where the token is unset: `box-shadow: var(--shadow, 0 0 2px)`.
+    const token =
+      declaration.reference === undefined
+        ? undefined
+        : (tokens[declaration.reference] ?? declaration.fallback);
+    if (
+      isPlatformColour(current) &&
+      (holdsCurrentColour(declaration.within, tokens) || holdsCurrentColour(token, tokens))
+    ) {
+      this.onPlatformColour('currentColor', declaration.props, declaration.on);
+    }
   }
 
   /** A reference with nothing defined for it and nothing to fall back to. */
@@ -6946,6 +6966,29 @@ function platformColourRead(
     if (found) return found;
   }
   return undefined;
+}
+
+/**
+ * Whether a deferred value holds a colour that comes to `currentColor` with these tokens, which the
+ * colour in scope settles: written out, or a shadow's inset token left unset.
+ */
+function holdsCurrentColour(value: unknown, tokens: Readonly<Record<string, TokenValue>>): boolean {
+  if (value === null || typeof value !== 'object') return false;
+  const colour = colourMarker(value);
+  if (colour) {
+    // Asked for the colour in scope anywhere inside, as settling asks: written, a token that is
+    // currentColor, or a mix or a relative colour of it.
+    let asked = false;
+    colourWithin(colour, tokens, () => ((asked = true), 'black'));
+    return asked;
+  }
+  // A shadow token in a list of shadows, `var(--s), 0 0 1px red`: what the token holds.
+  // Or, where the token is unset, its fallback: `var(--s, 0 0 2px), 0 0 1px red`.
+  const slot = (value as { __shadows?: { reference?: string; fallback?: unknown } }).__shadows;
+  if (slot?.reference !== undefined) {
+    return holdsCurrentColour(tokens[slot.reference] ?? slot.fallback, tokens);
+  }
+  return Object.values(value).some((part) => holdsCurrentColour(part, tokens));
 }
 
 /** `platformColourRead` of the token `name`, which is the one when it holds a platform colour. */
