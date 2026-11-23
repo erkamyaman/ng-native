@@ -140,13 +140,19 @@ each because of something Nx does:
   module resolution imports `./lib/ui.js` for a `ui.ts`, and the preset resolves that to the `.ts`
   file, as TypeScript does.
 - **`tsconfig.json`**, in a workspace with a `tsconfig.base.json`, extends it after Expo's, which
-  is where the path aliases are, and puts back the Expo settings the workspace's base overrides.
+  is where the path aliases are, and puts back the Expo settings the workspace's base overrides,
+  `noPropertyAccessFromIndexSignature` included: `src/main.ts` reads
+  `process.env.EXPO_PUBLIC_DEVICE_TESTS` with a dot, the only form Expo's Babel preset inlines.
   With package-manager workspaces it does so only when that file has a `paths` list: the
   TypeScript preset's has none, and its libraries are linked as packages instead.
-- **`vitest.config.mts`** adds `tsconfigPaths()` from `vite-tsconfig-paths` in a workspace with
-  path aliases, since Vitest does not read them from tsconfig either, and adds
-  `vite-tsconfig-paths` for it if the workspace has none, as Nx 24 does for its own Vite configs.
-  The `angular-monorepo` preset does not, and a library generated after the app is the usual case.
+- **`vitest.config.mts`** sets `resolve: { tsconfigPaths: true }` in each Node project, in a
+  workspace with path aliases, since Vitest does not read them from tsconfig either, and adds Vite
+  8 for it if the workspace has no Vite and no Vitest older than 4.1. In a workspace whose Vite is
+  older than 8, or whose Vitest is older than 4.1 (it runs on its own Vite 6 or 7, whatever Vite
+  the workspace lists), which cannot resolve them itself, it adds `tsconfigPaths()` from
+  `vite-tsconfig-paths` instead, as Nx 24 does for its own Vite configs, and adds Vite at the
+  range `@ng-native/testing` peers on if there is none. The app adds them at once rather than when
+  a library needs them, since a library generated after the app is the usual case.
 
 Its `vitest.config.mts` has three projects, as the template's does: `node`, in Node, which the
 `test` target runs alone, and `ios` and `android`, which run `src/**/*.device.ts`
@@ -384,7 +390,13 @@ project with no `app.json`, which is not an Angular Native app.
 `--bundleIdentifier`, `--tags`, `--linter`, `--desktopOnly`, `--skipInstall` and `--skipFormat`,
 which leaves the generated files unformatted. `--linter=eslint` adds an `eslint.config.mjs` with
 [`@ng-native/eslint-plugin`](/packages/eslint-plugin)'s recommended rules, its four packages and a
-`lint` target; `--linter=none`, the default, adds none of them.
+`lint` target; `--linter=none`, the default, adds none of them. In a workspace with an
+`eslint.config.mjs`, `.js` or `.cjs` at its root, the app's config spreads it first, so that the
+root's rules, `@nx/enforce-module-boundaries` among them, apply to the app. An app made without
+`--tags` has no tags, so it matches none of that rule's `depConstraints` except one whose
+`sourceTag` is `*`, and a workspace with constraints that name tags cannot import a library into
+it: pass the tags they name, as in `--tags=type:app,scope:mac`. Where `depConstraints` is empty,
+Nx does not check, and tags change nothing.
 
 `--desktopOnly` makes a desktop-only app from the desktop template (`@ng-native/template-desktop`):
 `macos` and `linux` alone in `expo.platforms`, its sidebar and menu bar starter screen,
