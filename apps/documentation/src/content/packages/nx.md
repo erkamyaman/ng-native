@@ -184,8 +184,8 @@ they are not in that tree, and a native module a library imports is linked only 
 the tree brings it in: the app listing it, or another of its dependencies depending on it. When
 nothing does, a module from the Expo SDK still works in Expo Go, which has the SDK's modules built
 in, so the gap shows only in a development or release build, which has no native code for it. A
-module from outside the SDK is missing from Expo Go too. A library that is a workspace package the app lists
-in its `package.json` is walked, so a native module in its `dependencies` or required
+module from outside the SDK is missing from Expo Go too. A library that is a workspace package the
+app lists in its `package.json` is walked, so a native module in its `dependencies` or required
 `peerDependencies` is linked, and one it lists only in `devDependencies` or as an optional peer is
 not.
 
