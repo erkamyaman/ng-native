@@ -27,6 +27,7 @@
 import {
   Component,
   ElementRef,
+  DestroyRef,
   ErrorHandler,
   HostAttributeToken,
   Injector,
@@ -42,7 +43,7 @@ import {
   untracked,
   type Signal,
 } from '@angular/core';
-import { claimHost, type Engine, type EngineNode, HostEngine } from '@ng-native/fabric';
+import { claimHost, type Engine, type EngineNode, HostEngine, parseColor } from '@ng-native/fabric';
 import {
   NgIconCacheToken,
   NgIconConfigToken,
@@ -50,6 +51,7 @@ import {
   NgIconsToken,
   type NgIconLoader,
 } from '@ng-icons/core';
+import { mergeShapes } from './merge-shapes.ts';
 import { parseSvg, type SvgNode } from './parse-svg.ts';
 import { registerSvgComponents } from './svg-elements.ts';
 import {
@@ -73,6 +75,8 @@ const reported = new Set<string>();
 /** What an icon draws from its markup, worked out once for every icon that draws the same. */
 interface Drawing {
   readonly root: SvgNode;
+  /** The root with its shapes merged, for each stroke width it has been drawn at. */
+  readonly merged: Map<string, SvgNode>;
   /**
    * Whether its shapes need nothing from the cascade: no text to take a font from it, and no
    * paint from a token. Native paints a `currentColor` shape from the drawing it is in, so a
@@ -93,6 +97,8 @@ const VIEW_BOX = ['minX', 'minY', 'vbWidth', 'vbHeight', 'align', 'meetOrSlice']
  */
 const drawings = new Map<string, Drawing | null>();
 const MAX_DRAWINGS = 500;
+/** The stroke widths and colours a drawing keeps its shapes merged for. */
+const MAX_MERGED = 16;
 
 /** An element's attributes and the native props they make. */
 interface Translation {
@@ -114,6 +120,7 @@ function drawingOf(markup: string): Drawing | null {
   const root = parseSvg(markup);
   drawing = root && {
     root,
+    merged: new Map(),
     selfContained: selfContained(root),
     viewBox: viewBoxProps(root.attrs['viewBox']),
   };
@@ -134,6 +141,51 @@ function selfContained(node: SvgNode): boolean {
   for (const paint of PAINT) if (isTokenPaint(attrs[paint])) return false;
   return node.children.every(selfContained);
 }
+
+/**
+ * Whether a colour is opaque, or undefined where it is not one read here: a token, a platform
+ * colour. None at all is black, which native draws where nothing gives the icon a colour.
+ */
+function opacityOf(colour: unknown): boolean | undefined {
+  if (colour === undefined) return true;
+  if (typeof colour !== 'string') return undefined;
+  let opaque = opacities.get(colour);
+  if (opaque === undefined && !opacities.has(colour)) {
+    const channels = parseColor(colour);
+    opaque = channels ? channels[3] >= 1 : undefined;
+    // ponytail: emptied when full; an app paints its icons in a handful of colours.
+    if (opacities.size >= 256) opacities.clear();
+    opacities.set(colour, opaque);
+  }
+  return opaque;
+}
+
+/** Each colour read, for the thousand icons in a list that are all painted in it. */
+const opacities = new Map<string, boolean | undefined>();
+
+/** The drawing's shapes merged for a stroke width and a colour, kept for the icons after it. */
+function mergedFor(drawing: Drawing, strokeWidth: unknown, opaque: boolean): SvgNode {
+  const key = `${String(strokeWidth)}|${opaque}`;
+  let root = drawing.merged.get(key);
+  if (!root) {
+    // ponytail: emptied when full, for an app that animates the width; a few are ever in use.
+    if (drawing.merged.size >= MAX_MERGED) drawing.merged.clear();
+    root = mergeShapes(drawing.root, strokeWidth as number | string | undefined, opaque);
+    // Nothing merged under either colour: the one tree, so an icon can tell it need not choose.
+    const other = drawing.merged.get(`${String(strokeWidth)}|${!opaque}`);
+    if (other && sameTree(other, root)) root = other;
+    drawing.merged.set(key, root);
+  }
+  return root;
+}
+
+/** Whether two merged trees draw the same, as two merges of one drawing that changed nothing do. */
+const sameTree = (a: SvgNode, b: SvgNode): boolean =>
+  a === b ||
+  (a.tag === b.tag &&
+    a.children.length === b.children.length &&
+    a.attrs['d'] === b.attrs['d'] &&
+    a.children.every((child, i) => sameTree(child, b.children[i]!)));
 
 /** The inputs Angular writes on the host from a static attribute, named as the template does. */
 let inputNames: readonly string[] | undefined;
@@ -287,6 +339,28 @@ export class NgIcon {
     return markup === undefined ? null : drawingOf(markup);
   });
 
+  /** Whether the colour the engine settled for the icon at its last commit is opaque. */
+  private readonly settledOpaque = signal<boolean | undefined>(undefined);
+
+  /**
+   * Whether the colour `currentColor` paints in is opaque, which decides whether shapes painted
+   * in it can be drawn as one path: see `mergeShapes`. A colour on the input that is not opaque
+   * decides it at once, since shapes apart are right in any colour. Otherwise what the engine
+   * settled, which a stylesheet's `!important` can make other than the input; before it has, the
+   * input's colour, or the engine's best guess, which its commit checks.
+   */
+  private readonly opaque = computed(() => {
+    const colour = this.color();
+    const written = colour === undefined ? undefined : opacityOf(colour);
+    if (written === false) return false;
+    return (
+      this.settledOpaque() ??
+      written ??
+      opacityOf(untracked(() => this.engine.colour(this.host))) ??
+      true
+    );
+  });
+
   constructor() {
     // Before the first shape is created, which is before this component's own commit.
     registerSvgComponents();
@@ -298,6 +372,12 @@ export class NgIcon {
     // The shapes are created rather than templated: an icon's tree is data, and a template that
     // could express it would be a component per tag with a recursive switch between them.
     effect(() => this.draw());
+    // A colour that turns out, or turns, not to be opaque draws its shapes apart again.
+    inject(DestroyRef).onDestroy(
+      this.engine.watchColour(this.host, (colour) =>
+        this.settledOpaque.set(opacityOf(colour) ?? false),
+      ),
+    );
     // The loader is fixed for the icon's life: with none, an icon has nothing to ask.
     if (this.loader) effect(() => this.load());
   }
@@ -365,7 +445,15 @@ export class NgIcon {
     // Here rather than as six host bindings: they change only with the drawing.
     for (const prop of VIEW_BOX) this.renderer.setProperty(this.host, prop, drawing?.viewBox[prop]);
     if (!drawing) return;
-    const { root, selfContained } = drawing;
+    const { selfContained } = drawing;
+    // Merged for the stroke width it draws at, which decides whether a small closed shape can be,
+    // and for whether its colour is opaque, which decides whether crossing strokes can be. The
+    // colour is read only where it changes what is drawn, so an icon with nothing to merge is not
+    // drawn again when its colour stops or starts being opaque.
+    const strokeWidth = this.strokeWidth();
+    const solid = mergedFor(drawing, strokeWidth, true);
+    const faint = mergedFor(drawing, strokeWidth, false);
+    const root = solid === faint || this.opaque() ? solid : faint;
 
     // The svg view itself holds no paint, so a root that says `stroke="currentColor"` needs its
     // children to inherit it from a group, which is how react-native-svg's own `Svg` does it. The
