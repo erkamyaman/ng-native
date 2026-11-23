@@ -910,6 +910,82 @@ describe('the device pool', () => {
     }
   });
 
+  it('launches the app again when it does not connect, and stops the one that did not', async () => {
+    // An app whose first look for Metro failed never asks again: one launched afresh does.
+    const { launch, launches } = fakeLauncher();
+    const run = await setup({ launch, connectTimeout: 3000 });
+    try {
+      const starting = run.worker().worker.start();
+      const phone = run.app('second');
+      const deadline = Date.now() + 2500;
+      while (launches.length < 2 && Date.now() < deadline) await wait(20);
+      assert.equal(launches.length, 2, 'launched again');
+      assert.equal(launches[0]!.stopped, true, 'the first app is stopped');
+      // Held open by the pool, and aborted as the test ends.
+      phone.poll().catch(() => {});
+      await starting;
+      assert.equal(launches.length, 2);
+      assert.equal(launches[1]!.stopped, false);
+    } finally {
+      await run.done();
+    }
+  });
+
+  it('leaves no claim behind when launching the app again fails', async () => {
+    const { launch, launches } = fakeLauncher();
+    const start = launch.start;
+    launch.start = () => {
+      if (launches.length === 1) throw new Error('the simulator went away');
+      return start();
+    };
+    const run = await setup({ launch, connectTimeout: 300 });
+    try {
+      await assert.rejects(run.worker().worker.start(), /the simulator went away/);
+      // An app that connects now is free for the next worker, not taken by a claim left waiting.
+      run
+        .app('later')
+        .poll()
+        .catch(() => {});
+      await wait(50);
+      await run.worker().worker.start();
+      assert.equal(launches.length, 1, 'the next worker took the app, and launched none');
+    } finally {
+      await run.done();
+    }
+  });
+
+  it('says it did not connect when a launch finishes past the wait, though an app is there', async () => {
+    const { launch, launches } = fakeLauncher();
+    const start = launch.start;
+    launch.start = (() => {
+      if (launches.length === 0) return start();
+      return wait(400).then(start);
+    }) as typeof launch.start;
+    const run = await setup({ launch, connectTimeout: 300 });
+    try {
+      const starting = run.worker().worker.start();
+      await wait(150);
+      run
+        .app('late')
+        .poll()
+        .catch(() => {});
+      await assert.rejects(starting, /app the pool launched did not connect/);
+    } finally {
+      await run.done();
+    }
+  });
+
+  it('launches the app three times at most before it says it did not connect', async () => {
+    const { launch, launches } = fakeLauncher();
+    const run = await setup({ launch, connectTimeout: 300 });
+    try {
+      await assert.rejects(run.worker().worker.start(), /app the pool launched did not connect/);
+      assert.equal(launches.length, 3);
+    } finally {
+      await run.done();
+    }
+  });
+
   it("ends a launched app's failure to connect with the last of what it printed", async () => {
     const { launch } = fakeLauncher(undefined, () => 'Loading from Metro...\nStill waiting');
     const run = await setup({ launch, connectTimeout: 100 });
