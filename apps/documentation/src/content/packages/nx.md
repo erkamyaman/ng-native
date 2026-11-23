@@ -177,9 +177,22 @@ takes the Nx that is running when the workspace lists Nx at a range.
 
 ## Native modules a library imports
 
-Expo links the native modules the app's `package.json` names and no others. Expo Go contains every
-module in the SDK, so an app using a library that imports one the app does not list works in Expo
-Go, and a development or release build of it has no native code for that module.
+Expo's autolinking links the native modules in the app's dependency tree: the packages its
+`package.json` lists, and the `dependencies` and required `peerDependencies` of each of those in
+turn. In an integrated workspace the app imports its libraries through tsconfig path aliases, so
+they are not in that tree, and a native module a library imports is linked only if something in
+the tree brings it in: the app listing it, or another of its dependencies depending on it. When
+nothing does, a module from the Expo SDK still works in Expo Go, which has the SDK's modules built
+in, so the gap shows only in a development or release build, which has no native code for it. A
+module from outside the SDK is missing from Expo Go too. A library that is a workspace package the
+app lists in its `package.json` is walked, so a native module in its `dependencies` or required
+`peerDependencies` is linked, and one it lists only in `devDependencies` or as an optional peer is
+not.
+
+Either way, a module's config plugin writes native settings, such as a usage description iOS needs.
+Expo applies it only when the app's `app.json` names it, apart from a few it applies itself once the
+module is linked, such as `expo-camera`'s and `expo-location`'s. And `npx expo install --check`
+checks the versions of the app's own dependencies only.
 
 The generator registers `@ng-native/nx:sync-native-modules`, a sync generator, on the app's
 `start`, `export` and `prebuild` targets. Before any of them runs, it reads from Nx's project graph

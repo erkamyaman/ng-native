@@ -114,7 +114,10 @@ describe('sync-native-modules', () => {
     const tree = setUp({ ui: ['expo-haptics'] }, { 'expo-haptics': '~57.0.3' });
     const result = await syncNativeModules(tree);
     assert.equal(appDependencies(tree)['expo-haptics'], '~57.0.3');
-    assert.match(result.outOfSyncMessage ?? '', /development build would not link it/);
+    assert.match(
+      result.outOfSyncMessage ?? '',
+      /does not list a native module its libraries import, or its config plugin/,
+    );
     assert.deepEqual(result.outOfSyncDetails, [
       'apps/mobile/package.json needs expo-haptics: packages/ui imports it.',
     ]);
