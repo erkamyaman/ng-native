@@ -180,9 +180,11 @@ takes the Nx that is running when the workspace lists Nx at a range.
 Expo's autolinking links the native modules in the app's dependency tree: the packages its
 `package.json` lists, and the `dependencies` and required `peerDependencies` of each of those in
 turn. In an integrated workspace the app imports its libraries through tsconfig path aliases, so
-they are not in that tree, and a native module a library imports is linked only if the app lists
-it. Expo Go has the SDK's modules built in, so such an app works there, and a development or release
-build of it has no native code for that module. A library that is a workspace package the app lists
+they are not in that tree, and a native module a library imports is linked only if something in
+the tree brings it in: the app listing it, or another of its dependencies depending on it. When
+nothing does, a module from the Expo SDK still works in Expo Go, which has the SDK's modules built
+in, so the gap shows only in a development or release build, which has no native code for it. A
+module from outside the SDK is missing from Expo Go too. A library that is a workspace package the app lists
 in its `package.json` is walked, so a native module in its `dependencies` or required
 `peerDependencies` is linked, and one it lists only in `devDependencies` or as an optional peer is
 not.
