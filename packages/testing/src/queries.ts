@@ -10,7 +10,7 @@
  * a node held across an interaction is a snapshot of the frame it was found in; query again to see
  * what changed.
  */
-import { isTextInputView, textContentProp } from '@ng-native/fabric';
+import { isTextInputView, nativePlatform, textContentProp } from '@ng-native/fabric';
 import type { FakeFabricNode } from './test-utils.ts';
 import { waitFor, type WaitForOptions } from './wait-for.ts';
 import { expoUiButtonDisabled, expoUiButtonName, isExpoUiButton } from './expo-ui-button.ts';
@@ -182,9 +182,50 @@ function hides(node: FakeFabricNode): boolean {
   );
 }
 
+/**
+ * The presentations that cover the whole of the screen below: a push, unset or named, and the
+ * full-screen and contained modals. A sheet or a transparent modal leaves the screen below showing.
+ * On Android a modal and a page sheet are full-screen too: react-native-screens shows both as it
+ * does a full-screen modal, where iOS shows them as sheets.
+ */
+const COVERING: ReadonlySet<unknown> = new Set([
+  undefined,
+  'push',
+  'fullScreenModal',
+  'containedModal',
+]);
+const COVERING_ON_ANDROID: ReadonlySet<unknown> = new Set([...COVERING, 'modal', 'pageSheet']);
+
+/**
+ * Whether a node is a screen of a native stack under one that covers it. The stack shows its last
+ * screen and hides those below it, which stay mounted to keep their state.
+ */
+function covered(node: FakeFabricNode): boolean {
+  const stack = node.parent;
+  if (stack?.viewName !== 'RNSScreenStack') return false;
+  const covering = nativePlatform() === 'android' ? COVERING_ON_ANDROID : COVERING;
+  const above = stack.children.slice(stack.children.indexOf(node) + 1);
+  return above.some((screen) => covering.has(screen.props['stackPresentation']));
+}
+
 /** Every node someone using the app could see or reach. */
 const reachable = (nodes: readonly FakeFabricNode[]): FakeFabricNode[] =>
-  nodes.flatMap((node) => (hides(node) ? [] : [node, ...reachable(node.children)]));
+  nodes.flatMap((node) =>
+    hides(node) || covered(node) ? [] : [node, ...reachable(node.children)],
+  );
+
+/**
+ * Whether a view or a screen above the node hides or covers it. A walk from the node never visits
+ * them, so a query `within` a view in a covered screen finds nothing in it either.
+ */
+function hiddenAbove(node: FakeFabricNode): boolean {
+  for (let at = node.parent; at; at = at.parent) if (hides(at) || covered(at)) return true;
+  return false;
+}
+
+/** What is reachable from the nodes a query starts from, read from their `parent`. */
+const reachableFrom = (roots: readonly FakeFabricNode[]): FakeFabricNode[] =>
+  reachable(roots.filter((root) => !hiddenAbove(root)));
 
 /** What a screen reader would read out: every `RawText` under the node, in order. */
 export function textContent(node: FakeFabricNode): string {
@@ -272,7 +313,7 @@ export function bindQueries(
     const all = (...args: unknown[]): FakeFabricNode[] => {
       const query = (QUERIES[name] as (...a: unknown[]) => Query)(...args);
       const options = args[1] as TextMatchOptions | undefined;
-      const walk = options?.includeHiddenElements ? flatten : reachable;
+      const walk = options?.includeHiddenElements ? flatten : reachableFrom;
       const hits = walk(withParents(roots())).filter(query.select);
       hits.forEach(found);
       return hits;
