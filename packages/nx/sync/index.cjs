@@ -3,13 +3,14 @@
  * modules the workspace libraries it uses import, and adds their config plugins to its `app.json`.
  *
  * Expo's autolinking links the native modules in the app's dependency tree: the packages its
- * `package.json` lists, and theirs. A library the app imports through a tsconfig path alias, as an
- * integrated workspace's are, is not in that tree, so a native module it imports is linked only if
- * the app lists it: the app works in Expo Go, which has the SDK's modules built in, and a development
- * or release build has no native code for it. A library that is a workspace package the app lists
- * is walked, and its modules are linked. Either way Expo applies a module's config plugin only when
- * `app.json` names it, and `expo install --check` checks the versions of the app's own
- * dependencies only. A library cannot declare what it needs of an app, but Nx's project graph
+ * `package.json` lists, and the `dependencies` and required `peerDependencies` of each in turn. A
+ * library the app imports through a tsconfig path alias, as an integrated workspace's are, is not in
+ * that tree, so a native module it imports is linked only if the app lists it: the app works in Expo
+ * Go, which has the SDK's modules built in, and a development or release build has no native code
+ * for it. A library that is a workspace package the app lists is walked, and the modules it depends
+ * on or requires as peers are linked. Either way Expo applies a module's config plugin only when
+ * `app.json` names it, apart from the few in `getAutoPlugins()`, and `expo install --check` checks
+ * the versions of the app's own dependencies only. A library cannot declare what it needs of an app, but Nx's project graph
  * records what each one imports, so this reads it from there.
  *
  * It is a sync generator: the app generator registers it on the app's `start`, `export` and
@@ -212,7 +213,7 @@ async function syncNativeModules(tree) {
   await formatFiles(tree);
   return {
     outOfSyncMessage:
-      'An app does not list a native module its libraries import, or its config plugin, which Expo applies only from app.json.',
+      'An app does not list a native module its libraries import, or its config plugin in app.json.',
     outOfSyncDetails: details,
   };
 }

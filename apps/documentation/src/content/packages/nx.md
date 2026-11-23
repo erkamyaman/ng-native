@@ -178,13 +178,18 @@ takes the Nx that is running when the workspace lists Nx at a range.
 ## Native modules a library imports
 
 Expo's autolinking links the native modules in the app's dependency tree: the packages its
-`package.json` lists, and theirs. In an integrated workspace the app imports its libraries through
-tsconfig path aliases, so they are not in that tree, and a native module a library imports is linked
-only if the app lists it. Expo Go has the SDK's modules built in, so such an app works there, and a
-development or release build of it has no native code for that module. A library that is a workspace
-package the app lists in its `package.json` is walked, and its native modules are linked. Either
-way, Expo applies a module's config plugin, which writes native settings such as the iOS usage
-description a camera needs, only when the app's `app.json` names it, and `npx expo install --check`
+`package.json` lists, and the `dependencies` and required `peerDependencies` of each of those in
+turn. In an integrated workspace the app imports its libraries through tsconfig path aliases, so
+they are not in that tree, and a native module a library imports is linked only if the app lists
+it. Expo Go has the SDK's modules built in, so such an app works there, and a development or release
+build of it has no native code for that module. A library that is a workspace package the app lists
+in its `package.json` is walked, so a native module in its `dependencies` or required
+`peerDependencies` is linked, and one it lists only in `devDependencies` or as an optional peer is
+not.
+
+Either way, a module's config plugin writes native settings, such as a usage description iOS needs.
+Expo applies it only when the app's `app.json` names it, apart from a few it applies itself once the
+module is linked, such as `expo-camera`'s and `expo-location`'s. And `npx expo install --check`
 checks the versions of the app's own dependencies only.
 
 The generator registers `@ng-native/nx:sync-native-modules`, a sync generator, on the app's
