@@ -1009,7 +1009,8 @@ class Renderer {
   }
 
   // `within` holds the uses being expanded, so a use that leads back to itself, directly or
-  // through others, is an invalid reference that adds nothing, as SVG has it.
+  // through others, is an invalid reference that adds nothing, as SVG has it. Each use expanded
+  // counts against the bound on uses a drawing expands, as a drawn one does.
   void collectClip(const SvgNode &node, const SvgMatrix &outer, SvgPath &out, std::unordered_set<const SvgNode *> &within) const {
     if (node.element.hidden) {
       return;
@@ -1020,7 +1021,8 @@ class Renderer {
       return;
     }
     if (node.element.kind == SvgKind::Use) {
-      if (const auto *target = named(node.element.href); target != nullptr && within.insert(&node).second) {
+      if (const auto *target = named(node.element.href);
+          target != nullptr && within.size() < kMaxDepth && ++usesDrawn_ <= kMaxUses && within.insert(&node).second) {
         double x = length(node.element, "x", Axis::X), y = length(node.element, "y", Axis::Y);
         collectClip(*target, m * SvgMatrix::translate(x, y), out, within);
         within.erase(&node);
@@ -1058,7 +1060,10 @@ class Renderer {
       default:
         break;
     }
-    if (active_.contains(&node)) {
+    // A node already being drawn is a circular reference; one nested past the bound is a chain of
+    // references (uses, patterns, markers or masks) deeper than any drawing has, ended before the
+    // end of the stack.
+    if (active_.contains(&node) || active_.size() >= kMaxDepth) {
       return;
     }
     // A filter that is found but cannot run (no steps, or an empty box for its units) leaves the
@@ -1469,7 +1474,9 @@ class Renderer {
 
   void drawUse(const SvgElement &use, const Style &style) {
     const SvgNode *target = named(use.href);
-    if (target == nullptr || active_.contains(target)) {
+    // A bound on the uses one drawing expands: uses nested so each level draws the one below
+    // twice would otherwise double the work at every level.
+    if (target == nullptr || active_.contains(target) || ++usesDrawn_ > kMaxUses) {
       return;
     }
     double x = length(use, "x", Axis::X), y = length(use, "y", Axis::Y);
@@ -1715,6 +1722,12 @@ class Renderer {
   std::unordered_map<std::string, const SvgNode *> names_;
   // What is being drawn, so a `use` of it, or of what holds it, draws nothing.
   std::unordered_set<const SvgNode *> active_;
+  // The uses drawn so far, and how many one drawing draws: far more than any icon or chart has.
+  static constexpr int kMaxUses = 1 << 16;
+  mutable int usesDrawn_{0};
+  // How deep nodes being drawn, or uses in a clip being expanded, nest: four times the markup's own
+  // depth, so references can nest well past any icon while staying far from the end of the stack.
+  static constexpr size_t kMaxDepth = 256;
 };
 
 } // namespace

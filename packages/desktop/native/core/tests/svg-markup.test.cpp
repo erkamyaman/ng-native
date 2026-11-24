@@ -170,3 +170,77 @@ TEST_CASE("an attribute of many ampersands reads in linear time") {
   CHECK(drawnOf(R"svg(<svg viewBox="0 0 24 24"><path d="M0 0H1" fill="&#35;f00"/><path d="M0 0H2" fill="&&#35;f00" stroke="&#35;f&#48;0&"/></svg>)svg") ==
         Lines{"fill M0,0L1,0 #ffff0000", "fill M0,0L2,0 #ff000000"});
 }
+
+TEST_CASE("a shape in defs draws only where a use draws it, moved by the use's x and y") {
+  auto document = ngn::parseSvgMarkup(
+      R"svg(<svg viewBox="0 0 24 24"><defs><path id="bar" d="M0 0H4"/></defs>)svg"
+      R"svg(<use href="#bar" x="2" y="3"/><use xlink:href="#bar"/><use href="#nothing"/></svg>)svg");
+  REQUIRE(document);
+  Recorder canvas;
+  ngn::drawSvg(*document, 24, 24, canvas);
+  CHECK(std::find(canvas.calls.begin(), canvas.calls.end(), "concat 1 0 0 1 2 3") != canvas.calls.end());
+  CHECK(canvas.drawn() == Lines{"fill M0,0L4,0 #ff000000", "fill M0,0L4,0 #ff000000"});
+}
+
+TEST_CASE("a symbol draws only through a use, fitted from its viewBox into the use's width and height") {
+  auto document = ngn::parseSvgMarkup(
+      R"svg(<svg viewBox="0 0 24 24"><symbol id="dot" viewBox="0 0 2 2"><rect width="2" height="1"/></symbol>)svg"
+      R"svg(<use href="#dot" width="12" height="12"/></svg>)svg");
+  REQUIRE(document);
+  Recorder canvas;
+  ngn::drawSvg(*document, 24, 24, canvas);
+  CHECK(std::find(canvas.calls.begin(), canvas.calls.end(), "concat 6 0 0 6 0 0") != canvas.calls.end());
+  CHECK(canvas.drawn() == Lines{"fill M0,0L2,0L2,1L0,1Z #ff000000"});
+}
+
+TEST_CASE("a used shape takes the use's paint, and painted in one colour takes that colour") {
+  // A sprite's shape: the geometry in a symbol, the paint on the use.
+  const std::string sprite =
+      R"svg(<svg viewBox="0 0 24 24"><defs><symbol id="s" viewBox="0 0 24 24"><path d="M0 0H5"/></symbol></defs>)svg"
+      R"svg(<use href="#s" fill="none" stroke="currentColor" stroke-width="2"/></svg>)svg";
+  CHECK(drawnOf(sprite, 24, 0xff336699) == Lines{"stroke M0,0L5,0 w2 cap0 join0 #ff336699"});
+}
+
+TEST_CASE("uses that each draw the one before twice stop drawing at a bound, rather than doubling forty times") {
+  // Markup from a server can nest uses so each level doubles what the one below draws.
+  std::string markup = R"svg(<svg viewBox="0 0 24 24"><defs><path id="u0" d="M0 0H1"/>)svg";
+  for (int i = 1; i <= 40; i++) {
+    auto below = "#u" + std::to_string(i - 1);
+    markup += "<g id=\"u" + std::to_string(i) + "\"><use href=\"" + below + "\"/><use href=\"" + below + "\"/></g>";
+  }
+  markup += R"svg(</defs><use href="#u40"/></svg>)svg";
+  auto start = std::chrono::steady_clock::now();
+  auto drawn = drawnOf(markup);
+  CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(2));
+  CHECK_FALSE(drawn.empty());
+  CHECK(drawn.size() <= (1 << 16));
+}
+
+namespace {
+
+// Sibling groups, each using the one before: shallow markup whose uses nest `levels` deep.
+std::string useChain(int levels, const std::string &after) {
+  std::string markup = R"svg(<svg viewBox="0 0 24 24"><defs><path id="u0" d="M0 0H1"/>)svg";
+  for (int i = 1; i <= levels; i++) {
+    markup += "<g id=\"u" + std::to_string(i) + "\"><use href=\"#u" + std::to_string(i - 1) + "\"/></g>";
+  }
+  return markup + "</defs>" + after + "</svg>";
+}
+
+} // namespace
+
+TEST_CASE("uses nested deeper than any icon stop at a bound, rather than at the end of the stack") {
+  // Each target is distinct, so no use leads back to itself, and the chain stays under the bound
+  // on uses drawn: only a bound on depth ends it.
+  CHECK(drawnOf(useChain(40000, R"svg(<use href="#u40000"/>)svg")).empty());
+  // A chain as deep as a sprite sheet's draws, and uses side by side do not add to the depth.
+  std::string siblings;
+  for (int i = 0; i < 300; i++) {
+    siblings += R"svg(<use href="#u20"/>)svg";
+  }
+  CHECK(drawnOf(useChain(20, siblings)).size() == 300);
+}
+
+TEST_CASE("a use that leads back to itself draws nothing, and ends") {
+  CHECK(drawnOf(R"svg(<svg viewBox="0 0 24 24"><g id="a"><use href="#b"/></g><g id="b"><use href="#a"/></g></svg>)svg").empty());
+}
