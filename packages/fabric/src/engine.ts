@@ -20,6 +20,7 @@ import {
   attributeOf,
   handsDownPaint,
   StyleResolver,
+  underOwnImage,
   underOwnShorthands,
   usesState,
   type StateUse,
@@ -13399,6 +13400,7 @@ export class Engine implements HostEngine {
     if (inline !== NO_STYLE) this.styles.overOtherForms(inline, style);
     if (inline !== NO_STYLE || node.boundByProp?.size) {
       underOwnShorthands(style, inline, node.boundByProp, node.styleCache?.important);
+      underOwnImage(style, inline, node.boundByProp, node.styleCache?.tiled);
     }
     nativePointerEvents(node, style, resolved);
     // Before an image's own size: `fit-content` is no size, so the image's is what it gets.
@@ -13948,7 +13950,11 @@ export class Engine implements HostEngine {
     if (node.paintsOn) for (const key of PAINT_KEYS) delete merged[key];
     const from = node.parent?.paintsOn === node ? node.parent : null;
     if (!from) return;
-    const paint = { ...this.styles.resolve(from, this.styleEpoch).style, ...inlineOf(from) };
+    const resolved = this.styles.resolve(from, this.styleEpoch);
+    const inline = inlineOf(from);
+    const paint = { ...resolved.style, ...inline };
+    // An image of the parent's own is placed as it would be on the parent (see `mergeProps`).
+    underOwnImage(paint, inline, from.boundByProp, resolved.tiled);
     for (const key of PAINT_KEYS) if (paint[key] !== undefined) merged[key] = paint[key];
   }
 
