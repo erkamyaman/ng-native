@@ -1,4 +1,15 @@
-import { Component, DestroyRef, computed, inject, input, signal, type Signal } from '@angular/core';
+import {
+  Component,
+  DestroyRef,
+  InjectionToken,
+  afterNextRender,
+  computed,
+  contentChild,
+  inject,
+  input,
+  signal,
+  type Signal,
+} from '@angular/core';
 import { HardwareBack, Screen, nativeSplitViews } from '@ng-native/device';
 import { nativePlatform, registerViewName, registeredViewName } from '@ng-native/fabric';
 import { ViewBase } from './view-base.ts';
@@ -23,6 +34,11 @@ registerViewName('split-view-content', {
   android: 'View',
   macos: 'NgNativeSplitContent',
 });
+
+declare const ngDevMode: unknown;
+
+/** A `<sidebar>`, which provides itself as this so a split view can find it among its children. */
+export const SIDEBAR = new InjectionToken<unknown>('angular-native.sidebar');
 
 /** Whether the host draws `element`, rather than a view drawn here. */
 export function hostDraws(element: string): boolean {
@@ -115,6 +131,8 @@ export class SplitView extends ViewBase {
       : this.screen.compact(),
   );
   private readonly top = signal<'sidebar' | 'content'>('sidebar');
+  /** Its `<sidebar>`, a child of its own, as the sidebar pane takes only those. */
+  private readonly sidebar = contentChild(SIDEBAR, { descendants: false });
 
   /** Whether the panes are a stack, one at a time: at a compact width, where it is drawn. */
   readonly stacked: Signal<boolean> = computed(() => this.drawn && this.compact());
@@ -128,6 +146,14 @@ export class SplitView extends ViewBase {
     super();
     const stop = inject(HardwareBack).handle(() => this.showSidebar());
     inject(DestroyRef).onDestroy(stop);
+    afterNextRender(() => {
+      if (this.sidebar()) return;
+      if (typeof ngDevMode !== 'undefined' && !ngDevMode) return;
+      console.warn(
+        '[angular-native] A <split-view> has no <sidebar> of its own, so its sidebar pane is ' +
+          'empty: on macOS it draws no divider. Put a <sidebar> in it as a child of its own.',
+      );
+    });
   }
 
   /** Show the content over the sidebar, where the panes are a stack. A choice in the sidebar does. */

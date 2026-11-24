@@ -14,6 +14,10 @@ is drawn from views: two columns, and below `Screen.compact`'s width a stack who
 sidebar. On Android the columns wait for Material's expanded width, 840dp, as its list-detail
 layout does.
 
+A split view needs a `<sidebar>` as a child of its own, which its sidebar pane takes. With none,
+or with one wrapped in another view, the sidebar pane is empty (on macOS there is no divider), and
+in development it warns. Two panes of content side by side are a row of views, not a split view.
+
 ```html
 <split-view>
   <sidebar [(collapsed)]="hidden" minWidth="180" maxWidth="360" autosave="main">
