@@ -5703,6 +5703,34 @@ function holdLoadingFamily(node: EngineNode, style: Record<string, unknown>): vo
   }
 }
 
+/**
+ * The monospace generic each platform's text reads, for the one it does not. React Native on iOS
+ * draws `ui-monospace` in SF Mono and `monospace` in the system font; on Android it draws
+ * `monospace` in its monospaced face and `ui-monospace` in the system font. The desktop host
+ * reads both.
+ */
+const MONOSPACE_AS: Readonly<Record<string, readonly [string, string]>> = {
+  ios: ['monospace', 'ui-monospace'],
+  android: ['ui-monospace', 'monospace'],
+};
+
+/** Name a monospace generic as the platform's text reads it. See `MONOSPACE_AS`. */
+function monospaceGeneric(style: Record<string, unknown>): void {
+  const swap = MONOSPACE_AS[platformOS];
+  if (swap && style['fontFamily'] === swap[0]) style['fontFamily'] = swap[1];
+}
+
+/**
+ * `-webkit-font-smoothing`, which only the macOS host draws, on a paragraph: Chrome reads it only
+ * on a Mac, and iOS and Android never smooth text. Left off every other view, which would only
+ * carry it.
+ */
+function fontSmoothing(viewName: string, style: Record<string, unknown>): void {
+  if (style['fontSmoothing'] !== undefined && (platformOS !== 'macos' || viewName !== PARAGRAPH)) {
+    delete style['fontSmoothing'];
+  }
+}
+
 /** What each mounted app does when faces register. See `fontsRegistered`. */
 const fontListeners = new Set<(families: ReadonlySet<string>) => void>();
 
@@ -13388,6 +13416,8 @@ export class Engine implements HostEngine {
     flattenStyle(node.props[STYLE_OVERRIDE], style);
     this.fontFaces.apply(style);
     holdLoadingFamily(node, style);
+    monospaceGeneric(style);
+    fontSmoothing(viewName, style);
     // Once the face is matched: a family a view's own font names is the face its weight chose.
     renameFonts(viewName, style, this.postScriptName);
     // What a paragraph alone is styled with: how its text is aligned, cut off and held tall.
@@ -13454,7 +13484,11 @@ export class Engine implements HostEngine {
     // Last, over everything the engine worked out, as Reanimated's commit hook applied them. An
     // element committed as two views takes those its inner view would on its outer one instead,
     // after the split: `drawnOver`.
-    if (node.uiThreadProps !== undefined) this.mergeDrawn(node, merged, node.uiThreadProps);
+    if (node.uiThreadProps !== undefined) {
+      this.mergeDrawn(node, merged, node.uiThreadProps);
+      // What the UI thread drew is read as a style is: its family is named as the platform reads it.
+      if (node.uiThreadProps['fontFamily'] !== undefined) monospaceGeneric(merged);
+    }
     // Asked first, without a call: nearly no node merged sets paint in its own style.
     const ownStyle = node.props['style'] as Record<string, unknown> | undefined;
     if (node.paintPassed !== undefined || setsPaint(ownStyle)) {
