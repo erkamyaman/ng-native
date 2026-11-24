@@ -1,5 +1,6 @@
 package dev.ngnative.components
 
+import android.os.Build
 import android.view.KeyEvent
 import android.view.KeyboardShortcutGroup
 import android.view.KeyboardShortcutInfo
@@ -64,8 +65,15 @@ internal class Shortcut(
     return KeyboardShortcutInfo(label, helperChar() ?: return null, modifiers)
   }
 
-  /** The key code of a key `KeyboardEvent.key` names with a word, or null. */
-  fun keyCode(): Int? = NAMED.entries.firstOrNull { it.value.equals(normalKey, true) }?.key
+  /**
+   * The key code of a key `KeyboardEvent.key` names with a word, or null. Null for F13 to F20
+   * before Android 16, whose helper rejects a key code past the last one the OS knows.
+   */
+  fun keyCode(sdk: Int = Build.VERSION.SDK_INT): Int? {
+    val code = NAMED.entries.firstOrNull { it.value.equals(normalKey, true) }?.key ?: return null
+    val unknown = code in KeyEvent.KEYCODE_F13..KeyEvent.KEYCODE_F20 && sdk < Build.VERSION_CODES.BAKLAVA
+    return if (unknown) null else code
+  }
 
   /** The character the helper shows for a key with no key code, or null for a word it lacks. */
   fun helperChar(): Char? = normalKey.singleOrNull()?.uppercaseChar()
@@ -89,8 +97,8 @@ internal class Shortcut(
     }
 
     /**
-     * The keys `KeyboardEvent.key` names with a word, by their key code. Android has no key past
-     * F12, so a shortcut on F13 and up never fires here and the helper does not list it.
+     * The keys `KeyboardEvent.key` names with a word, by their key code. F13 to F20 have key codes
+     * from Android 16 (API 36); an older Android sends none for them.
      */
     private val NAMED: Map<Int, String> = buildMap {
       put(KeyEvent.KEYCODE_DPAD_LEFT, "ArrowLeft")
@@ -113,6 +121,7 @@ internal class Shortcut(
       put(KeyEvent.KEYCODE_SCROLL_LOCK, "ScrollLock")
       put(KeyEvent.KEYCODE_MENU, "ContextMenu")
       for (n in 1..12) put(KeyEvent.KEYCODE_F1 + n - 1, "F$n")
+      for (n in 13..20) put(KeyEvent.KEYCODE_F13 + n - 13, "F$n")
     }
 
     /** The key `event` is, as `KeyboardEvent.key` names it, ignoring Shift: `k`, `,`, `Enter`. */
