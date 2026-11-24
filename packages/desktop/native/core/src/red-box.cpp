@@ -1,6 +1,7 @@
 #include "ngn/red-box.h"
 
 #include <folly/json.h>
+#include <glog/logging.h>
 
 #include <algorithm>
 
@@ -151,7 +152,23 @@ std::vector<JsStackFrame> shownFrames(const JsError &error) {
 }
 
 RedBox::RedBox(std::shared_ptr<RedBoxBackend> backend, std::shared_ptr<Http> http, std::string devServer)
-    : backend_(std::move(backend)), http_(std::move(http)), devServer_(std::move(devServer)) {}
+    : log([](const std::string &text) { LOG(ERROR) << "JavaScript error, symbolicated: " << text; }),
+      backend_(std::move(backend)),
+      http_(std::move(http)),
+      devServer_(std::move(devServer)) {}
+
+// The error's message, then "    at <method> (<file>:<line>:<column>)" for each frame the box lists.
+static std::string symbolicatedText(const JsError &error) {
+  std::string text = error.message;
+  for (const auto &frame : shownFrames(error)) {
+    text += "\n    at " + (frame.methodName.empty() ? std::string{"<anonymous>"} : frame.methodName) + " (" + frame.file;
+    if (frame.line >= 0) {
+      text += ":" + std::to_string(frame.line) + (frame.column >= 0 ? ":" + std::to_string(frame.column) : "");
+    }
+    text += ")";
+  }
+  return text;
+}
 
 void RedBox::report(JsError error) {
   std::unique_lock lock(mutex_);
@@ -169,26 +186,53 @@ void RedBox::report(JsError error) {
     if (error.componentStack.size() > kept.componentStack.size()) {
       kept.componentStack = std::move(error.componentStack);
     }
-    selected_ = errors_.size() - 1;
-    // Taken before the show lets the lock go.
+    if (!holdsFatal()) {
+      selected_ = errors_.size() - 1;
+    }
+    if (stack) {
+      symbolicated_.back() = false;
+    }
+    // Taken before the show lets the lock go. Made fatal after its symbolication answered, its
+    // stack goes to the log now; made fatal before, the answer logs it.
     uint64_t serial = serials_.back();
     JsError copy = kept;
+    std::string logged = fatal && symbolicated_.back() ? symbolicatedText(kept) : std::string{};
     showLocked(lock);
     if (stack) {
       symbolicate(serial, copy);
     }
+    lock.unlock();
+    if (!logged.empty() && log) {
+      log(logged);
+    }
     return;
   }
+  bool hold = holdsFatal();
   if (errors_.size() == kKept) {
-    errors_.erase(errors_.begin());
-    serials_.erase(serials_.begin());
+    // The oldest error makes way, or the one after it when the oldest is the fatal error on show.
+    size_t out = hold && selected_ == 0 ? 1 : 0;
+    errors_.erase(errors_.begin() + static_cast<long>(out));
+    serials_.erase(serials_.begin() + static_cast<long>(out));
+    symbolicated_.erase(symbolicated_.begin() + static_cast<long>(out));
+    selected_ = out < selected_ ? selected_ - 1 : selected_;
   }
   errors_.push_back(error);
   uint64_t serial = nextSerial_++;
   serials_.push_back(serial);
-  selected_ = errors_.size() - 1;
+  symbolicated_.push_back(false);
+  if (!hold) {
+    selected_ = errors_.size() - 1;
+  }
   showLocked(lock);
   symbolicate(serial, error);
+}
+
+// A fatal error on show keeps the box: the errors after it (AppRegistry's `"main" has not been
+// registered` after a module that threw as the bundle loaded) follow from it, so they are kept
+// behind it, as React Native's LogBox keeps its first fatal error open. Stepped away from it, or
+// showing a soft one, the box moves to each new error as it comes.
+bool RedBox::holdsFatal() const {
+  return showing_ && selected_ < errors_.size() && errors_[selected_].fatal;
 }
 
 void RedBox::step(int delta) {
@@ -216,6 +260,7 @@ void RedBox::dismiss() {
   std::unique_lock lock(mutex_);
   errors_.clear();
   serials_.clear();
+  symbolicated_.clear();
   ++generation_;
   std::vector<std::unique_ptr<HttpTask>> tasks;
   tasks.swap(tasks_);
@@ -296,8 +341,14 @@ void RedBox::symbolicate(uint64_t serial, const JsError &error) {
     }
     size_t index = static_cast<size_t>(found - serials_.begin());
     errors_[index].stack = std::move(frames);
+    symbolicated_[index] = true;
+    std::string logged = errors_[index].fatal ? symbolicatedText(errors_[index]) : std::string{};
     if (showing_ && selected_ == index) {
       showLocked(lock);
+    }
+    lock.unlock();
+    if (!logged.empty() && log) {
+      log(logged);
     }
   };
   tasks_.push_back(http_->send(std::move(request), std::move(callbacks)));
