@@ -4017,6 +4017,12 @@ export class StyleResolver {
   onUndefinedToken: ((name: string, props: readonly string[], on?: string) => void) | null = null;
 
   /**
+   * Told of a `var()` that reads a safe-area inset nothing has supplied, fallback or not. Set only
+   * in development, where the engine says what supplies them.
+   */
+  onUnsuppliedInset: ((name: string) => void) | null = null;
+
+  /**
    * Told of a `display: var()` whose token holds no display native has, `grid` or `table`, which
    * leaves display unset. Set only in development, where it is how the engine says so: the
    * compiler refuses the same value written out, but a token is only known here.
@@ -5199,6 +5205,55 @@ export class StyleResolver {
     }
   }
 
+  /**
+   * A safe-area inset read where nothing has supplied it, which development is told of: the
+   * declaration's own reference, or one inside it, as `calc()` of two tokens holds them.
+   */
+  private noteInset(name: string): void {
+    if (name.startsWith('--safe-area-inset-')) this.onUnsuppliedInset!(name);
+  }
+
+  /**
+   * The insets a reference reads: the names a `var()` tries in turn up to the first one set, and a
+   * gradient stop's position. Whether its fallback is read, which it is only with none of them set.
+   */
+  private noteNamed(
+    record: Record<string, unknown>,
+    tokens: Readonly<Record<string, TokenValue>>,
+  ): boolean {
+    // A gradient stop's position is read only where the stop is painted: with a colour of its own,
+    // or its colour token set to one. With neither it is left out, position and all.
+    const position = record['positionReference'];
+    const colour =
+      typeof record['reference'] === 'string' ? tokens[record['reference']] : undefined;
+    const painted =
+      record['colour'] !== undefined || (colour !== undefined && colour.keyword !== 'none');
+    if (typeof position === 'string' && painted && !(position in tokens)) this.noteInset(position);
+    const tried = [
+      record['reference'],
+      ...((record['alternatives'] as unknown[] | undefined) ?? []),
+    ];
+    for (const name of tried) {
+      if (typeof name !== 'string') continue;
+      if (name in tokens) return false;
+      this.noteInset(name);
+    }
+    return true;
+  }
+
+  private noteInsets(value: unknown, tokens: Readonly<Record<string, TokenValue>>): void {
+    if (value === null || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const part of value) this.noteInsets(part, tokens);
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    const used = this.noteNamed(record, tokens);
+    for (const [key, part] of Object.entries(record)) {
+      if (used || (key !== 'fallback' && key !== 'fallbackToken')) this.noteInsets(part, tokens);
+    }
+  }
+
   /** One deferred declaration's value, from the tokens in scope and the node's own style. */
   private settled(
     declaration: DeferredDeclaration,
@@ -5206,6 +5261,7 @@ export class StyleResolver {
     parentInherited: Record<string, unknown>,
     tokens: Readonly<Record<string, TokenValue>>,
   ): unknown {
+    if (this.onUnsuppliedInset) this.noteInsets(declaration, tokens);
     if (declaration.within !== undefined) {
       return this.settledWithin(declaration.within, declaration, own, parentInherited, tokens);
     }
