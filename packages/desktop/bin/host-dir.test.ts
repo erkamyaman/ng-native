@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -44,6 +44,56 @@ describe('the host build directory', () => {
     assert.match(build, /host_dir="\$\("\$here\/host-dir\.sh" "\$CACHE" "\$native_dir" /);
     assert.match(build, /^native_dir="\$\(cd "\$here\/\.\." && pwd -P\)"$/m);
     assert.match(build, /-S "\$native_dir"/);
+  });
+});
+
+describe('pruning the host build directories', () => {
+  it('removes those whose sources are gone and keeps the rest', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'ngn-prune-'));
+    try {
+      const host = path.join(root, 'cache', 'rn-0.88.0', 'host');
+      const older = path.join(root, 'cache', 'rn-0.87.0', 'host');
+      const live = path.join(root, 'live-native');
+      mkdirSync(live);
+      const dir = (name: string, cmakeHome?: string, app?: string) => {
+        mkdirSync(path.join(host, name, 'appkit-arm64-Debug'), { recursive: true });
+        if (cmakeHome)
+          writeFileSync(
+            path.join(host, name, 'appkit-arm64-Debug', 'CMakeCache.txt'),
+            `CMAKE_HOME_DIRECTORY:INTERNAL=${cmakeHome}\n`,
+          );
+        if (app) writeFileSync(path.join(host, name, 'app'), `${app}\n`);
+      };
+      dir('build-gone', path.join(root, 'old-native'));
+      dir('build-live', live);
+      dir('build-new');
+      dir('app-gone', live, path.join(root, 'old-app'));
+      dir('app-live', path.join(root, 'old-native'), live);
+      // An upgrade's earlier React Native version has a cache of its own.
+      mkdirSync(path.join(older, 'build-old', 'appkit-arm64-Debug'), { recursive: true });
+      writeFileSync(
+        path.join(older, 'build-old', 'appkit-arm64-Debug', 'CMakeCache.txt'),
+        `CMAKE_HOME_DIRECTORY:INTERNAL=${path.join(root, 'old-native')}\n`,
+      );
+
+      const result = spawnSync(
+        'bash',
+        [path.join(scripts, 'prune-hosts.sh'), path.join(root, 'cache')],
+        {
+          encoding: 'utf8',
+        },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(readdirSync(host).sort(), ['app-live', 'build-live', 'build-new']);
+      assert.deepEqual(readdirSync(older), []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('runs before each build', () => {
+    const build = readFileSync(path.join(scripts, 'build.sh'), 'utf8');
+    assert.match(build, /^"\$here\/prune-hosts\.sh" "\$\(dirname "\$CACHE"\)"$/m);
   });
 });
 
