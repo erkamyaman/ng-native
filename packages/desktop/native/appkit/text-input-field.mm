@@ -1,10 +1,71 @@
 #include <dlfcn.h>
 #import "text-input-field.h"
+#import "text-layout.h"
 
 #import <objc/message.h>
 
 using ngn::Capitalize;
+using ngn::FontSmoothing;
 using ngn::TextInputOptions;
+
+@implementation NGNSmoothedFieldEditor
+
+- (void)drawRect:(NSRect)dirtyRect {
+  CGContextRef context = NSGraphicsContext.currentContext.CGContext;
+  CGContextSaveGState(context);
+  ngn::applyFontSmoothing(context, _fontSmoothing);
+  [super drawRect:dirtyRect];
+  CGContextRestoreGState(context);
+}
+
+@end
+
+NSTextView *NGNFieldEditorFor(FontSmoothing smoothing, NGNSmoothedFieldEditor *__strong *editor) {
+  if (smoothing == FontSmoothing::Auto) {
+    return nil;
+  }
+  if (*editor == nil) {
+    *editor = [[NGNSmoothedFieldEditor alloc] initUsingTextLayoutManager:NO];
+    (*editor).fieldEditor = YES;
+  }
+  (*editor).fontSmoothing = smoothing;
+  return *editor;
+}
+
+NSText *NGNEditorOf(NSControl *control) {
+  id responder = control.window.firstResponder;
+  if ([responder isKindOfClass:NSText.class] && ((NSText *)responder).delegate == (id)control) {
+    return responder;
+  }
+  return control.currentEditor;
+}
+
+BOOL NGNRestartEditing(NSTextField *control, BOOL *restarting) {
+  NSText *editor = NGNEditorOf(control);
+  if (editor == nil) {
+    return YES;
+  }
+  if ([editor isKindOfClass:NSTextView.class] && ((NSTextView *)editor).hasMarkedText) {
+    return NO;
+  }
+  NSRange selection = editor.selectedRange;
+  *restarting = YES;
+  [control.window makeFirstResponder:nil];
+  [control.window makeFirstResponder:control];
+  if (control.currentEditor && NSMaxRange(selection) <= control.stringValue.length) {
+    control.currentEditor.selectedRange = selection;
+  }
+  *restarting = NO;
+  return YES;
+}
+
+void NGNDrawSmoothed(FontSmoothing smoothing, void (^draw)(void)) {
+  CGContextRef context = NSGraphicsContext.currentContext.CGContext;
+  CGContextSaveGState(context);
+  ngn::applyFontSmoothing(context, smoothing);
+  draw();
+  CGContextRestoreGState(context);
+}
 
 void NGNApplyTextOptions(NSTextView *text, const TextInputOptions &options) {
   text.automaticSpellingCorrectionEnabled =
@@ -172,6 +233,7 @@ NSDictionary<NSTextCheckingOptionKey, id> *NGNTextCheckingOptions(
 @interface NGNTextField ()
 - (void)controlDidBecomeFirstResponder;
 - (void)controlDidEndEditing;
+- (void)controlTextDidChange;
 - (void)reportTyped:(NSString *)replacement editor:(NSTextView *)editor;
 @end
 
@@ -206,6 +268,10 @@ NSDictionary<NSTextCheckingOptionKey, id> *NGNTextCheckingOptions(
     [super textDidEndEditing:note];                                                                        \
     [self.box controlDidEndEditing];                                                                       \
   }                                                                                                        \
+  -(void)textDidChange : (NSNotification *)note {                                                          \
+    [super textDidChange:note];                                                                            \
+    [self.box controlTextDidChange];                                                                       \
+  }                                                                                                        \
   -(BOOL)textView : (NSTextView *)textView shouldChangeTextInRange : (NSRange)range replacementString      \
       : (NSString *)string {                                                                               \
     if (!_inserting) {                                                                                     \
@@ -223,6 +289,14 @@ NSDictionary<NSTextCheckingOptionKey, id> *NGNTextCheckingOptions(
   NGN_INVALID_ATTRIBUTE_METHODS(self.box.invalid)
 
 #define NGN_FIELD_CELL_METHODS                                                                             \
+  -(NGNTextField *)box {                                                                                   \
+    return [self.controlView respondsToSelector:@selector(box)] ? [(id)self.controlView box] : nil;        \
+  }                                                                                                        \
+  -(void)drawInteriorWithFrame : (NSRect)frame inView : (NSView *)view {                                   \
+    NGNDrawSmoothed(self.box.fontSmoothing, ^{                                                            \
+      [super drawInteriorWithFrame:frame inView:view];                                                     \
+    });                                                                                                    \
+  }                                                                                                        \
   -(NSText *)setUpFieldEditorAttributes : (NSText *)text {                                                 \
     NSText *out = [super setUpFieldEditorAttributes:text];                                                 \
     NGNTextField *box = [self.controlView respondsToSelector:@selector(box)]                               \
@@ -291,8 +365,16 @@ NGN_FIELD_CONTROL_METHODS
 NGN_FIELD_CONTROL_METHODS
 @end
 
-@implementation NGNPlainFieldCell
+// A plain field edits in a field editor of its own while its text is not smoothed as the system
+// smooths it. A secure one keeps AppKit's, which hides what is typed.
+@implementation NGNPlainFieldCell {
+  NGNSmoothedFieldEditor *_editor;
+}
 NGN_FIELD_CELL_METHODS
+- (NSTextView *)fieldEditorForView:(NSView *)view {
+  NSTextView *own = NGNFieldEditorFor(self.box.fontSmoothing, &_editor);
+  return own != nil ? own : [super fieldEditorForView:view];
+}
 @end
 
 @implementation NGNSecureFieldCell
@@ -307,6 +389,8 @@ NGN_FIELD_CELL_METHODS
   NSColor *_placeholderColor;
   NSTextAlignment _alignment;
   NSWritingDirection _writingDirection;
+  // An editing session begun in the shared field editor, to begin again in the field's own.
+  BOOL _restartPending;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -352,6 +436,45 @@ NGN_FIELD_CELL_METHODS
 
 - (const TextInputOptions &)options {
   return _options;
+}
+
+- (void)setFontSmoothing:(FontSmoothing)fontSmoothing {
+  if (fontSmoothing == _fontSmoothing) {
+    return;
+  }
+  _fontSmoothing = fontSmoothing;
+  _control.needsDisplay = YES;
+  NSText *editor = NGNEditorOf(_control);
+  if ([editor isKindOfClass:NGNSmoothedFieldEditor.class]) {
+    ((NGNSmoothedFieldEditor *)editor).fontSmoothing = fontSmoothing;
+    editor.needsDisplay = YES;
+  } else {
+    _restartPending = YES;
+    [self restartInOwnEditor];
+  }
+}
+
+// Editing begun under auto, in the shared field editor, which draws as the system smooths, moves
+// to the field's own once its text is smoothed otherwise; a secure field keeps AppKit's.
+- (void)restartInOwnEditor {
+  NSText *editor = NGNEditorOf(_control);
+  if (!_restartPending || editor == nil || _secure || _fontSmoothing == FontSmoothing::Auto ||
+      [editor isKindOfClass:NGNSmoothedFieldEditor.class]) {
+    _restartPending = NO;
+    return;
+  }
+  _restartPending = !NGNRestartEditing(_control, &_swapping);
+}
+
+- (void)controlTextDidChange {
+  if (!_restartPending) {
+    return;
+  }
+  // A turn later, out of the text system's change.
+  __weak NGNTextField *weakSelf = self;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [weakSelf restartInOwnEditor];
+  });
 }
 
 - (void)setSecure:(BOOL)secure {
@@ -545,15 +668,24 @@ NGN_INVALID_ATTRIBUTE_METHODS(self.invalid)
   }
 }
 
-- (void)drawRect:(NSRect)dirtyRect {
-  [super drawRect:dirtyRect];
-  if (_placeholder && self.string.length == 0) {
-    NSPoint origin = self.textContainerOrigin;
-    CGFloat padding = self.textContainer.lineFragmentPadding;
-    NSRect rect = NSMakeRect(
-        origin.x + padding, origin.y, NSWidth(self.bounds) - origin.x * 2 - padding * 2, NSHeight(self.bounds) - origin.y);
-    [_placeholder drawWithRect:rect options:NSStringDrawingUsesLineFragmentOrigin];
+- (void)setFontSmoothing:(FontSmoothing)fontSmoothing {
+  if (fontSmoothing != _fontSmoothing) {
+    _fontSmoothing = fontSmoothing;
+    self.needsDisplay = YES;
   }
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+  NGNDrawSmoothed(_fontSmoothing, ^{
+    [super drawRect:dirtyRect];
+    if (_placeholder && self.string.length == 0) {
+      NSPoint origin = self.textContainerOrigin;
+      CGFloat padding = self.textContainer.lineFragmentPadding;
+      NSRect rect = NSMakeRect(
+          origin.x + padding, origin.y, NSWidth(self.bounds) - origin.x * 2 - padding * 2, NSHeight(self.bounds) - origin.y);
+      [_placeholder drawWithRect:rect options:NSStringDrawingUsesLineFragmentOrigin];
+    }
+  });
 }
 
 - (void)didChangeText {

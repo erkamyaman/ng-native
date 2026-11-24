@@ -60,7 +60,10 @@ NSFont *NGNSearchFieldFont(const NativeControlProps &p) {
   CGFloat base = [NSFont systemFontSizeForControlSize:controlSize(p.controlSize)];
   CGFloat size = p.fontSize ? static_cast<CGFloat>(*p.fontSize) : base;
   NSFont *font = p.fontWeight ? [NSFont systemFontOfSize:size weight:fontWeight(*p.fontWeight)] : [NSFont systemFontOfSize:size];
-  if (!p.fontFamily.empty()) {
+  if (p.fontFamily == "monospace" || p.fontFamily == "ui-monospace") {
+    // The system's monospaced face, as a paragraph draws both (text-layout.mm).
+    font = [NSFont monospacedSystemFontOfSize:size weight:p.fontWeight ? fontWeight(*p.fontWeight) : NSFontWeightRegular];
+  } else if (!p.fontFamily.empty()) {
     NSString *family = string(p.fontFamily);
     NSFont *named = [NSFont fontWithName:family size:size];
     NSString *familyName = named ? named.familyName : ([NSFontManager.sharedFontManager availableMembersOfFontFamily:family] ? family : nil);
@@ -115,8 +118,40 @@ NSSize NGNSearchFieldSize(const NativeControlProps &p) {
 @property (nonatomic, weak) NGNSearchField *box;
 @end
 
+// The field's cell, which draws its text smoothed as the box says, and edits it in a field editor
+// that draws it so while it is not smoothed as the system smooths it.
+@interface NGNSearchFieldCell : NSSearchFieldCell
+@end
+
+@implementation NGNSearchFieldCell {
+  NGNSmoothedFieldEditor *_editor;
+}
+
+- (ngn::FontSmoothing)fontSmoothing {
+  id control = self.controlView;
+  return [control isKindOfClass:NGNSearchControl.class] ? ((NGNSearchControl *)control).box.fontSmoothing
+                                                         : ngn::FontSmoothing::Auto;
+}
+
+- (void)drawInteriorWithFrame:(NSRect)frame inView:(NSView *)view {
+  NGNDrawSmoothed(self.fontSmoothing, ^{
+    [super drawInteriorWithFrame:frame inView:view];
+  });
+}
+
+- (NSTextView *)fieldEditorForView:(NSView *)view {
+  NSTextView *own = NGNFieldEditorFor(self.fontSmoothing, &_editor);
+  return own != nil ? own : [super fieldEditorForView:view];
+}
+
+@end
+
 @implementation NGNSearchControl {
   BOOL _inserting;
+}
+
++ (Class)cellClass {
+  return NGNSearchFieldCell.class;
 }
 
 - (BOOL)becomeFirstResponder {
@@ -149,6 +184,10 @@ NSSize NGNSearchFieldSize(const NativeControlProps &p) {
   CGFloat _height;
   // Counts the editing ends: only the latest one's turn-later check may report a blur.
   NSUInteger _endings;
+  // An editing session begun in the shared field editor, to begin again in the field's own, and
+  // whether it is beginning again, which is no focus.
+  BOOL _restartPending;
+  BOOL _restarting;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -178,6 +217,18 @@ NSSize NGNSearchFieldSize(const NativeControlProps &p) {
 - (void)apply:(const NativeControlProps &)p {
   _field.controlSize = controlSize(p.controlSize);
   _field.font = NGNSearchFieldFont(p);
+  if (p.desktop.fontSmoothing != _fontSmoothing) {
+    _fontSmoothing = p.desktop.fontSmoothing;
+    _field.needsDisplay = YES;
+    NSText *editor = NGNEditorOf(_field);
+    if ([editor isKindOfClass:NGNSmoothedFieldEditor.class]) {
+      ((NGNSmoothedFieldEditor *)editor).fontSmoothing = _fontSmoothing;
+      editor.needsDisplay = YES;
+    } else {
+      _restartPending = YES;
+      [self restartInOwnEditor];
+    }
+  }
   NSString *placeholder = string(p.placeholder);
   if (![_field.placeholderString isEqualToString:placeholder]) {
     _field.placeholderString = placeholder;
@@ -235,7 +286,7 @@ NSSize NGNSearchFieldSize(const NativeControlProps &p) {
 
 - (void)fieldDidBecomeFirstResponder {
   [self applyTint];
-  if (self.began) {
+  if (!_restarting && self.began) {
     self.began();
   }
 }
@@ -259,6 +310,25 @@ NSSize NGNSearchFieldSize(const NativeControlProps &p) {
 
 - (void)controlTextDidChange:(NSNotification *)note {
   [self changedTo:_field.stringValue];
+  if (_restartPending) {
+    // A turn later, out of the text system's change.
+    __weak NGNSearchField *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [weakSelf restartInOwnEditor];
+    });
+  }
+}
+
+// Editing begun under auto, in the shared field editor, which draws as the system smooths, moves
+// to the field's own once its text is smoothed otherwise.
+- (void)restartInOwnEditor {
+  NSText *editor = NGNEditorOf(_field);
+  if (!_restartPending || editor == nil || _fontSmoothing == ngn::FontSmoothing::Auto ||
+      [editor isKindOfClass:NGNSmoothedFieldEditor.class]) {
+    _restartPending = NO;
+    return;
+  }
+  _restartPending = !NGNRestartEditing(_field, &_restarting);
 }
 
 // A turn later, and only when the field no longer edits: a click into the field ends its editing

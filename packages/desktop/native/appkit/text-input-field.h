@@ -52,6 +52,29 @@ BOOL NGNControlShouldChangeText(
     const ngn::TextInputOptions &options,
     BOOL *inserting);
 
+// A field editor that draws its text smoothed as `fontSmoothing` says (ngn::applyFontSmoothing), on
+// TextKit 1, which draws the text in the view's own drawRect.
+@interface NGNSmoothedFieldEditor : NSTextView
+@property (nonatomic) ngn::FontSmoothing fontSmoothing;
+@end
+
+// The field editor a cell whose text is smoothed as `smoothing` says edits in: `*editor`, made the
+// first time, or nil for `auto`, which edits in the window's shared one.
+NSTextView *NGNFieldEditorFor(ngn::FontSmoothing smoothing, NGNSmoothedFieldEditor *__strong *editor);
+
+// A cell's interior drawn as `draw` draws it, with its text smoothed as `smoothing` says.
+void NGNDrawSmoothed(ngn::FontSmoothing smoothing, void (^draw)(void));
+
+// Editing in `control` ended and begun again, so it edits in the field editor its cell gives now,
+// with its text and selection kept, and `*restarting` YES meanwhile, for the focus and blur that
+// session sends to be left out. NO, with nothing done, while text is being composed, which ending
+// would commit: call it again once the text changes.
+BOOL NGNRestartEditing(NSTextField *control, BOOL *restarting);
+
+// The field editor `control` is being edited in, or nil: the window's first responder, as
+// `currentEditor` answers nil for it once the control is marked to be drawn again.
+NSText *NGNEditorOf(NSControl *control);
+
 // A single-line field: an NSTextField, or an NSSecureTextField for secure entry, in a box that swaps
 // one for the other.
 @interface NGNTextField : NSView
@@ -63,8 +86,8 @@ BOOL NGNControlShouldChangeText(
 // An NSSecureTextField in place of the NSTextField (or back), keeping the text, its look, and the
 // keyboard and selection while editing.
 @property (nonatomic) BOOL secure;
-// True while `secure` swaps the control, as the editing session that ends and starts again is not the
-// user's.
+// True while `secure` swaps the control, or `fontSmoothing` the field editor, as the editing session
+// that ends and starts again is not the user's.
 @property (nonatomic, readonly) BOOL swapping;
 // Focuses the field the first time it is in a window.
 @property (nonatomic) BOOL autoFocus;
@@ -74,6 +97,8 @@ BOOL NGNControlShouldChangeText(
 @property (nonatomic, copy) void (^typed)(NSString *key);
 // Whether its value is refused (aria-invalid), as VoiceOver reads it from the control.
 @property (nonatomic) BOOL invalid;
+// `-webkit-font-smoothing`, for the text drawn and the text being edited.
+@property (nonatomic) ngn::FontSmoothing fontSmoothing;
 - (void)applyOptions:(const ngn::TextInputOptions &)options;
 - (const ngn::TextInputOptions &)options;
 // Drawn in the field's font; nil colour is the system's placeholder colour.
@@ -92,6 +117,8 @@ BOOL NGNControlShouldChangeText(
 @property (nonatomic) BOOL invalid;
 @property (nonatomic, copy) void (^focused)(void);
 @property (nonatomic, copy, readonly) NSAttributedString *placeholder;
+// `-webkit-font-smoothing`, for the text and the placeholder.
+@property (nonatomic) ngn::FontSmoothing fontSmoothing;
 - (void)applyOptions:(const ngn::TextInputOptions &)options;
 - (void)setPlaceholder:(NSString *)placeholder color:(NSColor *)color;
 // The alignment and base writing direction of the text, typed or set later too, and of the
