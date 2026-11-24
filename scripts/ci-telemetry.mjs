@@ -1,9 +1,9 @@
 /**
- * Sends one finished workflow run, or one closed pull request, to Coralogix, so CI health and code
+ * Sends finished workflow runs, or one closed pull request, to Coralogix, so CI health and code
  * review can be followed over time: slow and failing jobs, queue time, re-runs, time to merge, and
  * what happened to each CodeRabbit finding.
  *
- * What a workflow run sends, per attempt:
+ * What a workflow run sends, per attempt (all the runs of a window go out in one batch):
  *
  * - a `workflow_run` log, and a `workflow_job` log for each job, with the failing step and an excerpt
  *   of the log around the first error for a failed job;
@@ -15,9 +15,23 @@
  *
  * Usage:
  *
+ *   node scripts/ci-telemetry.mjs runs [--since=<time>] [--until=<time>]   # every run that finished in the window
  *   node scripts/ci-telemetry.mjs run <run id> [attempt]
  *   node scripts/ci-telemetry.mjs pr <number> [--closed-at=<time> --merged=<true|false>]
  *   node scripts/ci-telemetry.mjs run <run id> --dry-run    # print the counts and the first logs, send nothing
+ *
+ * `runs` sends each attempt that finished after `--since` up to and including `--until`, once. Unset,
+ * `--until` is when the current run (GITHUB_RUN_ID) was created, or now, and `--since` is when the
+ * last successful scheduled run of TELEMETRY_WORKFLOW (a workflow file name) was created, at most
+ * 24 hours back (runs that finished before that are never sent), or an hour before `--until`.
+ * A run that fails while collecting sends nothing, so the next one covers the same window. A failure
+ * while sending can leave part of the batch delivered (logs sent, traces not), and the next run then
+ * sends that part again, so a duplicate is possible and a gap is not. That window record is the only
+ * one, so a scheduled run must not overlap another (the workflow serializes them). Re-running a
+ * successful window by hand with `--since` sends it again.
+ *
+ * Runs are found by when they were created, listed an hour at a time, 72 hours back from `--since`:
+ * a re-run keeps its run's creation time, so a re-run of a run older than that is not found.
  *
  * `--closed-at` and `--merged` come from the close event; without them the pull request's current
  * state is used.
@@ -36,21 +50,59 @@ const INGRESS = process.env.CORALOGIX_INGRESS || 'https://ingress.eu2.coralogix.
 const APP = 'ng-native';
 const CODERABBIT = 'coderabbitai';
 
-const [command, id, ...rest] = process.argv.slice(2);
-const dryRun = rest.includes('--dry-run');
+const args = process.argv.slice(2);
+const [command, id, ...rest] = args;
+const dryRun = args.includes('--dry-run');
 const attemptArg = rest.find((arg) => /^\d+$/.test(arg));
-const closedAtArg = rest
-  .find((arg) => arg.startsWith('--closed-at='))
-  ?.slice('--closed-at='.length);
-const mergedArg = rest.find((arg) => arg.startsWith('--merged='))?.slice('--merged='.length);
+/** An option's value; undefined when the option is absent, an error when it has no value. */
+const flag = (name) => {
+  const arg = args.find((arg) => arg === `--${name}` || arg.startsWith(`--${name}=`));
+  if (arg === undefined) return undefined;
+  const value = arg.slice(name.length + 3);
+  if (!value) throw new Error(`--${name} needs a value: --${name}=<value>`);
+  return value;
+};
+/** An option that is a time, rejected before anything is collected when it is not one. */
+const timeFlag = (name) => {
+  const value = flag(name);
+  if (value !== undefined && Number.isNaN(Date.parse(value)))
+    throw new Error(`--${name}=${value} is not a time.`);
+  return value;
+};
+const closedAtArg = flag('closed-at');
+const mergedArg = flag('merged');
+
+/** The workflows whose runs are sent; the telemetry workflows themselves are left out. */
+const WORKFLOWS = new Set([
+  'CI',
+  'Desktop host',
+  'Desktop host nightly',
+  'Device tests',
+  'Docs',
+  'Latest versions',
+  'Native builds',
+  'Preview',
+  'Release',
+  'Web Platform Tests',
+]);
+/**
+ * How long before the window a run may have been created and still finish in it. The run list can
+ * only be filtered by when a run was created, which a re-run keeps, so this also bounds how old a run
+ * may be and still have a re-run sent: GitHub allows a re-run for 30 days, and listing that far back
+ * each half hour would cost hundreds of requests a time.
+ */
+const LONGEST_RUN_HOURS = 72;
+const MAX_WINDOW_HOURS = 24;
+const SLICE_MS = 3_600_000;
 
 async function main() {
   const numeric = /^\d+$/.test(id ?? '');
-  if (command === 'run' && numeric) await sendRun(id, attemptArg);
+  if (command === 'runs') await sendRuns();
+  else if (command === 'run' && numeric) await sendRun(id, attemptArg);
   else if (command === 'pr' && numeric) await sendPullRequest(Number(id));
   else
     throw new Error(
-      'usage: ci-telemetry.mjs run <run id> [attempt] | pr <number> [--closed-at=<time> --merged=<true|false>] [--dry-run]',
+      'usage: ci-telemetry.mjs runs [--since=<time>] [--until=<time>] | run <run id> [attempt] | pr <number> [--closed-at=<time> --merged=<true|false>] [--dry-run]',
     );
 }
 
@@ -62,6 +114,85 @@ async function sendRun(runId, attemptArg) {
   const run = await github(
     `/repos/${REPO}/actions/runs/${runId}${attemptArg ? `/attempts/${attemptArg}` : ''}`,
   );
+  await sendRecords([await buildRecord(run)].filter(Boolean));
+}
+
+/** Every attempt that finished in the window, sent as one batch. */
+async function sendRuns() {
+  const { since, until } = await window();
+  console.log(`Runs finished after ${since} up to ${until}`);
+  const runs = await listRuns(Date.parse(since) - LONGEST_RUN_HOURS * 3_600_000, Date.parse(until));
+  const inWindow = (run) =>
+    Date.parse(run.updated_at) > Date.parse(since) &&
+    Date.parse(run.updated_at) <= Date.parse(until);
+  const attempts = [];
+  for (const run of runs.filter((run) => WORKFLOWS.has(run.name))) {
+    // A re-run starts after every earlier attempt finished, so those are in the window only if it
+    // started in it or since. Each has its own finish time, which the run's record no longer shows.
+    if (run.run_attempt > 1 && Date.parse(run.run_started_at) > Date.parse(since)) {
+      for (let attempt = 1; attempt < run.run_attempt; attempt++) {
+        const earlier = await github(`/repos/${REPO}/actions/runs/${run.id}/attempts/${attempt}`);
+        if (inWindow(earlier)) attempts.push(earlier);
+      }
+    }
+    // A run that is running again has its next attempt sent when that finishes.
+    if (run.status === 'completed' && inWindow(run)) attempts.push(run);
+  }
+  const records = [];
+  for (const run of attempts) records.push(await buildRecord(run));
+  await sendRecords(records.filter(Boolean));
+}
+
+/**
+ * The runs, finished or not, created from `from` to `to` (milliseconds), listed an hour of creation time at a
+ * time so that no list nears the 1000 results the API pages through, however long a window a gap
+ * left. A run created on a slice's edge is listed by both slices and kept once.
+ */
+async function listRuns(from, to) {
+  const byId = new Map();
+  for (let start = from; start <= to; start += SLICE_MS) {
+    const end = Math.min(start + SLICE_MS, to);
+    const range = `${new Date(start).toISOString()}..${new Date(end).toISOString()}`;
+    const runs = await githubPages(
+      `/repos/${REPO}/actions/runs?created=${range}`,
+      'workflow_runs',
+      1000,
+    );
+    for (const run of runs) byId.set(run.id, run);
+  }
+  return [...byId.values()];
+}
+
+/**
+ * The window to send: the last successful scheduled run's start to this run's start, so a run that
+ * failed or never started leaves its window to the next one.
+ */
+async function window() {
+  const runId = process.env.GITHUB_RUN_ID;
+  const until =
+    timeFlag('until') ??
+    (runId
+      ? (await github(`/repos/${REPO}/actions/runs/${runId}`)).created_at
+      : new Date().toISOString());
+  let since = timeFlag('since');
+  const workflow = process.env.TELEMETRY_WORKFLOW;
+  if (!since && workflow) {
+    const { workflow_runs } = await github(
+      `/repos/${REPO}/actions/workflows/${workflow}/runs?status=success&event=schedule&per_page=1`,
+    );
+    since = workflow_runs[0]?.created_at;
+  }
+  const oldest = new Date(Date.parse(until) - MAX_WINDOW_HOURS * 3_600_000).toISOString();
+  if (since && since < oldest && !flag('since'))
+    console.warn(`The last send was before ${oldest}; runs that finished before it are not sent.`);
+  const fallback = new Date(Date.parse(until) - 3_600_000).toISOString();
+  since = !since ? fallback : since < oldest && !flag('since') ? oldest : since;
+  return { since, until };
+}
+
+/** One attempt's logs, spans and gauges, or undefined when it has no finished jobs. */
+async function buildRecord(run) {
+  const runId = run.id;
   const attempt = run.run_attempt;
   const jobs = ranInAttempt(
     await githubPages(`/repos/${REPO}/actions/runs/${runId}/attempts/${attempt}/jobs`, 'jobs'),
@@ -69,22 +200,38 @@ async function sendRun(runId, attemptArg) {
   );
   if (!jobs.length) {
     console.log(`Run ${runId} attempt ${attempt} has no finished jobs, nothing to send.`);
-    return;
+    return undefined;
   }
-
   const record = runRecord(run, jobs);
   for (const job of jobs) await addJob(record, job);
-  const points = record.points.filter(([, , , value]) => value !== undefined);
+  record.points = record.points.filter(([, , , value]) => value !== undefined);
   console.log(
-    `${run.name} #${runId} attempt ${attempt}: ${record.logs.length} logs, ${record.spans.length} spans, ${points.length} metric points`,
+    `${run.name} #${runId} attempt ${attempt}: ${record.logs.length} logs, ${record.spans.length} spans, ${record.points.length} metric points`,
   );
-  if (dryRun) return printSample(record.logs);
-  await sendLogs(record.logs);
-  await sendOtlp(
-    '/v1/traces',
-    encodeTraces(serviceName(run.name), record.spans),
-    `${record.spans.length} spans`,
+  return record;
+}
+
+async function sendRecords(records) {
+  const logs = records.flatMap((record) => record.logs);
+  const points = records.flatMap((record) => record.points);
+  const spans = Object.groupBy(
+    records.flatMap((record) =>
+      record.spans.map((span) => ({ ...span, workflow: record.run.name })),
+    ),
+    (span) => serviceName(span.workflow),
   );
+  const spanCount = records.reduce((total, record) => total + record.spans.length, 0);
+  console.log(
+    `${records.length} runs: ${logs.length} logs, ${spanCount} spans, ${points.length} metric points`,
+  );
+  if (dryRun || !records.length) return dryRun && printSample(logs);
+  await sendLogs(logs);
+  for (const [service, group] of Object.entries(spans))
+    await sendOtlp(
+      '/v1/traces',
+      encodeTraces(service, group),
+      `${group.length} spans for ${service}`,
+    );
   await sendOtlp('/v1/metrics', encodeMetrics(points), `${points.length} metric points`);
 }
 
@@ -545,10 +692,14 @@ async function github(path, body) {
 }
 
 /** Every page of a list endpoint, checked against the total GitHub reports. */
-async function githubPages(path, key) {
+async function githubPages(path, key, cap = Infinity) {
   const items = [];
   for (let page = 1; ; page++) {
-    const data = await github(`${path}?per_page=100&page=${page}`);
+    const data = await github(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
+    if (data.total_count > cap)
+      throw new Error(
+        `GitHub ${path}: ${data.total_count} results, more than the ${cap} it can page through`,
+      );
     items.push(...data[key]);
     if (items.length >= data.total_count || !data[key].length) {
       if (items.length < data.total_count)
