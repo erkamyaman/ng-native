@@ -312,8 +312,7 @@ PDFDocument *pageOf(NSBitmapImageRep *drawn, NSSize size) {
 // The content drawn as the screen draws it, layers and all, at the window's scale, with each web
 // view's snapshot shown in its place for the drawing: an image view just above the web view, so
 // the views that cover the web view cover its snapshot too, and everything is drawn in one layout.
-PDFDocument *drawnDocument(NSView *content, NSArray<WKWebView *> *webViews, NSArray *snapshots) {
-  NSRect bounds = content.bounds;
+NSBitmapImageRep *drawnRep(NSView *content, NSRect bounds, NSArray<WKWebView *> *webViews, NSArray *snapshots) {
   if (NSWidth(bounds) < 1 || NSHeight(bounds) < 1) {
     return nil;
   }
@@ -337,14 +336,14 @@ PDFDocument *drawnDocument(NSView *content, NSArray<WKWebView *> *webViews, NSAr
   for (NSView *image in stand) {
     [image removeFromSuperview];
   }
-  return drawn != nil ? pageOf(drawn, bounds.size) : nil;
+  return drawn;
 }
 
 } // namespace
 
-void windowDocument(NSView *content, std::function<void(PDFDocument *)> done) {
-  if (content == nil || NSWidth(content.bounds) < 1 || NSHeight(content.bounds) < 1) {
-    done(nil);
+void drawnContent(NSView *content, NSRect rect, std::function<void(NSBitmapImageRep *, bool)> done) {
+  if (content == nil || NSWidth(rect) < 1 || NSHeight(rect) < 1) {
+    done(nil, true);
     return;
   }
   // Web views, video and Metal draw out of process or on the GPU, so a drawing of the views has
@@ -352,7 +351,7 @@ void windowDocument(NSView *content, std::function<void(PDFDocument *)> done) {
   NSMutableArray<WKWebView *> *webViews = [NSMutableArray array];
   collectWebViews(content, webViews);
   if (webViews.count == 0) {
-    done(drawnDocument(content, webViews, @[]));
+    done(drawnRep(content, rect, webViews, @[]), true);
     return;
   }
   // Each snapshot answers on the main thread; a web view that cannot take one stays blank. The
@@ -362,17 +361,28 @@ void windowDocument(NSView *content, std::function<void(PDFDocument *)> done) {
     [snapshots addObject:NSNull.null];
   }
   auto left = std::make_shared<NSUInteger>(webViews.count);
-  auto finish = std::make_shared<std::function<void(PDFDocument *)>>(std::move(done));
+  auto finish = std::make_shared<std::function<void(NSBitmapImageRep *, bool)>>(std::move(done));
+  auto complete = std::make_shared<bool>(true);
   for (NSUInteger i = 0; i < webViews.count; i++) {
     [webViews[i] takeSnapshotWithConfiguration:nil completionHandler:^(NSImage *snapshot, NSError *) {
       if (snapshot != nil) {
         snapshots[i] = snapshot;
+      } else {
+        *complete = false;
       }
       if (--*left == 0) {
-        (*finish)(drawnDocument(content, webViews, snapshots));
+        (*finish)(drawnRep(content, rect, webViews, snapshots), *complete);
       }
     }];
   }
+}
+
+void windowDocument(NSView *content, std::function<void(PDFDocument *)> done) {
+  NSRect bounds = content.bounds;
+  // A web view that could not be snapshotted prints blank rather than not at all.
+  drawnContent(content, bounds, [bounds, done = std::move(done)](NSBitmapImageRep *drawn, bool) {
+    done(drawn != nil ? pageOf(drawn, bounds.size) : nil);
+  });
 }
 
 void printWindow(NSWindow *window, bool landscape, std::function<void(const std::string &)> done) {
