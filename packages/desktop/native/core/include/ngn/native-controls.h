@@ -49,6 +49,9 @@ class NativeControlProps final : public facebook::react::ViewProps, public HasDe
   // `default`, `cancel`, `destructive` or `plain`, or empty when the element sets none.
   std::string kind;
   std::string sfSymbol;
+  // An icon's SVG markup (ngn/svg-markup.h). macOS draws it when there is no `sfSymbol`; Linux,
+  // which has no SF Symbols, always draws it.
+  std::string svgIcon;
 
   // Switch.
   bool value{false};
