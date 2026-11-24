@@ -8,6 +8,8 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <string_view>
+#include <utility>
 
 using namespace facebook::react;
 
@@ -17,6 +19,9 @@ namespace {
 
 // On a window whose key handling sends Tab's (keyPress) (sendTabKeyPress), so its inputs do not.
 constexpr const char *kSendsTab = "ngn-sends-tab-key-press";
+
+// How many typed keys wait for their text at most (TextField::typedKeys).
+constexpr size_t kTypedKeysWaiting = 8;
 
 bool multiline(const TextField &field) {
   return field.scroll != nullptr;
@@ -145,6 +150,8 @@ void preeditChanged(GtkWidget *, const char *preedit, gpointer user) {
   auto *field = static_cast<TextField *>(user);
   field->composing = preedit && *preedit;
   if (field->composing) {
+    // The keys that started the composition are no keys the app hears.
+    field->typedKeys.clear();
     cancelPendingApply(*field);
   } else if (field->pendingText && !field->applyPendingSource) {
     // An input method sends an empty preedit and then commits what was composed: apply the held
@@ -170,6 +177,7 @@ void focused(GtkEventControllerFocus *, gpointer user) {
 
 void unfocused(GtkEventControllerFocus *, gpointer user) {
   auto *field = static_cast<TextField *>(user);
+  field->typedKeys.clear();
   if (auto emitter = emitterOf(*field)) {
     auto metrics = metricsOf(*field);
     emitter->onEndEditing(metrics);
@@ -200,6 +208,12 @@ bool pressesLatin(GtkWidget *widget, guint keyval, guint keycode, guint latin) {
   return found;
 }
 
+// Whether the field takes text: GTK refuses an input method's commit to one that does not.
+bool editable(const TextField &field) {
+  return multiline(field) ? gtk_text_view_get_editable(GTK_TEXT_VIEW(field.text))
+                          : gtk_editable_get_editable(GTK_EDITABLE(field.text));
+}
+
 // `onKeyPress`, before the key changes the text, with the key as keyPressName names it.
 gboolean keyPressed(GtkEventControllerKey *, guint keyval, guint keycode, GdkModifierType state, gpointer user) {
   auto *field = static_cast<TextField *>(user);
@@ -226,15 +240,32 @@ gboolean keyPressed(GtkEventControllerKey *, guint keyval, guint keycode, GdkMod
   if (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK)) {
     return FALSE;
   }
+  // A key an input method takes while it composes is no key the app hears either.
+  if (field->composing) {
+    return FALSE;
+  }
   bool tab = keyval == GDK_KEY_Tab || keyval == GDK_KEY_ISO_Left_Tab;
   GtkRoot *root = gtk_widget_get_root(field->text);
   if (tab && root && g_object_get_data(G_OBJECT(root), kSendsTab)) {
     return FALSE;
   }
-  if (std::string key = keyPressName(keyval); !key.empty()) {
-    if (auto emitter = emitterOf(*field)) {
-      emitter->onKeyPress({.text = key, .eventCount = field->eventCount});
+  std::string key = keyPressName(keyval);
+  if (key.empty()) {
+    return FALSE;
+  }
+  // A printable key is sent with the text it puts in (sendTypedKey), and a field that takes no text
+  // puts in none.
+  if (g_utf8_strlen(key.c_str(), -1) == 1) {
+    if (!editable(*field)) {
+      return FALSE;
     }
+    // A few behind at most: keys a field that takes no text never puts in go first.
+    if (field->typedKeys.size() == kTypedKeysWaiting) {
+      field->typedKeys.pop_front();
+    }
+    field->typedKeys.push_back(key);
+  } else if (auto emitter = emitterOf(*field)) {
+    emitter->onKeyPress({.text = key, .eventCount = field->eventCount});
   }
   return FALSE;
 }
@@ -321,9 +352,26 @@ std::optional<std::string> fittedInsertion(const TextField &field, const char *t
   return fitted;
 }
 
+// The oldest waiting key's `(keyPress)` (TextField::typedKeys) as the text it makes goes in:
+// before the change, as React Native sends it, even when maxLength refuses it. Any other insertion,
+// such as a paste or the commit of a composition, drops the keys waiting unsent.
+void sendTypedKey(TextField &field, const char *text, int length) {
+  if (field.typedKeys.empty() || field.settingText || field.replaying) {
+    return;
+  }
+  std::string key = std::move(field.typedKeys.front());
+  field.typedKeys.pop_front();
+  if (key != std::string_view(text, length < 0 ? strlen(text) : static_cast<size_t>(length))) {
+    field.typedKeys.clear();
+  } else if (auto emitter = emitterOf(field)) {
+    emitter->onKeyPress({.text = key, .eventCount = field.eventCount});
+  }
+}
+
 // A multiline field's insertion, as fittedInsertion fits it.
 void insertingText(GtkTextBuffer *buffer, GtkTextIter *at, const char *text, int length, gpointer user) {
   auto *field = static_cast<TextField *>(user);
+  sendTypedKey(*field, text, length);
   auto fitted = fittedInsertion(*field, text, length, gtk_text_iter_get_offset(at));
   if (!fitted) {
     return;
@@ -339,6 +387,7 @@ void insertingText(GtkTextBuffer *buffer, GtkTextIter *at, const char *text, int
 // A single line's insertion, as fittedInsertion fits it.
 void insertingLine(GtkEditable *editable, const char *text, int length, int *position, gpointer user) {
   auto *field = static_cast<TextField *>(user);
+  sendTypedKey(*field, text, length);
   auto fitted = fittedInsertion(*field, text, length, *position);
   if (!fitted) {
     return;
@@ -684,6 +733,10 @@ void applyTextFieldProps(ViewData &view) {
   TextField &field = *view.field;
   auto attributes = props->getEffectiveTextAttributes(1);
   bool editable = props->traits.editable && props->editable && !props->readOnly;
+  // The keys waiting for text a read-only field refuses.
+  if (!editable) {
+    field.typedKeys.clear();
+  }
   bool rightToLeft = view.layout.layoutDirection == LayoutDirection::RightToLeft;
   float xalign = 0;
   switch (attributes.alignment.value_or(TextAlignment::Natural)) {
