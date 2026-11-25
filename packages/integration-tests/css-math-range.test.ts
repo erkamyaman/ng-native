@@ -161,6 +161,93 @@ describe('a math function of a length and a number in a stylesheet', () => {
   });
 });
 
+describe('a background-size below zero', () => {
+  for (const value of ['-1px', '10px -1px', '-10%', '4px, -1px']) {
+    it(`is refused written out, as a browser drops it: ${value}`, () => {
+      const { sheet, warnings } = compiled(
+        `.a { background-size: 2px; background-size: ${value} }`,
+      );
+      assert.match(warnings[0]!, /background-size.*nothing below zero/);
+      assert.deepEqual(sheet.rules[0].declarations.experimental_backgroundSize, [
+        { x: 2, y: 'auto' },
+      ]);
+    });
+  }
+
+  it('is refused in the background shorthand, whose position may still be below zero', () => {
+    const refused = compiled(
+      '.a { background: red; background: linear-gradient(blue, blue) 0 0 / -1px }',
+    );
+    assert.match(refused.warnings[0]!, /nothing below zero/);
+    // The declaration before it stands: no image, at the initial size.
+    assert.deepEqual(refused.sheet.rules[0].declarations.experimental_backgroundSize, [
+      { x: 'auto', y: 'auto' },
+    ]);
+    assert.ok(!JSON.stringify(refused.sheet).includes('blue'));
+    const kept = compiled(
+      '.a { background: linear-gradient(red, blue) -4px -2px / 4px 2px, linear-gradient(red, blue) -1px 0 }',
+    );
+    assert.deepEqual(kept.warnings, []);
+    assert.deepEqual(kept.sheet.rules[0].declarations.experimental_backgroundSize, [
+      { x: 4, y: 2 },
+      { x: 'auto', y: 'auto' },
+    ]);
+  });
+
+  it('is refused beside a comment, and a comment in the shorthand leaves the sheet whole', () => {
+    const beside = compiled('.a { background-size: 2px; background-size: -1px/**/ }');
+    assert.match(beside.warnings[0]!, /nothing below zero/);
+    assert.deepEqual(beside.sheet.rules[0].declarations.experimental_backgroundSize, [
+      { x: 2, y: 'auto' },
+    ]);
+    const noted = compiled(
+      '.a { background: red /* a / note */; width: 10px } .b { height: 20px }',
+    );
+    assert.deepEqual(noted.warnings, []);
+    assert.equal(noted.sheet.rules.length, 2);
+    assert.equal(noted.sheet.rules[0].declarations.width, 10);
+  });
+
+  it('is refused with a priority written against it, on its own and in the shorthand', () => {
+    for (const css of [
+      '.a { background-size: 2px; background-size: -1px!important }',
+      '.a { background-size: 2px; background: linear-gradient(red, blue) 0 0 / -1px!important }',
+    ]) {
+      const { sheet, warnings } = compiled(css);
+      assert.match(warnings[0]!, /nothing below zero/, css);
+      assert.deepEqual(
+        sheet.rules[0].declarations.experimental_backgroundSize,
+        [{ x: 2, y: 'auto' }],
+        css,
+      );
+    }
+  });
+
+  it('leaves a layer with two slashes for the parser to refuse', () => {
+    const { sheet, warnings } = compiled(
+      '.a { background: red; background: linear-gradient(blue, blue) 0 0 / 4px / 5px }',
+    );
+    assert.equal(warnings.length, 1);
+    assert.ok(!JSON.stringify(sheet).includes('blue'));
+  });
+
+  it('is 0 from a math function, as a browser clamps it', () => {
+    const { sheet, warnings } = compiled('.a { background-size: calc(1px - 5px) calc(10% - 20%) }');
+    assert.deepEqual(warnings, []);
+    assert.deepEqual(sheet.rules[0].declarations.experimental_backgroundSize, [{ x: 0, y: '0%' }]);
+  });
+
+  it('is kept at zero and above', () => {
+    const { sheet, warnings } = compiled('.a { background-size: 0 4px, 10% auto, cover }');
+    assert.deepEqual(warnings, []);
+    assert.deepEqual(sheet.rules[0].declarations.experimental_backgroundSize, [
+      { x: 0, y: 4 },
+      { x: '10%', y: 'auto' },
+      'cover',
+    ]);
+  });
+});
+
 describe('the props with nothing below zero', () => {
   it('are one list in the compiler and on the device', () => {
     const { NEVER_NEGATIVE: compiler } = require('@ng-native/metro/css/properties.cjs');
