@@ -9,9 +9,21 @@
  * ```
  *
  * On Android the view on its own draws its tint, not a blur: `expo-blur` blurs there only the
- * content of a `BlurTargetView` it is given, which this does not cover.
+ * content of an `<expo-blur-target>` given as `[blurTarget]`, with a `blurMethod` other than `none`.
  */
-import { Component, input } from '@angular/core';
+import {
+  Component,
+  Injector,
+  afterEveryRender,
+  effect,
+  inject,
+  input,
+  signal,
+  untracked,
+  type AfterRenderRef,
+} from '@angular/core';
+import { Engine, type EngineNode } from '@ng-native/fabric';
+import type { ExpoBlurTarget } from './expo-blur-target.ts';
 import { optionalNumber } from './transforms.ts';
 
 /** The tints `expo-blur` takes. Each but `default` adds a translucent colour over the blur. */
@@ -49,6 +61,7 @@ export type BlurMethod = 'none' | 'dimezisBlurView' | 'dimezisBlurViewSdk31Plus'
     '[intensity]': 'intensity()',
     '[blurReductionFactor]': 'blurReductionFactor()',
     '[blurMethod]': 'blurMethod()',
+    '[blurTargetId]': 'targetTag()',
   },
 })
 export class ExpoBlur {
@@ -59,4 +72,43 @@ export class ExpoBlur {
   readonly blurReductionFactor = input<number>(undefined, { transform: optionalNumber });
   /** Android only. */
   readonly blurMethod = input<BlurMethod>();
+  /** The `<expo-blur-target>` whose content the blur samples. Android only, where it is needed. */
+  readonly blurTarget = input<ExpoBlurTarget | null>();
+
+  private readonly engine = inject(Engine);
+  private readonly injector = inject(Injector);
+  /** The target's view tag, committed as `blurTargetId` as `BlurView` does, or null with none. */
+  protected readonly targetTag = signal<number | null>(null);
+
+  constructor() {
+    effect(() => this.follow(this.blurTarget()?.node ?? null));
+  }
+
+  /** Reading the target's tag after each render, while it has none. */
+  private waiting: AfterRenderRef | undefined;
+
+  /**
+   * The target's tag. A view not yet committed has none, and one hidden with `display: none` has
+   * none until it is shown, so it is read after each render until it has one.
+   */
+  private follow(node: EngineNode | null): void {
+    this.waiting?.destroy();
+    this.waiting = undefined;
+    const tag = node && this.engine.tagOf(node);
+    this.targetTag.set(tag ?? null);
+    if (!node || tag !== null) return;
+    // Out of the effect that calls this, which may not register a render hook itself.
+    const waiting = untracked(() =>
+      afterEveryRender(
+        () => {
+          const found = this.engine.tagOf(node);
+          if (found === null) return;
+          waiting.destroy();
+          this.targetTag.set(found);
+        },
+        { injector: this.injector },
+      ),
+    );
+    this.waiting = waiting;
+  }
 }
