@@ -2222,6 +2222,36 @@ const twins = (pairs: readonly (readonly [string, string])[]): Readonly<Record<s
     ]),
   );
 
+/** The first of `forms` that `read` has a value for. */
+function firstRead(forms: readonly string[], read: (prop: string) => unknown): unknown {
+  for (const form of forms) {
+    const value = read(form);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+/**
+ * A prop as a parent's inline style sets it: of its two forms, physical and logical, the later, as
+ * the parent settles them; then the whole border the style sets, which a side of its own is over.
+ */
+function inlineSide(
+  inline: Readonly<Record<string, unknown>>,
+  written: readonly string[],
+  prop: string,
+  forms: readonly string[],
+  orWhole: boolean,
+): unknown {
+  const set = forms.filter((form) => inline[form] !== undefined);
+  const last = set.sort((a, b) => written.indexOf(a) - written.indexOf(b)).at(-1);
+  if (last !== undefined) return inline[last];
+  const whole = orWhole ? WHOLE_BORDER.exec(prop) : null;
+  return whole ? inline[`border${whole[1]}`] : undefined;
+}
+
+/** A side's border prop, with the part `borderWidth`, `borderColor` or `borderStyle` sets for all. */
+const WHOLE_BORDER = /^border(?:Top|Right|Bottom|Left|Start|End)(Width|Color|Style)$/;
+
 const TWIN: Readonly<Record<'ltr' | 'rtl', Readonly<Record<string, string>>>> = {
   ltr: twins(SIDES_LTR),
   rtl: twins(SIDES_LTR.map(([logical, physical]) => [logical, mirrored(physical)] as const)),
@@ -5199,9 +5229,21 @@ export class StyleResolver {
     important: Record<string, unknown> | null,
   ): void {
     const inline = this.parentSet();
-    for (const prop of declaration.props) {
-      if (!declaration.important && important !== null && prop in important) continue;
-      const value = inline[prop] ?? parentInherited[prop] ?? this.parentOf?.style[prop];
+    const ruled = (prop: string) => parentInherited[prop] ?? this.parentOf?.style[prop];
+    // A physical side the parent set as a logical one, `border-inline-start`, is that side in the
+    // parent's direction, which is what CSS hands down: the parent's computed physical side. The
+    // parent's inline style is over its rules, in either form.
+    const twin = TWIN[this.readsRightToLeft(this.parentOf?.style ?? EMPTY) ? 'rtl' : 'ltr'];
+    const written = Object.keys(inline);
+    // An important side of the parent's rules is over its inline whole border, as on the parent.
+    const guarded: ReadonlySet<string> = this.parentOf?.important ?? new Set();
+    const taken = declaration.props.filter(
+      (prop) => declaration.important || important === null || !(prop in important),
+    );
+    for (const prop of taken) {
+      const forms = twin[prop] === undefined ? [prop] : [prop, twin[prop]];
+      const value =
+        inlineSide(inline, written, prop, forms, !guarded.has(prop)) ?? firstRead(forms, ruled);
       if (value === undefined) delete own[prop];
       else own[prop] = value;
     }
