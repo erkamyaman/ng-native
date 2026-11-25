@@ -7,6 +7,10 @@ import {
   UiChart,
   UiColorPicker,
   UiDatePicker,
+  UiDatePickerDialog,
+  type UiDateRange,
+  UiDateRangePickerDialog,
+  UiTimePickerDialog,
   UiDivider,
   UiForm,
   UiGauge,
@@ -28,6 +32,7 @@ import {
   UiVStack,
 } from '@ng-native/expo';
 import { Pressable, ScrollView, Text, View } from '@ng-native/components';
+import { nativePlatform } from '@ng-native/fabric';
 import { NativeHeader } from '@ng-native/router';
 import { Example, Section } from '../example.ts';
 import { page } from '../screen-styles.ts';
@@ -74,6 +79,9 @@ import { page } from '../screen-styles.ts';
     UiChart,
     UiColorPicker,
     UiDatePicker,
+    UiDatePickerDialog,
+    UiDateRangePickerDialog,
+    UiTimePickerDialog,
     UiDivider,
     UiForm,
     UiGauge,
@@ -282,6 +290,45 @@ import { page } from '../screen-styles.ts';
             ></ui-date-picker>
           </ui-host>
         </x-example>
+
+        @if (android) {
+          <x-example
+            title="Date and time dialogs"
+            note="Android only. Each dialog shows while it is rendered and closes when the app removes it. A pick here opens the time dialog next, on the same day in any time zone."
+            code='<ui-date-picker-dialog [initialDate]="day()" (dateSelected)="..." (dismissRequest)="..." />'
+          >
+            <pressable (press)="dialog.set('date')">
+              <text class="body">When: {{ when()?.toLocaleString() ?? 'not set' }}</text>
+            </pressable>
+            <pressable (press)="dialog.set('range')">
+              <text class="body">Stay: {{ stayText() }}</text>
+            </pressable>
+            <ui-host [style]="{ height: 1 }">
+              @if (dialog() === 'date') {
+                <ui-date-picker-dialog
+                  confirmButtonLabel="Next"
+                  [initialDate]="whenDay()"
+                  (dateSelected)="pickDay($event.nativeEvent.date)"
+                  (dismissRequest)="dialog.set(null)"
+                />
+              }
+              @if (dialog() === 'time') {
+                <ui-time-picker-dialog
+                  [(value)]="when"
+                  (dateSelected)="dialog.set(null)"
+                  (dismissRequest)="dialog.set(null)"
+                />
+              }
+              @if (dialog() === 'range') {
+                <ui-date-range-picker-dialog
+                  [(value)]="stay"
+                  (dateRangeSelected)="dialog.set(null)"
+                  (dismissRequest)="dialog.set(null)"
+                />
+              }
+            </ui-host>
+          </x-example>
+        }
       </x-section>
 
       <x-section title="Indicators" note="Presentational, so nothing has to be wired to them.">
@@ -452,6 +499,21 @@ export class ExpoUiPage {
   protected readonly page = page;
 
   protected readonly taps = signal(0);
+  protected readonly android = nativePlatform() === 'android';
+  protected readonly dialog = signal<'date' | 'time' | 'range' | null>(null);
+  protected readonly when = signal<Date | null>(null);
+  protected readonly stay = signal<UiDateRange | null>(null);
+  /** The local day of `when`, as the date dialog takes a day: midnight UTC. */
+  protected readonly whenDay = computed(() => {
+    const when = this.when();
+    return when && Date.UTC(when.getFullYear(), when.getMonth(), when.getDate());
+  });
+  /** A range dialog's days are midnight UTC, so they are shown in UTC to stay the days picked. */
+  protected readonly stayText = computed(() => {
+    const stay = this.stay();
+    const day = (date: Date) => date.toLocaleDateString(undefined, { timeZone: 'UTC' });
+    return stay ? day(stay.start) + ' to ' + day(stay.end) : 'not set';
+  });
   protected readonly on = signal(true);
   protected readonly level = signal(0.5);
   protected readonly guests = signal(2);
@@ -515,4 +577,14 @@ export class ExpoUiPage {
   protected readonly hostFill = {};
   protected readonly hostForm = { minHeight: 180 };
   protected readonly hostChart = { height: 180 };
+
+  /**
+   * The date dialog's day is midnight UTC, which is the evening before west of UTC. The time dialog
+   * keeps the local day it opens on, so it opens on the picked day at local midnight.
+   */
+  protected pickDay(date: number): void {
+    const day = new Date(date);
+    this.when.set(new Date(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
+    this.dialog.set('time');
+  }
 }
