@@ -7912,8 +7912,10 @@ export class Engine implements HostEngine {
     this.processColor = options.processColor ?? ((value) => value);
     this.resolveAssetSource = options.resolveAssetSource ?? ((value) => value);
     this.scrollDriver = options.nativeAnimated
-      ? new NativeScrollDriver(options.nativeAnimated, (view, tag, keys) =>
-          this.touchedNatively(view as EngineNode, tag, keys),
+      ? new NativeScrollDriver(
+          options.nativeAnimated,
+          (view, tag, keys) => this.touchedNatively(view as EngineNode, tag, keys),
+          (view, keys) => this.leavePaintingOf(view as EngineNode, keys),
         )
       : null;
     // The painter's graph takes the props it paints from commits as any graph does: see `Touched`.
@@ -15441,6 +15443,13 @@ export class Engine implements HostEngine {
     if (!keys.length) return payload;
     const state = this.paintFrom(node);
     for (const key of keys) state.keys.add(key);
+    // The setter's graph went with `paintFrom`, and a commit cannot change what a graph of native's
+    // has set: the painter paints those now, where the run's other changes are committed.
+    const owned = Object.keys(payload!).filter((key) => this.owns(node, key));
+    if (owned.length) {
+      for (const key of owned) state.keys.add(key);
+      this.paintNow(node, state, props, this.heldOn(node));
+    }
     if (props['collapsable'] !== undefined) return payload;
     props['collapsable'] = false;
     return { ...payload, collapsable: false };
@@ -15594,6 +15603,11 @@ export class Engine implements HostEngine {
   private owns(node: EngineNode, key: string): boolean {
     const owned = node.owned;
     return !!owned && owned.tag === node.committed?.tag && owned.keys.has(key);
+  }
+
+  /** Let the painter go where a graph of native's is to set a prop it paints: see `leavePainting`. */
+  private leavePaintingOf(node: EngineNode, keys: readonly string[]): void {
+    if (keys.some((key) => this.painter?.paintsProp(node, key))) this.leavePainting(node);
   }
 
   /**
