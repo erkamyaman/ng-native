@@ -557,6 +557,155 @@ describe('scroll view sticky headers', () => {
     unmount();
   });
 
+  /** The scroll view with its children laid out down the page, moved on the native side. */
+  async function stickyScroll(sticky: readonly number[]) {
+    const { native, named, drives } = recorder();
+    const view = await boot<{
+      sticky: { set(value: readonly number[]): void };
+      horizontal: { set(value: boolean): void };
+    }>('StickyScroll', 400, { nativeAnimated: native });
+    view.instance.sticky.set(sticky);
+    await frame();
+    const ids = ['first', 'body-1', 'more-1', 'more-2', 'more-3'];
+    const layOut = (horizontal: boolean) => {
+      ids.forEach((id, at) => {
+        const start = at * 100;
+        fabric.emit(byID(view.fabric, id)[0]!, 'topLayout', {
+          layout: horizontal ? { x: start, width: 30 } : { y: start, height: 30 },
+        });
+      });
+    };
+    const { fabric } = view;
+    layOut(false);
+    await frame();
+    const toldSince = (before: number) =>
+      named('set')
+        .slice(before)
+        .map(([, , value]) => value);
+    return { ...view, named, drives, toldSince, layOut };
+  }
+
+  it('moves a sticky child along x once the scroll view turns horizontal', async () => {
+    const { fabric, instance, drives, layOut, named, toldSince, unmount } = await stickyScroll([
+      0, 2,
+    ]);
+    fabric.emit(scrollView(fabric), 'topScroll', { contentOffset: { y: 40 } });
+    clock.rest();
+    await frame();
+    const before = named('set').length;
+    instance.horizontal.set(true);
+    await frame();
+    layOut(true);
+    await frame();
+    const first = byID(fabric, 'first')[0]!.reactTag;
+    const props = named('toView')
+      .filter(([, , view]) => view === first)
+      .at(-1)![1];
+    const parent = (child: unknown) => named('connect').find(([, , to]) => to === child)![1];
+    const config = named('create').find(([, node]) => node === parent(parent(props)))![2] as {
+      transforms: { property: string }[];
+    };
+    assert.equal(config.transforms[0]!.property, 'translateX');
+    assert.deepEqual(drives().get(first)?.inputRange, [0, 170]);
+    assert.deepEqual(toldSince(before), [], 'where native was along y says nothing of x');
+    assert.ok(
+      byID(fabric, 'first')[0]!.props['transform'] == null,
+      'not moved along x by the offset native gave along y',
+    );
+    unmount();
+  });
+
+  it("draws a sticky child's new range at rest from where native is, and mid-scroll leaves it to native", async () => {
+    const { fabric, instance, toldSince, named, unmount } = await stickyScroll([0, 2]);
+    fabric.emit(scrollView(fabric), 'topScroll', { contentOffset: { y: 120 } });
+    clock.rest();
+    await frame();
+    // The child that pushes the first off moves further down: its range changes, at rest.
+    let before = named('set').length;
+    instance.sticky.set([0, 4]);
+    await frame();
+    assert.deepEqual(toldSince(before), [120], 'at rest no scroll event comes to draw it');
+    fabric.emit(scrollView(fabric), 'topScroll', { contentOffset: { y: 130 } });
+    await frame();
+    before = named('set').length;
+    instance.sticky.set([0, 3]);
+    await frame();
+    assert.deepEqual(toldSince(before), [], 'mid-scroll the next event draws it');
+    unmount();
+  });
+
+  it('draws a child that turns sticky at rest from where native is, and mid-scroll leaves it to native', async () => {
+    const { fabric, instance, toldSince, named, drives, unmount } = await stickyScroll([0]);
+    fabric.emit(scrollView(fabric), 'topScroll', { contentOffset: { y: 120 } });
+    clock.rest();
+    await frame();
+    // Native sends no layout event for a view whose layout has not changed, so the child is
+    // measured where native has it: in the window, against the content view scrolled by 120.
+    const content = scrollView(fabric).children[0]!;
+    fabric.frames.set(content.viewName, { x: 0, y: -120, width: 400, height: 1000 });
+    ['first', 'body-1', 'more-1', 'more-2', 'more-3'].forEach((id, at) =>
+      fabric.frames.set(id, { x: 0, y: at * 100 - 120, width: 400, height: 30 }),
+    );
+    let before = named('set').length;
+    instance.sticky.set([0, 1]);
+    await frame();
+    const body = byID(fabric, 'body-1')[0]!.reactTag;
+    assert.deepEqual(drives().get(body)?.inputRange[0], 100, 'measured where it is in the content');
+    const told = toldSince(before);
+    assert.ok(told.length > 0, 'pinned now, not at the next scroll event');
+    assert.ok(
+      told.every((value) => value === 120),
+      String(told),
+    );
+    fabric.emit(scrollView(fabric), 'topScroll', { contentOffset: { y: 130 } });
+    await frame();
+    before = named('set').length;
+    instance.sticky.set([0, 1, 3]);
+    await frame();
+    assert.deepEqual(toldSince(before), [], 'mid-scroll the next event draws it');
+    unmount();
+  });
+
+  it('tells native nothing of a position it never heard, for a scroll view that scrolled with none sticky', async () => {
+    const { fabric, instance, toldSince, named, drives, unmount } = await stickyScroll([]);
+    // Nothing is sticky, so nothing listens: where the scroll view went is not known here.
+    fabric.emit(scrollView(fabric), 'topScroll', { contentOffset: { y: 120 } });
+    clock.rest();
+    await frame();
+    const content = scrollView(fabric).children[0]!;
+    fabric.frames.set(content.viewName, { x: 0, y: -120, width: 400, height: 1000 });
+    fabric.frames.set('body-1', { x: 0, y: -20, width: 400, height: 30 });
+    const before = named('set').length;
+    instance.sticky.set([1]);
+    await frame();
+    assert.ok(drives().get(byID(fabric, 'body-1')[0]!.reactTag), 'driven');
+    assert.deepEqual(
+      toldSince(before),
+      [],
+      'not 0, which would move the scroll value for everything on it',
+    );
+    unmount();
+  });
+
+  it('forgets the position it heard once nothing is sticky, as nothing hears where it goes next', async () => {
+    const { fabric, instance, toldSince, named, drives, unmount } = await stickyScroll([1]);
+    fabric.emit(scrollView(fabric), 'topScroll', { contentOffset: { y: 120 } });
+    clock.rest();
+    await frame();
+    instance.sticky.set([]);
+    await frame();
+    // The scroll view goes on to 250 unheard: 120 is stale now.
+    const content = scrollView(fabric).children[0]!;
+    fabric.frames.set(content.viewName, { x: 0, y: -250, width: 400, height: 1000 });
+    fabric.frames.set('body-1', { x: 0, y: -150, width: 400, height: 30 });
+    const before = named('set').length;
+    instance.sticky.set([1]);
+    await frame();
+    assert.ok(drives().get(byID(fabric, 'body-1')[0]!.reactTag), 'driven');
+    assert.deepEqual(toldSince(before), [], 'not the 120 it heard before it stopped listening');
+    unmount();
+  });
+
   it('asks for every scroll event while anything is sticky, as RN does', async () => {
     const { fabric, unmount } = await boot('StickyScroll');
     assert.equal(scrollView(fabric).props['scrollEventThrottle'], 1);
