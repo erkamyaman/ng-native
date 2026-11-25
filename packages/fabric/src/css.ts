@@ -508,6 +508,8 @@ export interface DeferredDeclaration {
      * the engine works out once the box the percentage is of has been laid out.
      */
     readonly percent?: number;
+    /** A line height's arithmetic that is a number: the offset is added to the multiple. */
+    readonly multiple?: true;
     /**
      * The reference is multiplied by a length, so it is a number: `calc(var(--n) * 1px)`. Without
      * this it is a length, and a number token is no such thing, as CSS types a calc().
@@ -6058,7 +6060,9 @@ function referenced(
   let value = token ? formFor(token, declaration) : fallbackOf(declaration, tokens);
   // `calc(var(--n) * 1px)`: the arithmetic gives a unitless token its unit, which is the usual
   // way to turn a count into a length. So it reads the bare number, and a length is no such thing.
-  if (token && declaration.adjust?.number && declaration.kind === 'length') {
+  // A line height too: `calc(var(--n) * 1px)` is a length of the token's number, not a multiple.
+  const lengthOf = declaration.kind === 'length' || declaration.kind === 'lineHeight';
+  if (token && declaration.adjust?.number && lengthOf) {
     value = token.number;
   }
   if (declaration.kind === 'display') return displayOf(value);
@@ -7466,8 +7470,11 @@ function adjustedEm(
   adjust: NonNullable<DeferredDeclaration['adjust']>,
 ): { __defer: DeferredEm } {
   const scale = adjust.scale ?? 1;
-  const offset = (em.offset ?? 0) * scale + (adjust.offset ?? 0);
-  return { __defer: { ...em, factor: em.factor * scale, ...(offset ? { offset } : {}) } };
+  // A line height's multiple, `calc(var(--l) + 1)`: what is added is more of the font size.
+  const added = adjust.multiple ? (adjust.offset ?? 0) : 0;
+  const offset = (em.offset ?? 0) * scale + (adjust.multiple ? 0 : (adjust.offset ?? 0));
+  const factor = em.factor * scale + added;
+  return { __defer: { ...em, factor, ...(offset ? { offset } : {}) } };
 }
 
 /** `rgb(r, g, b)` and `rgba(r, g, b, a)`, which is every colour the compiler emits. */
