@@ -52,7 +52,7 @@ const {
   AXIS_SHORTHANDS,
 } = require('./properties.cjs');
 const { deferGradient, isTilePlaced, tiledBy, GRADIENTS } = require('./gradients.cjs');
-const { calcWithTokens, motionWithTokens } = require('./token-arithmetic.cjs');
+const { calcWithTokens, fits, mixedTypes, motionWithTokens } = require('./token-arithmetic.cjs');
 const { filter, undrawnOnIos, undrawnOnMacos } = require('./filters.cjs');
 const { expandShorthand } = require('./shorthands.cjs');
 
@@ -456,6 +456,7 @@ function deferCalcToken(parts, context) {
   for (const kind of ['length', 'number']) {
     try {
       const slot = /** @type {any} */ (calcWithTokens(parts, kind, context));
+      // One whose terms cannot come to this kind is refused for it: no width from `1px + 2`.
       if (slot?.__calc) markers.push(slot.__calc);
     } catch (error) {
       if (!(error instanceof CssUnsupported)) throw error;
@@ -717,6 +718,10 @@ function deferVar(value, context) {
     throw new CssUnsupported(
       `${context}: arithmetic on var() only makes sense for a length, and '${property}' is not`,
     );
+  }
+  // A line height takes a number too, which multiplies the font size.
+  if (arithmetic && !fits(parts[0], declared === 'lineHeight' ? declared : kind)) {
+    throw mixedTypes(context);
   }
 
   return {
